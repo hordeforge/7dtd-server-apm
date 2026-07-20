@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Build a simple HTML table+bars flame frame diff between two sessions."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from apm_suite.analysis.flame_delta import delta, load_weights
+
+
+def flame_path(session: Path) -> Path | None:
+    for rel in (
+        "cpu/perf/stacks.annotated.folded",
+        "cpu/perf/stacks.folded",
+    ):
+        p = session / rel
+        if p.is_file() and p.stat().st_size > 0:
+            return p
+    return None
+
+
+def build_html(a: Path, b: Path, rows: list[dict]) -> str:
+    tr = []
+    max_abs = max((abs(r["delta"]) for r in rows), default=1) or 1
+    for r in rows:
+        w = 100 * abs(r["delta"]) / max_abs
+        color = "#e74c3c" if r["delta"] > 0 else "#2ecc71"
+        tr.append(
+            f"<tr><td><code>{_esc(r['frame'][:90])}</code></td>"
+            f"<td>{r['a']}</td><td>{r['b']}</td>"
+            f"<td style='color:{color}'>{r['delta']:+}</td>"
+            f"<td><div style='background:{color};height:12px;width:{w:.1f}%'></div></td></tr>"
+        )
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8"/><title>Flame delta</title>
+<style>
+body{{font-family:system-ui;background:#0f1115;color:#e8eaed;margin:24px}}
+code{{font-size:12px}} table{{border-collapse:collapse;width:100%}}
+th,td{{border:1px solid #333;padding:6px;text-align:left}} th{{background:#1a1d24}}
+.muted{{color:#9aa0a6}}
+</style></head><body>
+<h1>Speedscope / folded frame delta</h1>
+<p class="muted">A={_esc(str(a))}<br/>B={_esc(str(b))}<br/>
+Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
+<table>
+<tr><th>frame</th><th>A</th><th>B</th><th>Δ</th><th></th></tr>
+{"".join(tr)}
+</table>
+</body></html>
+"""
+
+
+def _esc(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("session_a", type=Path)
+    ap.add_argument("session_b", type=Path)
+    ap.add_argument("-o", "--output", type=Path, default=None)
+    ap.add_argument("--top", type=int, default=40)
+    args = ap.parse_args()
+    fa, fb = flame_path(args.session_a), flame_path(args.session_b)
+    if not fa or not fb:
+        print("both sessions need cpu/perf/stacks.folded", file=sys.stderr)
+        return 2
+    rows = delta(load_weights(fa), load_weights(fb), top=args.top)
+    html = build_html(args.session_a, args.session_b, rows)
+    out = args.output or (args.session_b / "flame_diff.html")
+    out.write_text(html)
+    (args.session_b / "flame_diff.json").write_text(json.dumps({"frames": rows}, indent=2))
+    print(f"wrote {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

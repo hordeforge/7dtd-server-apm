@@ -1,0 +1,76 @@
+[
+  {
+    "label": "baseline-ai",
+    "clients": 100,
+    "actions": 5000,
+    "seconds": 120,
+    "warmup": 90,
+    "preset": "deep"
+  },
+  {
+    "label": "zombie-scale",
+    "clients": 25,
+    "actions": 5000,
+    "seconds": 120,
+    "warmup": 120,
+    "preset": "deep",
+    "spawn_per_player": 8,
+    "spawn_every_ms": 15000
+  },
+  {
+    "label": "combat-bait",
+    "clients": 30,
+    "actions": 5000,
+    "seconds": 120,
+    "warmup": 90,
+    "preset": "deep",
+    "bot_mode": "bait",
+    "rally": true,
+    "spawn_per_player": 10,
+    "spawn_every_ms": 10000
+  },
+  {
+    "label": "demolition",
+    "clients": 60,
+    "actions": 5000,
+    "seconds": 120,
+    "warmup": 60,
+    "preset": "deep",
+    "bot_mode": "demolition",
+    "no_spawn": true,
+    "max_dynamite": 200
+  },
+  {
+    "label": "vehicles",
+    "clients": 20,
+    "actions": 5000,
+    "seconds": 120,
+    "warmup": 90,
+    "preset": "deep",
+    "spawn_entity": "vehicleTruck4x4,vehicleMotorcycle,vehicleGyrocopter",
+    "spawn_per_player": 5,
+    "spawn_every_ms": 20000
+  },
+  {
+    "label": "turrets-drones",
+    "clients": 20,
+    "actions": 5000,
+    "seconds": 120,
+    "warmup": 90,
+    "preset": "deep",
+    "spawn_entity": "junkTurretGun,junkTurretSledge,entityJunkDrone",
+    "spawn_per_player": 6,
+    "spawn_every_ms": 15000
+  },
+  {
+    "label": "horde",
+    "clients": 50,
+    "actions": 5000,
+    "seconds": 120,
+    "warmup": 90,
+    "preset": "deep",
+    "bot_mode": "mixed",
+    "spawn_per_player": 10,
+    "spawn_every_ms": 10000
+  }
+]

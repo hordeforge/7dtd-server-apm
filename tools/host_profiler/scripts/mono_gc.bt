@@ -1,0 +1,100 @@
+/* Uprobes on Mono Boehm GC for TARGET_PID.
+ * MONO_SO must be absolute path to libmonobdwgc-2.0.so
+ */
+#ifndef TARGET_PID
+#error "Define TARGET_PID"
+#endif
+#ifndef MONO_SO
+#error "Define MONO_SO"
+#endif
+#ifndef TARGET_COMM
+#define TARGET_COMM "7DaysToDieServe"
+#endif
+
+uprobe:MONO_SO:mono_gc_collect
+/pid == TARGET_PID || comm == TARGET_COMM/
+{
+    @gc_enter[tid] = nsecs;
+    @gc_n = count();
+}
+
+uretprobe:MONO_SO:mono_gc_collect
+/@gc_enter[tid]/
+{
+    $us = (nsecs - @gc_enter[tid]) / 1000;
+    delete(@gc_enter[tid]);
+    @gc_us = hist($us);
+    @gc_sum = sum($us);
+    if ($us > 3000) {
+        printf("SLOW mono_gc_collect %d us\n", $us);
+        print(ustack);
+    }
+}
+
+uprobe:MONO_SO:GC_gcollect
+/pid == TARGET_PID || comm == TARGET_COMM/
+{
+    @boehm_enter[tid] = nsecs;
+    @boehm_n = count();
+}
+
+uretprobe:MONO_SO:GC_gcollect
+/@boehm_enter[tid]/
+{
+    $us = (nsecs - @boehm_enter[tid]) / 1000;
+    delete(@boehm_enter[tid]);
+    @boehm_us = hist($us);
+    @boehm_sum = sum($us);
+}
+
+uprobe:MONO_SO:mono_gc_collect_a_little
+/pid == TARGET_PID || comm == TARGET_COMM/
+{
+    @little_n = count();
+}
+
+/* The precise stop-the-world freeze: every thread (including the main tick
+ * thread) is suspended between GC_stop_world and GC_start_world. This is the
+ * exact "laggy without CPU" pause, tighter than the whole-collect latency
+ * above (which includes marking that can overlap). Only one thread stops the
+ * world at a time, so a single scalar timestamp is safe. */
+uprobe:MONO_SO:GC_stop_world
+/pid == TARGET_PID || comm == TARGET_COMM/
+{
+    @stw_start = nsecs;
+    @stw_n = count();
+}
+
+uprobe:MONO_SO:GC_start_world
+/@stw_start/
+{
+    $us = (nsecs - @stw_start) / 1000;
+    @stw_start = 0;
+    @stw_us = hist($us);
+    @stw_sum = sum($us);
+    if ($us > 3000) {
+        printf("STW_PAUSE %d us\n", $us);
+    }
+}
+
+interval:s:5
+{
+    time("%H:%M:%S ");
+    print(@gc_n);
+    print(@little_n);
+    print(@boehm_n);
+    print(@gc_sum);
+    print(@boehm_sum);
+}
+
+END
+{
+    printf("\n=== mono_gc_collect latency us ===\n");
+    print(@gc_us);
+    printf("\n=== GC_gcollect latency us ===\n");
+    print(@boehm_us);
+    printf("\n=== stop-the-world pause us (main-thread freeze) ===\n");
+    print(@stw_us);
+    print(@stw_sum);
+    print(@stw_n);
+}

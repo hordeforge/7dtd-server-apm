@@ -1,0 +1,48 @@
+/* Block I/O issue→complete latency (global device + rough size).
+ * Pair with vfs_lat.bt for process-attributed file IO.
+ */
+#ifndef TARGET_COMM
+#define TARGET_COMM "7DaysToDieServe"
+#endif
+
+tracepoint:block:block_rq_issue
+{
+    @start[args.dev, args.sector] = nsecs;
+    @issue_bytes = hist(args.bytes);
+    @issue_n = count();
+    if (args.rwbs != "") {
+        /* rwbs is char array on some kernels — skip if missing */
+    }
+}
+
+tracepoint:block:block_rq_complete
+/@start[args.dev, args.sector]/
+{
+    $us = (nsecs - @start[args.dev, args.sector]) / 1000;
+    delete(@start[args.dev, args.sector]);
+    @lat_us = hist($us);
+    @lat_sum_us = sum($us);
+    @complete_n = count();
+    if ($us >= 10000) {
+        printf("SLOW_BLOCK %d us\n", $us);
+    }
+}
+
+interval:s:5
+{
+    time("%H:%M:%S ");
+    print(@issue_n);
+    print(@complete_n);
+    print(@lat_sum_us);
+}
+
+END
+{
+    printf("\n=== block RQ latency us ===\n");
+    print(@lat_us);
+    printf("\n=== issue size bytes ===\n");
+    print(@issue_bytes);
+    printf("\ncounts issue/complete:\n");
+    print(@issue_n);
+    print(@complete_n);
+}

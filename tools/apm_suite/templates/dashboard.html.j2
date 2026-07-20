@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>7dtd APM — {{ session.name }}</title>
+<style>
+:root{color-scheme:dark}body{font:14px system-ui;margin:0;background:#0b0d11;color:#e8eaed}header,main{padding:20px 28px}header{background:#12151c}main{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}.card{background:#161a22;border:1px solid #2a2f3a;border-radius:10px;padding:16px}.full{grid-column:1/-1}table{width:100%;border-collapse:collapse}th,td{padding:7px;border-bottom:1px solid #303642;text-align:left}a{color:#8ab4f8}.score{font-size:36px}.bar{height:8px;background:#303642}.fill{height:100%;background:#e67e22}.muted{color:#9aa0a6}
+</style></head><body>
+<header><h1>7dtd APM Dashboard</h1><div class="muted">{{ session.name }} · pid {{ meta.pid or '?' }} · {{ meta.utc or '' }}</div></header>
+<main>
+{% if lag.verdict %}<section class="card full"><h2>Lag diagnosis</h2><p style="font-size:18px">{{ lag.verdict }}</p>{% if lag.profile %}<p class="muted">{{ lag.profile }}</p>{% endif %}{% for c in lag.causes %}<p>· <b>{{ c.cause }}</b> ({{ c.severity }}) — {{ c.detail }}{% if c.fix %}<br><span class="muted">fix: {{ c.fix }}</span>{% endif %}</p>{% endfor %}</section>{% endif %}
+<section class="card"><h2>Health</h2><div class="score">{{ health.grade or '?' }} · {{ health.health or '?' }}</div><p>Pressure {{ health.pressure or '?' }}</p></section>
+<section class="card"><h2>Artifacts</h2><ul>{% for label, href in links %}<li><a href="{{ href }}">{{ label }}</a></li>{% else %}<li>None produced</li>{% endfor %}</ul></section>
+<section class="card"><h2>Frame / GC</h2>
+{% if frameinfo %}<p>tick avg {{ frameinfo.tickIntervalAvgMs|round(1) }} ms · gmUpdate {{ frameinfo.gmUpdateAvgMs|round(1) }} ms · late ticks {{ frameinfo.lateTicks }}</p>{% endif %}
+{% if gcinfo %}<p>GC: {% if gcinfo.grossAllocMBPerSecond is not none %}{{ gcinfo.grossAllocMBPerSecond }} MB/s gross churn · {% endif %}{{ gcinfo.allocMBPerSecond }} MB/s net heap · {{ gcinfo.fullCollections }} full STW collections</p>
+{% if churn_sites %}<p class="muted">steady churn: {{ churn_sites|join(', ') }}</p>{% endif %}
+{% if alloc_sites %}<p class="muted">large-alloc spikes: {{ alloc_sites|join(', ') }}</p>{% endif %}{% endif %}
+{% if transfers %}<p>chunk stream: {{ transfers.mb_per_second }} MB/s · {{ transfers.packages_per_second }} pkg/s</p>{% endif %}
+{% if net %}<p>kernel udp (game): {{ net.udp_send_mb_per_second }} MB/s send · {{ net.udp_recv_mb_per_second }} MB/s recv</p>{% endif %}
+{% if worldinfo %}<p>world: {{ worldinfo.entities }} entities · {{ worldinfo.players }} players</p>{% endif %}</section>
+<section class="card full"><h2>Layer pressure</h2>{% for layer in layers %}<p>{{ layer.layer }} — {{ layer.score }}</p><div class="bar"><div class="fill" style="width:{{ layer.score }}%"></div></div>{% endfor %}</section>
+{% if attribution.subsystems %}<section class="card full"><h2>Subsystem attribution (managed, window-scoped)</h2>
+<p class="muted">measured {{ attribution.measured_ms }} ms{% if attribution.ms_per_tick %} · {{ attribution.ms_per_tick }} ms/tick{% endif %}{% if attribution.entities %} · {{ attribution.entities }} entities{% endif %}</p>
+<table><tr><th>Subsystem</th><th>Scaled total ms</th><th>Share</th><th>Top sections</th></tr>
+{% for s in attribution.subsystems %}<tr><td>{{ s.subsystem }}</td><td>{{ s.scaled_total_ms }}</td><td>{{ (s.share * 100)|round(1) }}%</td><td>{% for d in s.sections[:3] %}{{ d.name }} ({{ d.scaled_total_ms }}){% if not loop.last %}, {% endif %}{% endfor %}</td></tr>{% endfor %}
+</table></section>{% endif %}
+<section class="card full"><h2>Native → C# bridges</h2><table><tr><th>Title</th><th>Priority</th><th>Targets</th></tr>{% for bridge in bridges %}<tr><td>{{ bridge.title }}</td><td>{{ (bridge.inference or {}).priority or bridge.priority }}</td><td>{{ ((bridge.experiment or {}).harmony_targets or bridge.harmony_targets or [])|join(', ') }}</td></tr>{% else %}<tr><td colspan="3">No bridge data</td></tr>{% endfor %}</table></section>
+{% if stalls %}<section class="card full"><h2>Worst frame stalls (± 2s correlated evidence)</h2>
+<table><tr><th>gmUpdate ms</th><th>Detail</th><th>Nearby events</th></tr>
+{% for s in stalls %}<tr><td>{{ s.gm_update_ms }}</td><td><code>{{ s.message }}</code></td><td>{% for k, v in s.nearby_events.items() %}{{ k }}×{{ v }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>{% endfor %}
+</table></section>{% endif %}
+<section class="card full"><h2>Events</h2><table><tr><th>Kind</th><th>Severity</th><th>Message</th></tr>{% for event in events %}<tr><td>{{ event.kind }}</td><td>{{ event.severity }}</td><td><code>{{ event.message }}</code></td></tr>{% else %}<tr><td colspan="3">No events</td></tr>{% endfor %}</table></section>
+</main></body></html>

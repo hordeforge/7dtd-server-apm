@@ -1,0 +1,23 @@
+**/bin/
+**/obj/
+**/__pycache__/
+**/*.pyc
+**/*.user
+server/logs/
+server/logs/ebpf/
+server/logs/apm/
+*.log
+# Local Cecil dumps of game types (do not redistribute)
+research/il/
+.venv/
+.uv-cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+.coverage
+coverage.xml
+htmlcov/
+.DS_Store
+.idea/
+.vscode/

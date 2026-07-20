@@ -1,0 +1,30 @@
+/* On-CPU sampling @ 99Hz for dedicated server process.
+ * Defines: TARGET_PID, TARGET_COMM (15-char max, e.g. 7DaysToDieServe)
+ */
+#ifndef TARGET_PID
+#error "Define TARGET_PID"
+#endif
+#ifndef TARGET_COMM
+#define TARGET_COMM "7DaysToDieServe"
+#endif
+
+profile:hz:99
+/pid == TARGET_PID || comm == TARGET_COMM/
+{
+    @[ustack] = count();
+    @by_comm[comm] = count();
+}
+
+interval:s:10
+{
+    printf("samples so far (by comm):\n");
+    print(@by_comm);
+}
+
+END
+{
+    printf("\n=== on-CPU stacks count @99Hz (pid=%d comm=%s) ===\n", TARGET_PID, TARGET_COMM);
+    print(@);
+    printf("\n=== by comm ===\n");
+    print(@by_comm);
+}

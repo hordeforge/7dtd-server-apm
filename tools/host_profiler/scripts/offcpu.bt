@@ -1,0 +1,58 @@
+/* Main-thread off-CPU stalls for the 7DTD dedicated server.
+ *
+ * "Laggy without CPU" = the main thread blocking mid-frame (locks, IO,
+ * page faults, GC handshakes), not compute. We therefore:
+ *  - track ONLY the main thread (tid == TARGET_PID),
+ *  - weight blocking stacks by blocked DURATION, not switch count,
+ *  - keep the switch-out user stack so the blocking call site is attributed
+ *    (managed frames resolve via the bridge jitmap).
+ * The regular end-of-frame sleep shows up as one dominant wait stack; real
+ * stalls appear as separate stacks with large summed time.
+ */
+#ifndef TARGET_PID
+#error "Define TARGET_PID"
+#endif
+
+tracepoint:sched:sched_switch
+/args.prev_pid == TARGET_PID/
+{
+    @start[args.prev_pid] = nsecs;
+    @block_stack[args.prev_pid] = ustack(16);
+    @block_state[args.prev_pid] = args.prev_state;
+    @by_state[args.prev_state] = count();
+}
+
+tracepoint:sched:sched_switch
+/args.next_pid == TARGET_PID && @start[args.next_pid]/
+{
+    $us = (uint64)(nsecs - @start[args.next_pid]) / 1000;
+    delete(@start[args.next_pid]);
+    @offcpu_us = hist($us);
+    if ($us >= 1000) {
+        @stall_us_total = sum($us);
+        @stall_n = count();
+        @stall_stack_us[@block_stack[args.next_pid]] = sum($us);
+        /* state 2 = D (uninterruptible, usually IO); 1 = S (sleep/futex/cond) */
+        @stall_state_us[@block_state[args.next_pid]] = sum($us);
+        if ($us >= 10000) {
+            printf("STALL_MAIN %d us state=%d\n", $us, @block_state[args.next_pid]);
+        }
+    }
+    delete(@block_stack[args.next_pid]);
+    delete(@block_state[args.next_pid]);
+}
+
+END
+{
+    printf("\n=== main-thread off-CPU duration hist (us) ===\n");
+    print(@offcpu_us);
+    printf("\n=== switch-out counts by prev_state (R=0 S=1 D=2 ...) ===\n");
+    print(@by_state);
+    printf("\n=== stall totals (>=1ms blocks) ===\n");
+    print(@stall_us_total);
+    print(@stall_n);
+    printf("\n=== stall time by thread state (us) ===\n");
+    print(@stall_state_us);
+    printf("\n=== stall time by blocking stack (us, top 20) ===\n");
+    print(@stall_stack_us, 20);
+}

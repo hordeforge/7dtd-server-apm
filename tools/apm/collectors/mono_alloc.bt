@@ -1,0 +1,68 @@
+/* Managed allocation-site sampling for the 7DTD server (FORENSIC only).
+ *
+ * "Laggy without CPU" root-causes to Mono/Boehm stop-the-world GC; this probe
+ * names WHAT allocates. GC_malloc fires millions of times/sec, so a full
+ * uprobe would crush the server: we only sum total bytes cheaply, and capture
+ * a stack (resolvable via the bridge jitmap) for LARGE allocations (>=4 KB),
+ * which are the arrays / big lists that actually drive heap growth. Restrict
+ * to the main thread so the sites map to tick work.
+ *
+ * MONO_SO must be the absolute path to libmonobdwgc-2.0.so.
+ */
+#ifndef TARGET_PID
+#error "Define TARGET_PID"
+#endif
+#ifndef MONO_SO
+#error "Define MONO_SO"
+#endif
+
+uprobe:MONO_SO:GC_malloc
+/pid == TARGET_PID/
+{
+    @alloc_bytes_total = sum(arg0);
+    @alloc_calls = count();
+    if (arg0 >= 4096) {
+        @big_alloc_bytes[ustack(12)] = sum(arg0);
+        @big_alloc_count[ustack(12)] = count();
+        @big_alloc_total = sum(arg0);
+    }
+    // The steady GC-pause floor is small-object churn, which the >=4KB filter
+    // above misses entirely. Sample 1-in-4096 of ALL allocations with a stack
+    // so the dominant small-object sites are attributed cheaply (weight each
+    // hit by 4096 to reconstruct approximate byte share).
+    @n++;
+    if (@n % 4096 == 0) {
+        @sampled_alloc_bytes[ustack(10)] = sum(arg0 * 4096);
+        @sampled_alloc_hits[ustack(10)] = count();
+    }
+}
+
+uprobe:MONO_SO:GC_gcj_malloc
+/pid == TARGET_PID/
+{
+    @alloc_bytes_total = sum(arg0);
+    if (arg0 >= 4096) {
+        @big_alloc_bytes[ustack(12)] = sum(arg0);
+    }
+}
+
+interval:s:10
+{
+    printf("ALLOC_SAMPLE 10s window\n");
+}
+
+END
+{
+    printf("\n=== total managed alloc bytes (approx) ===\n");
+    print(@alloc_bytes_total);
+    print(@alloc_calls);
+    printf("\n=== large-allocation (>=4KB) total bytes ===\n");
+    print(@big_alloc_total);
+    printf("\n=== top large-allocation sites by bytes (top 20) ===\n");
+    print(@big_alloc_bytes, 20);
+    printf("\n=== top large-allocation sites by count (top 20) ===\n");
+    print(@big_alloc_count, 20);
+    printf("\n=== top sampled (1/4096, all sizes) allocation sites by est bytes (top 20) ===\n");
+    print(@sampled_alloc_bytes, 20);
+    clear(@n);
+}

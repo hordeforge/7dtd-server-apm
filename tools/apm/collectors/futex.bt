@@ -1,0 +1,78 @@
+/* Futex wait / wake contention for TARGET_COMM or TARGET_PID.
+ * Maps lock waits to user stacks (Mono/Unity native frames).
+ */
+#ifndef TARGET_PID
+#error "Define TARGET_PID"
+#endif
+#ifndef TARGET_COMM
+#define TARGET_COMM "7DaysToDieServe"
+#endif
+
+/* FUTEX_WAIT = 0, FUTEX_WAIT_PRIVATE = 128, etc. low 7 bits op */
+#define FUTEX_CMD_MASK 0x7f
+#define FUTEX_WAIT 0
+#define FUTEX_WAKE 1
+#define FUTEX_WAIT_BITSET 9
+
+tracepoint:syscalls:sys_enter_futex
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @futex_op[args.op & FUTEX_CMD_MASK] = count();
+    if ((args.op & FUTEX_CMD_MASK) == FUTEX_WAIT ||
+        (args.op & FUTEX_CMD_MASK) == FUTEX_WAIT_BITSET) {
+        @wait_enter[tid] = nsecs;
+    }
+    if ((args.op & FUTEX_CMD_MASK) == FUTEX_WAKE) {
+        @wake_n = count();
+    }
+}
+
+tracepoint:syscalls:sys_exit_futex
+/@wait_enter[tid]/
+{
+    $us = (nsecs - @wait_enter[tid]) / 1000;
+    delete(@wait_enter[tid]);
+    @wait_us = hist($us);
+    @wait_sum_us = sum($us);
+    @wait_n = count();
+    /* stacks of waiters — primary contention signal */
+    /* A long worker futex is often an intentional sleep. Main-thread waits are
+     * the actionable contention signal; retain very long waits as context. */
+    if (($us >= 1000 && tid == TARGET_PID) || $us >= 100000) {
+        @wait_stack[ustack] = count();
+        @wait_stack_time[ustack] = sum($us);
+    }
+    if (tid == TARGET_PID) {
+        @main_futex_wait_us = sum($us);
+        if ($us >= 5000) {
+            printf("SLOW_FUTEX %d us tid=%d\n", $us, tid);
+        }
+    }
+    if (tid != TARGET_PID && $us >= 100000) {
+        @long_worker_waits = count();
+    }
+}
+
+/* pthread_mutex / cond often via futex; also sample sched blocked on futex via offcpu elsewhere */
+
+interval:s:5
+{
+    time("%H:%M:%S ");
+    print(@wait_n);
+    print(@wake_n);
+    print(@wait_sum_us);
+}
+
+END
+{
+    printf("\n=== futex wait latency (us) ===\n");
+    print(@wait_us);
+    printf("\n=== futex op counts (cmd bits) ===\n");
+    print(@futex_op);
+    printf("\n=== main-thread total futex wait us ===\n");
+    print(@main_futex_wait_us);
+    printf("\n=== waiter stacks by count (top) ===\n");
+    print(@wait_stack, 40);
+    printf("\n=== waiter stacks by total wait us (top) ===\n");
+    print(@wait_stack_time, 40);
+}

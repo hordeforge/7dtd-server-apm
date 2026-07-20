@@ -1,0 +1,44 @@
+[project]
+name = "seven-dtd-apm"
+version = "2.1.0"
+description = "Host-only APM for 7 Days to Die dedicated servers"
+requires-python = ">=3.11"
+dependencies = [
+  "jinja2>=3.1,<4",
+  "psutil>=6,<8",
+  "pydantic>=2.9,<3",
+  "rich>=13.9,<15",
+  "typer>=0.15,<1",
+]
+
+[project.scripts]
+7dtd-apm = "apm_suite.cli:app"
+
+[dependency-groups]
+dev = ["mypy>=1.14,<2", "pytest>=8.3,<10", "ruff>=0.9,<1", "types-psutil>=6,<8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tools/apm_suite"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+exclude = ["scripts/dotnet-install.sh", "research", "tools/apm/testdata"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"] # Formatter cannot wrap embedded HTML, regexes, and generated snippets safely.
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["apm_suite"]
+mypy_path = "tools"
+
+[tool.pytest.ini_options]
+testpaths = ["tools/apm_suite/tests"]
+addopts = "-q"

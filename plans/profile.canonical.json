@@ -1,0 +1,20 @@
+[
+  {
+    "label": "canonical-heavy-v2",
+    "_note": "STANDARD load profile: heavy mixed (network + entity-AI + GC). Requires server MaxPlayers>=64 (RE_SERVER_MAX_PLAYERS=64). 64 players wander/fight while ~300+ zombies are spawned around them - stresses the O(players x entities) replication wall, the entity-AI tick, and GC churn together. Seed-locked for reproducibility. Older moderate baseline (50 clients) lives as tier-moderate in profile.tiers.json.",
+    "seed": 20240717,
+    "clients": 64,
+    "actions": 8000,
+    "warmup": 90,
+    "seconds": 150,
+    "preset": "forensic",
+    "reset_bridge": true,
+    "bot_mix": "traverse:30,wander:20,combat:25,bait:10,demolition:10,chatty:5",
+    "spawn_entity": "zombieBoe,zombieArlene,zombieMoe,animalDireWolf,animalMountainLion,animalStag,animalBoar,animalZombieVulture,zombieDemolition,vehicleMotorcycle,vehicleTruck4x4,entityJunkDrone",
+    "spawn_per_player": 6,
+    "spawn_every_ms": 8000,
+    "horde_every_ms": 40000,
+    "horde_waves": 4,
+    "max_dynamite": 80
+  }
+]

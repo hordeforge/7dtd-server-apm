@@ -1,0 +1,67 @@
+/* Scheduler state transitions + main-thread run-queue latency.
+ *
+ * All-thread preemption context (comm match) plus a main-thread-specific
+ * run-queue latency: when the MAIN tick thread is woken but the OS does not
+ * schedule it for milliseconds, the frame is late for a reason that has
+ * nothing to do with the game's own CPU use (contention, bad affinity, a
+ * noisy neighbor). That is a distinct "laggy without CPU" cause.
+ */
+#ifndef TARGET_COMM
+#define TARGET_COMM "7DaysToDieServe"
+#endif
+#ifndef TARGET_PID
+#error "Define TARGET_PID"
+#endif
+
+tracepoint:sched:sched_switch
+/* Unity/Mono rename most worker threads, so a comm match alone misses them.
+ * The outgoing thread is `current`, so `pid` is its tgid; also accept the
+ * target process to cover renamed workers. */
+/args.prev_comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @prev_state[args.prev_state] = count();
+    /* state 0 = TASK_RUNNING (still runnable -> preemption/contention) */
+    if (args.prev_state == 0) {
+        @preempted = count();
+        @preempt_stack[ustack] = count();
+    }
+}
+
+tracepoint:sched:sched_wakeup
+/args.pid == TARGET_PID/
+{
+    @main_wake = nsecs;
+}
+
+tracepoint:sched:sched_switch
+/args.next_pid == TARGET_PID && @main_wake/
+{
+    $us = (uint64)(nsecs - @main_wake) / 1000;
+    delete(@main_wake);
+    if ($us < 5000000) {
+        @main_runqlat_us = hist($us);
+        @main_runqlat_sum_us = sum($us);
+        if ($us >= 1000) {
+            @main_runq_stall_us = sum($us);
+            @main_runq_stall_n = count();
+            if ($us >= 5000) {
+                printf("MAIN_RUNQ_STALL %d us (ready, not scheduled)\n", $us);
+            }
+        }
+    }
+}
+
+END
+{
+    printf("\n=== switch-out prev_state counts (0=R preempt) ===\n");
+    print(@prev_state);
+    printf("\n=== preemption count ===\n");
+    print(@preempted);
+    printf("\n=== main-thread run-queue latency us (wake -> scheduled) ===\n");
+    print(@main_runqlat_us);
+    printf("\n=== main-thread runq stall (>=1ms) total us + count ===\n");
+    print(@main_runq_stall_us);
+    print(@main_runq_stall_n);
+    printf("\n=== preempt stacks (top) ===\n");
+    print(@preempt_stack, 30);
+}

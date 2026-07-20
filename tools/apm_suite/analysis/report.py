@@ -1,0 +1,1126 @@
+"""Build the unified, schema-validated summary.json for a capture session.
+
+Scores layers (cpu, memory/cache, sync/locks, scheduler, io, runtime/gc, app)
+so you know where to optimize first. HTML rendering lives solely in
+apm_suite.reporting; health lives solely in health.json.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import json
+import re
+from pathlib import Path
+from typing import Any
+
+from ..io import atomic_json
+from ..models import LayerScore, SummaryV2, schema_dict
+
+
+def parse_perf_stat(text: str) -> dict[str, float]:
+    """Parse `perf stat -o` output into name->value."""
+    out: dict[str, float] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "Performance counter" in line:
+            continue
+        elapsed = re.match(r"([\d.]+)\s+seconds time elapsed", line)
+        if elapsed:
+            out["time_elapsed_s"] = float(elapsed.group(1))
+            continue
+        counter = re.match(r"([\d,.]+)\s+(\S+)", line)
+        if not counter:
+            continue
+        raw, name = counter.group(1), counter.group(2).split(":")[0]
+        try:
+            out[name] = float(raw.replace(",", ""))
+        except ValueError:
+            continue
+    return out
+
+
+def load_texts(session: Path) -> dict[str, str]:
+    mapping = {
+        "futex": session / "sync/futex.bt.out",
+        "vfs": session / "io/vfs.bt.out",
+        "block": session / "io/block.bt.out",
+        "io_net": session / "io/io_net.bt.out",
+        "runqlat": session / "scheduler/runqlat.bt.out",
+        "states": session / "scheduler/states.bt.out",
+        "offcpu": session / "scheduler/offcpu.bt.out",
+        "oncpu": session / "cpu/oncpu.bt.out",
+        "mono_gc": session / "runtime/mono_gc.bt.out",
+        "mono_alloc": session / "runtime/mono_alloc.bt.out",
+        "hw": session / "memory/hw_stat.txt",
+    }
+    texts = {
+        key: path.read_text(errors="replace") if path.exists() else ""
+        for key, path in mapping.items()
+    }
+    app_path = session / "app/bridge.jsonl"
+    parts: list[str] = []
+    if app_path.exists():
+        for line in app_path.read_text().splitlines():
+            try:
+                record = json.loads(line)
+                parts.append(str(record.get("text") or record.get("error") or ""))
+            except json.JSONDecodeError:
+                pass
+    texts["app"] = "\n".join(parts)
+    return texts
+
+
+def _cpu_layer(hw: dict[str, float], texts: dict[str, str]) -> LayerScore:
+    cycles = hw.get("cycles") or hw.get("cpu-clock") or 0
+    instructions = hw.get("instructions") or 0
+    ipc = (instructions / cycles) if cycles else 0
+    score = 0
+    if ipc and ipc < 0.5:
+        score += 40
+    elif ipc and ipc < 1.0:
+        score += 20
+    if len(texts.get("oncpu", "")) > 500:
+        score += 15
+    return LayerScore(
+        layer="cpu",
+        score=min(100, score),
+        signals={
+            "ipc": round(ipc, 3) if ipc else None,
+            "cycles": cycles,
+            "instructions": instructions,
+        },
+        optimize=[
+            "Reduce work on main sim thread (APM bridge managed sections)",
+            "AI LOD / MaxSpawnedZombies / view distance",
+            "Avoid Harmony on ultra-hot methods without budgets",
+        ],
+    )
+
+
+def _cache_layer(hw: dict[str, float]) -> LayerScore:
+    references = hw.get("cache-references") or 0
+    misses = hw.get("cache-misses") or 0
+    miss_rate = (misses / references) if references else 0
+    score = 0
+    if miss_rate > 0.15:
+        score = 70
+    elif miss_rate > 0.08:
+        score = 40
+    elif miss_rate > 0.03:
+        score = 20
+    llc_misses = hw.get("LLC-load-misses") or 0
+    llc_loads = hw.get("LLC-loads") or 0
+    if llc_loads and llc_misses / llc_loads > 0.2:
+        score = max(score, 50)
+    return LayerScore(
+        layer="memory_cache",
+        score=min(100, score),
+        signals={
+            "cache_miss_rate": round(miss_rate, 4) if references else None,
+            "cache_misses": misses,
+            "cache_references": references,
+            "LLC_load_misses": llc_misses or None,
+        },
+        optimize=[
+            "Reduce working set (chunks loaded, mesh queues)",
+            "Avoid large per-tick allocations (GC pressure)",
+            "Lower ServerMaxAllowedViewDistance / MaxQueuedMeshLayers",
+        ],
+    )
+
+
+def _sync_layer(texts: dict[str, str], duration: float) -> LayerScore:
+    futex_text = texts.get("futex", "")
+    slow_futex = futex_text.count("SLOW_FUTEX")
+    rate = slow_futex / duration
+    main_wait = re.search(r"@main_futex_wait_us:\s*(\d+)", futex_text)
+    main_wait_ms = int(main_wait.group(1)) / 1000 if main_wait else 0
+    # SLOW_FUTEX is restricted to >=5 ms waits on the main process thread.
+    # Worker futex durations are commonly intentional sleeps and are context,
+    # not a contention score by themselves.
+    if rate >= 2:
+        score = 90
+    elif rate >= 0.5:
+        score = 65
+    elif rate >= 0.1:
+        score = 35
+    elif slow_futex:
+        score = 15
+    else:
+        score = 0
+    # main-thread total futex wait time is a direct contention measure that
+    # does not depend on the 5ms SLOW threshold.
+    main_wait_share = main_wait_ms / (duration * 1000) if duration else 0
+    if main_wait_share >= 0.1:
+        score = max(score, 80)
+    elif main_wait_share >= 0.03:
+        score = max(score, 50)
+    return LayerScore(
+        layer="sync_locks",
+        score=min(100, score),
+        signals={
+            "slow_futex_lines": slow_futex,
+            "slow_futex_per_second": round(rate, 3),
+            "main_thread_futex_wait_ms": round(main_wait_ms, 1),
+            "main_thread_futex_wait_share": round(main_wait_share, 4),
+            "threshold_ms": 5,
+            "scope": "main_thread",
+        },
+        optimize=[
+            "Inspect futex waiter stacks in sync/futex.bt.out",
+            "Reduce lock hold time on main thread (Unity/Mono)",
+            "Avoid sync IO under locks; move work off sim thread",
+        ],
+    )
+
+
+def _scheduler_layer(texts: dict[str, str], duration: float) -> LayerScore:
+    combined = texts.get("runqlat", "") + texts.get("states", "")
+    offcpu = texts.get("offcpu", "")
+    score = 0
+    # bpftrace hist buckets use K/M/G suffixes ("[1K, 2K)"), so a bucket whose
+    # LOWER bound carries a suffix is >= 1024 us ~ 1 ms. (The old raw-digit regex
+    # never matched real output.)
+    if re.search(r"\[\s*[0-9]+[KMG],", combined):  # off-CPU/runq block >= ~1ms
+        score += 30
+    if "preempt" in combined or "@preempted" in combined:
+        score += 20
+    # Main-thread off-CPU: total includes the healthy 20-TPS frame-pacing
+    # sleep (server sleeps between ticks when it has spare budget), which is
+    # NOT lag. Two refinements isolate the pathological part:
+    #  - D-state (uninterruptible, disk) blocks are always suspect,
+    #  - among S-state blocks, the single dominant stack is the pacing sleep;
+    #    the remaining stack time is mid-frame lock/cond waits.
+    # Main-thread off-CPU total is dominated by the healthy 20-TPS frame-pacing
+    # sleep (server sleeps between ticks when under budget). With fp unwinding
+    # that sleep fragments across many shallow stacks, so it cannot be split by
+    # stack. D-state (uninterruptible, disk) blocks are the one unambiguous
+    # pathological signal here; the "laggy" headline lives on app_sim late
+    # ticks (bridge-measured tick overage), not on this total.
+    stall_match = re.search(r"@stall_us_total:\s*(\d+)", offcpu)
+    stall_ms = int(stall_match.group(1)) / 1000 if stall_match else 0
+    d_state = re.search(r"@stall_state_us\[2\]:\s*(\d+)", offcpu)
+    d_state_ms = int(d_state.group(1)) / 1000 if d_state else 0
+    d_share = d_state_ms / (duration * 1000) if duration else 0
+    stall_events = offcpu.count("STALL_MAIN")
+    states = texts.get("states", "")
+    runq = re.search(r"@main_runq_stall_us:\s*(\d+)", states)
+    runq_stall_ms = int(runq.group(1)) / 1000 if runq else 0
+    runq_events = states.count("MAIN_RUNQ_STALL")
+    if d_share >= 0.05:
+        score = max(score, 80)
+    elif d_share >= 0.01:
+        score = max(score, 50)
+    elif d_state_ms > 0:
+        score = max(score, 25)
+    # Main tick thread ready but not scheduled = OS starvation (contention /
+    # affinity), independent of the game's own CPU.
+    if runq_stall_ms >= (duration * 1000 * 0.05):
+        score = max(score, 75)
+    elif runq_stall_ms > 20:
+        score = max(score, 45)
+    return LayerScore(
+        layer="scheduler",
+        score=min(100, score),
+        signals={
+            "main_thread_offcpu_ms": round(stall_ms, 1),
+            "disk_block_ms": round(d_state_ms, 1),
+            "disk_block_share": round(d_share, 4),
+            "main_runq_stall_ms": round(runq_stall_ms, 1),
+            "main_runq_stall_events": runq_events,
+            "blocks_over_10ms": stall_events,
+            "note": "off-CPU total includes healthy 20-TPS pacing sleep; see app_sim late_ticks",
+        },
+        optimize=[
+            "app_sim.late_ticks is the lag headline (bridge tick overage)",
+            "scheduler/offcpu.bt.out stall stacks attribute blocks to call sites",
+            "D-state disk blocks on the tick thread = move IO off the main thread",
+        ],
+    )
+
+
+def _io_layer(texts: dict[str, str]) -> LayerScore:
+    vfs = texts.get("vfs", "")
+    slow_block = texts.get("block", "").count("SLOW_BLOCK")
+    main_io = vfs.count("SLOW_VFS_MAIN")
+    score = min(
+        100, slow_block * 15 + (20 if "slow_read_stack" in vfs or "@slow_read" in vfs else 0)
+    )
+    if main_io:
+        score = max(score, min(100, 40 + main_io * 5))  # main-thread file IO stalls frames
+    if "fsync" in vfs.lower():
+        score = max(score, 10)
+    return LayerScore(
+        layer="io",
+        score=min(100, score),
+        signals={"slow_block_lines": slow_block, "main_thread_slow_io": main_io},
+        optimize=[
+            "NVMe for Saves; avoid network filesystem for region files",
+            "Tune autosave interval; reduce map rendering",
+            "Inspect vfs slow stacks + openat paths",
+        ],
+    )
+
+
+def _gc_layer(texts: dict[str, str]) -> LayerScore:
+    gc_text = texts.get("mono_gc", "")
+    # The probe emits one slow token, "SLOW mono_gc_collect". "SLOW mono_gc" is a
+    # prefix of it, so counting both double-counts every slow-collect line.
+    slow_gc = gc_text.count("SLOW mono_gc_collect")
+    # @little_n is printed each interval as a growing cumulative; take the LAST.
+    little_hits = re.findall(r"@little_n:\s*(\d+)", gc_text)
+    little = int(little_hits[-1]) if little_hits else 0
+    # Direct stop-the-world freeze: total us all threads (incl. main tick) were
+    # suspended, and worst single pause. This IS the "laggy without CPU" time.
+    stw_sum = re.search(r"@stw_sum:\s*(\d+)", gc_text)
+    stw_ms = int(stw_sum.group(1)) / 1000 if stw_sum else 0.0
+    stw_pauses = gc_text.count("STW_PAUSE")
+    worst_stw_ms = max(
+        (int(m) / 1000 for m in re.findall(r"STW_PAUSE (\d+) us", gc_text)), default=0.0
+    )
+    score = min(100, slow_gc * 25 + min(40, little // 50))
+    if worst_stw_ms >= 100:  # a >=100ms freeze is 2+ missed 50ms ticks
+        score = max(score, 85)
+    elif worst_stw_ms >= 50:
+        score = max(score, 60)
+    return LayerScore(
+        layer="runtime_gc",
+        score=score,
+        signals={
+            "slow_gc_lines": slow_gc,
+            "collect_a_little_hits": little or None,
+            "stw_pause_total_ms": round(stw_ms, 1),
+            "stw_pause_count": stw_pauses,
+            "stw_pause_worst_ms": round(worst_stw_ms, 1),
+        },
+        optimize=[
+            "Cut allocations in hot Harmony paths",
+            "Object pools for per-tick lists",
+            "stw_pause_worst_ms is the direct main-thread freeze; cut gross alloc to shrink it",
+        ],
+    )
+
+
+def _app_layer(texts: dict[str, str]) -> LayerScore:
+    app = texts.get("app", "")
+    score = 0
+    if "TickEntities" in app or "tick" in app.lower():
+        score += 10
+    if "spike" in app.lower():
+        score += 30
+    return LayerScore(
+        layer="app_sim",
+        score=min(100, score),
+        signals={"has_managed_bridge": bool(app.strip())},
+        optimize=[
+            "APM bridge snapshot / deep for C# sections",
+            "sibling 7dtd-loadgen scenario to reproduce AI pressure",
+            "EfficientServer AI LOD + mesh budgets",
+        ],
+    )
+
+
+ALIASES = {
+    "memory_cache": {"memory", "hw", "cache"},
+    "sync_locks": {"sync", "locks", "futex"},
+    "runtime_gc": {"runtime", "gc"},
+    "app_sim": {"app"},
+    "scheduler": {"scheduler", "sched"},
+}
+
+
+def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> list[LayerScore]:
+    """Heuristic 0-100 severity scores (higher = more pressure), coverage-aware."""
+    meta: dict[str, Any] = {}
+    meta_path = session / "meta.json"
+    if meta_path.is_file():
+        meta = json.loads(meta_path.read_text())
+    duration = max(1.0, float(meta.get("seconds") or 1))
+    scores = [
+        _cpu_layer(hw, texts),
+        _cache_layer(hw),
+        _sync_layer(texts, duration),
+        _scheduler_layer(texts, duration),
+        _io_layer(texts),
+        _gc_layer(texts),
+        _app_layer(texts),
+    ]
+    requested = {token.strip() for token in str(meta.get("only") or "all").split(",")}
+    sources = {
+        "cpu": [session / "cpu/oncpu.bt.out", session / "cpu/perf/stacks.folded"],
+        "memory_cache": [session / "memory/hw_stat.txt", session / "memory/proc.jsonl"],
+        "sync_locks": [session / "sync/futex.bt.out"],
+        "scheduler": [session / "scheduler/runqlat.bt.out", session / "scheduler/states.bt.out"],
+        "io": [session / "io/vfs.bt.out", session / "io/block.bt.out"],
+        "runtime_gc": [session / "runtime/mono_gc.bt.out"],
+        "app_sim": [session / "app/apm_app.json", session / "app/bridge.jsonl"],
+    }
+    for score in scores:
+        wanted = (
+            "all" in requested
+            or score.layer in requested
+            or bool(ALIASES.get(score.layer, {score.layer}) & requested)
+        )
+        present = any(p.is_file() and p.stat().st_size for p in sources[score.layer])
+        score.state = "collected" if present else "unavailable" if wanted else "skipped"
+        score.confidence = "medium" if score.state == "collected" else "low"
+        if score.state != "collected":
+            score.score = None
+            score.signals = {
+                "reason": "collector produced no usable evidence"
+                if wanted
+                else "layer not requested"
+            }
+            score.optimize = []
+    scores.sort(key=lambda s: -(s.score if s.score is not None else -1))
+    return scores
+
+
+def thread_summary(session: Path) -> dict[str, Any]:
+    path = session / "threads/threads.jsonl"
+    if not path.exists():
+        return {}
+    meta_path = session / "meta.json"
+    main_tid = 0
+    if meta_path.is_file():
+        with contextlib.suppress(ValueError, OSError):
+            main_tid = int(json.loads(meta_path.read_text()).get("pid") or 0)
+    samples: list[dict[str, Any]] = []
+    for line in path.read_text().splitlines():
+        if line.strip():
+            samples.append(json.loads(line))
+    if not samples:
+        return {}
+    last = samples[-1]
+    # Main-thread saturation: averaged across samples, the main thread's own
+    # CPU% and its share of total process CPU. High main share with a low
+    # box-wide load = "laggy without CPU" that is really main-thread-bound.
+    main_cpus: list[float] = []
+    main_shares: list[float] = []
+    for sample in samples:
+        rows = sample.get("top") or []
+        total = sum(float(r.get("cpu_pct") or 0) for r in rows)
+        main = next((float(r.get("cpu_pct") or 0) for r in rows if r.get("tid") == main_tid), 0.0)
+        if total > 0:
+            main_cpus.append(main)
+            main_shares.append(main / total)
+    main_cpu_avg = round(sum(main_cpus) / len(main_cpus), 1) if main_cpus else None
+    main_share_avg = round(sum(main_shares) / len(main_shares), 3) if main_shares else None
+    return {
+        "n_threads": last.get("n_threads"),
+        "states": last.get("states"),
+        "wchan_top": last.get("wchan_top"),
+        "main_thread_cpu_pct_avg": main_cpu_avg,
+        "main_thread_share_of_process_avg": main_share_avg,
+        "top_cpu": [
+            {
+                "comm": t.get("comm"),
+                "cpu_pct": t.get("cpu_pct"),
+                "wchan": t.get("wchan"),
+                "state": t.get("state"),
+            }
+            for t in (last.get("top") or [])[:8]
+        ],
+    }
+
+
+def memory_trend(session: Path) -> dict[str, Any]:
+    """RSS slope over the window: distinguishes GC churn (flat RSS, oscillating
+    heap) from a real leak / unbounded buffer (RSS climbing). fd growth catches
+    socket/handle leaks."""
+    path = session / "memory/proc.jsonl"
+    if not path.is_file():
+        return {}
+    times: list[float] = []
+    rss: list[float] = []
+    fds: list[int] = []
+    for line in path.read_text().splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("t") is not None and record.get("rss_mb") is not None:
+            times.append(float(record["t"]))
+            rss.append(float(record["rss_mb"]))
+            fds.append(int(record.get("fd_count") or 0))
+    if len(rss) < 3:
+        return {}
+    span = times[-1] - times[0]
+    rss_slope = (rss[-1] - rss[0]) / span if span > 0 else 0  # MB/s
+    return {
+        "rss_start_mb": round(rss[0], 1),
+        "rss_end_mb": round(rss[-1], 1),
+        "rss_growth_mb_per_s": round(rss_slope, 3),
+        "fd_start": fds[0],
+        "fd_end": fds[-1],
+    }
+
+
+# Frames that are runtime/BCL/engine/profiler noise, never the allocation's real
+# owner. 7DTD game types live in the global namespace (GameManager, AstarVoxelGrid)
+# or resolve as Class.Method, so skipping these surfaces the game frame. Note
+# UnityEngine.* is skipped: engine struct/util methods (Quaternion.FromToRotation,
+# Vector3 ops) appear as leaf frames but do not own the heap allocation - the real
+# allocator is the game caller below. Kept consistent with the CPU filter.
+_ALLOC_NOISE_PREFIX = (
+    "System.",
+    "UnityEngine.",
+    "Unity.",
+    "Mono.",
+    "Cysharp.",
+    "Newtonsoft.",
+)
+_ALLOC_NOISE_EXACT = frozenset({"GC_malloc", "GC_gcj_malloc", "GC_gcj_fast_malloc"})
+
+# One bpftrace ustack map record: @name[\n <frames> \n]: <value>.
+_ALLOC_RECORD = re.compile(r"@\w+\[\n(?P<frames>.*?)\n\s*\]:\s*(?P<value>\d+)", re.DOTALL)
+
+
+def _alloc_stack_site(frames: list[str]) -> str | None:
+    """First real game frame under the GC_malloc leaf, or None if unattributable.
+
+    The leaf is always GC_malloc; just below it sit BCL/runtime frames (String.*,
+    the profiler, unresolved hex). Walk down to the first frame that is actual
+    game/engine code - that is the method responsible for the allocation.
+    """
+    for frame in frames:
+        name = frame.split("+", 1)[0].strip()
+        if not name or name.startswith("0x"):
+            continue
+        if name in _ALLOC_NOISE_EXACT or name.startswith(_ALLOC_NOISE_PREFIX):
+            continue
+        if "." not in name and "::" not in name:
+            continue  # not a resolved Class.Method symbol
+        return name
+    return None
+
+
+def _alloc_block_sites(session: Path, header: str, limit: int) -> list[str]:
+    """Rank allocation sites in a bpftrace ustack block by total bytes.
+
+    bpftrace prints maps ascending, so the biggest allocations are LAST; naive
+    top-down reading grabs the smallest, noisiest stacks. Instead parse every
+    (stack, bytes) record, attribute each to its owning game frame, aggregate by
+    bytes, and return the true heaviest sites.
+    """
+    annotated = session / "runtime" / "mono_alloc.bt.annotated.txt"
+    source = annotated if annotated.is_file() else session / "runtime" / "mono_alloc.bt.out"
+    if not source.is_file():
+        return []
+    # Slice to just this section: from the header to the next "===" divider.
+    block = source.read_text(errors="replace").partition(header)[2].split("\n===", 1)[0]
+    totals: dict[str, int] = {}
+    for match in _ALLOC_RECORD.finditer(block):
+        frames = [ln.strip() for ln in match.group("frames").splitlines() if ln.strip()]
+        site = _alloc_stack_site(frames)
+        if site is None:
+            continue
+        totals[site] = totals.get(site, 0) + int(match.group("value"))
+    return sorted(totals, key=lambda s: totals[s], reverse=True)[:limit]
+
+
+# CPU-flame frame noise: native libs, kernel, unresolved, and the BCL/runtime.
+# A "game frame" is Class.Method that is not one of these prefixes.
+_CPU_NOISE_PREFIX = ("System.", "UnityEngine.", "Unity.", "Mono.", "Cysharp.", "Newtonsoft.")
+
+
+def _is_game_frame(frame: str) -> bool:
+    f = frame.strip()
+    if not f or f.startswith("[") or f.startswith("0x"):
+        return False  # [libc.so.6] / [unknown] / [jit] / raw hex
+    if "." not in f and "::" not in f:
+        return False  # native C symbol (GC_dirty_inner, __pthread_*)
+    return not f.startswith(_CPU_NOISE_PREFIX)  # skip BCL / engine runtime
+
+
+def _rank_folded(folded: Path, limit: int) -> dict[str, list[tuple[str, float]]]:
+    if not folded.is_file():
+        return {"inclusive": [], "self_game": []}
+    inclusive: dict[str, int] = {}
+    self_game: dict[str, int] = {}
+    total = 0
+    for line in folded.read_text(errors="replace").splitlines():
+        sp = line.rsplit(" ", 1)
+        if len(sp) != 2 or not sp[1].isdigit():
+            continue
+        frames = sp[0].split(";")
+        count = int(sp[1])
+        total += count
+        for fr in set(frames):  # inclusive: count a function once per stack
+            inclusive[fr] = inclusive.get(fr, 0) + count
+        # self_game: walk from the leaf down to the first game frame
+        for fr in reversed(frames):
+            if _is_game_frame(fr):
+                name = fr.split("+", 1)[0].strip()
+                self_game[name] = self_game.get(name, 0) + count
+                break
+    if total == 0:
+        return {"inclusive": [], "self_game": []}
+
+    def rank(d: dict[str, int]) -> list[tuple[str, float]]:
+        top = sorted(d.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+        return [(k.split("+", 1)[0], round(100.0 * v / total, 1)) for k, v in top]
+
+    return {"inclusive": rank(inclusive), "self_game": rank(self_game)}
+
+
+def top_cpu_hot_paths(session: Path, limit: int = 12) -> dict[str, list[tuple[str, float]]]:
+    """Rank hot paths from the symbolized perf folded stacks - comprehensive
+    auto-discovery beyond the curated bridge sections. Views (name, percent):
+      inclusive   - functions by total samples anywhere in the stack (all-thread,
+        native kept); broad "where does aggregate CPU go".
+      self_game   - leaf attributed to the first GAME frame (all-thread); which
+        game code is hot across all cores (serialization, chunk, light...).
+      main_thread - self_game restricted to the sim thread (tid==pid, from
+        stacks.main.folded): the hot game code FOR THE 20 TPS TICK ITSELF - the
+        thing that actually gates ms_per_tick, invisible in the all-thread views
+        (the single sim thread is a small slice of aggregate CPU).
+    """
+    perf = session / "cpu/perf"
+    agg = _rank_folded(perf / "stacks.folded", limit)
+    main = _rank_folded(perf / "stacks.main.folded", limit)
+    return {
+        "inclusive": agg["inclusive"],
+        "self_game": agg["self_game"],
+        "main_thread": main["self_game"],
+    }
+
+
+def top_alloc_sites(session: Path, limit: int = 3) -> list[str]:
+    """Top methods behind the biggest LARGE (>=4KB) allocations (heap spikes)."""
+    return _alloc_block_sites(session, "top large-allocation sites by bytes", limit)
+
+
+def top_churn_sites(session: Path, limit: int = 3) -> list[str]:
+    """Top methods behind the steady small-object churn (1/4096 sampled, all sizes).
+
+    This is the GC-pause FLOOR source, which the >=4KB large-alloc view misses.
+    """
+    return _alloc_block_sites(session, "top sampled (1/4096, all sizes)", limit)
+
+
+def top_stack_sites(session: Path, rel: str, header: str, limit: int = 3) -> list[str]:
+    """Leaf managed frame names from the top stacks of an annotated bt.out block.
+
+    Generic version of top_alloc_sites: used to name lock-contention waiters and
+    other blocking sites once jitsym has annotated the probe output.
+    """
+    stem = session / rel
+    annotated = stem.with_suffix(".annotated.txt")
+    source = annotated if annotated.is_file() else stem
+    if not source.is_file():
+        return []
+    block = source.read_text(errors="replace").partition(header)[2]
+    sites: list[str] = []
+    for line in block.splitlines():
+        frame = line.strip()
+        if frame and not frame.startswith("0x") and frame not in ("]", "@"):
+            name = frame.split("+", 1)[0]
+            if "." in name and name not in sites and not name.startswith("@"):
+                sites.append(name)
+        if len(sites) >= limit:
+            break
+    return sites
+
+
+def diagnose_lag(
+    layers: list[LayerScore],
+    metadata: dict[str, Any],
+    threads: dict[str, Any],
+    attribution: dict[str, Any] | None = None,
+    session: Path | None = None,
+) -> dict[str, Any]:
+    """Synthesize the layer signals into a ranked, plain-language lag verdict.
+
+    "Laggy without CPU" has a few distinct root causes; this names which ones
+    fired this session and how bad, so the reader gets an answer, not a table.
+    """
+    signals = {layer.layer: layer.signals for layer in layers if layer.state == "collected"}
+    frame = metadata.get("frame") or {}
+    gc = metadata.get("gc") or {}
+    alloc_sites: list[str] = metadata.get("top_alloc_sites") or []
+    churn_sites: list[str] = metadata.get("top_churn_sites") or []
+    causes: list[dict[str, Any]] = []
+
+    late = int(frame.get("lateTicks") or 0)
+    tick_stall = float(frame.get("tickStallMsTotal") or 0)
+    laggy = late > 0
+
+    # Saturation / death-spiral: tick interval far over the 50 ms (20 TPS)
+    # budget with essentially every tick late means the server is not merely
+    # laggy, it is past its capacity (e.g. the ~0.3 TPS collapse at ~500
+    # players). Surface it as the dominant cause so it is not mistaken for a
+    # transient spike.
+    tick_interval = float(frame.get("tickIntervalAvgMs") or 0)
+    window_updates = int(frame.get("windowUpdates") or 0)
+    tps = 1000 / tick_interval if tick_interval > 0 else 0
+    late_share = late / window_updates if window_updates else 0
+    saturated = tick_interval >= 150 and late_share >= 0.9
+    if saturated:
+        causes.append(
+            {
+                "cause": "server_saturated",
+                "severity": 1.0,
+                "detail": f"{tps:.2f} TPS ({tick_interval:.0f} ms/tick vs 50 ms budget), "
+                f"{late}/{window_updates} ticks late - past capacity, not a transient spike",
+                "fix": "reduce load or fix the dominant subsystem below; at player scale "
+                "this is the connection/serialization wall (optimizer 4d)",
+            }
+        )
+
+    # allocMBPerSecond is NET heap growth (GetTotalMemory delta); at steady
+    # state alloc==collect so it reads ~0 even under heavy churn. The full-GC
+    # count is the direct pause signal, and grossAllocMBPerSecond (bridge
+    # GetTotalAllocatedBytes, monotonic) is the true pressure when available.
+    net_heap = float(gc.get("allocMBPerSecond") or 0)
+    gross = float(gc.get("grossAllocMBPerSecond") or 0)
+    full_gc = int(gc.get("fullCollections") or 0)
+    window_s = float(gc.get("windowSeconds") or 0)
+    gc_rate = full_gc / window_s if window_s > 0 else 0  # full GCs per second
+    gc_signals = signals.get("runtime_gc") or {}
+    worst_stw = float(gc_signals.get("stw_pause_worst_ms") or 0)
+    stw_total = float(gc_signals.get("stw_pause_total_ms") or 0)
+    little = int(gc_signals.get("collect_a_little_hits") or 0)
+    little_rate = little / window_s if window_s > 0 else 0
+    if gross >= 1.5 or full_gc >= 1 or worst_stw >= 50:
+        pressure = f"{gross} MB/s gross alloc" if gross > 0 else f"{net_heap} MB/s net heap growth"
+        # Two distinct drains from the same churn: rare big STW freezes vs. the
+        # constant incremental collect_a_little nibbling the main thread.
+        if worst_stw >= 50:
+            stw_detail = f", worst freeze {worst_stw} ms ({stw_total} ms total STW)"
+        elif little_rate >= 50:
+            stw_detail = (
+                f", incremental GC {little_rate:.0f}/s (small STW {stw_total} ms total; "
+                "cost is spread across ticks, not one freeze)"
+            )
+        elif worst_stw > 0:
+            stw_detail = f", worst freeze {worst_stw} ms ({stw_total} ms total)"
+        else:
+            stw_detail = ""
+        causes.append(
+            {
+                "cause": "gc_pauses",
+                "severity": round(min(1.0, gross / 8 + full_gc / 6 + worst_stw / 200), 2),
+                "detail": f"{full_gc} full stop-the-world GC(s) ({gc_rate:.2f}/s), "
+                f"{pressure}{stw_detail}",
+                "fix": (
+                    "cut per-tick allocations"
+                    + (f"; large-alloc spikes: {', '.join(alloc_sites)}" if alloc_sites else "")
+                    + (f"; steady churn: {', '.join(churn_sites)}" if churn_sites else "")
+                    + "; guard dedicated GC.Collect (optimizer A7)"
+                ),
+            }
+        )
+
+    main_share = float(threads.get("main_thread_share_of_process_avg") or 0)
+    main_cpu = float(threads.get("main_thread_cpu_pct_avg") or 0)
+    if main_share >= 0.5:
+        # Name the hot game code ON the tick (main-thread perf), not aggregate CPU.
+        hot = (metadata.get("cpu_hot_paths") or {}).get("main_thread") or []
+        hot_str = ", ".join(f"{n} {p}%" for n, p in hot[:6])
+        causes.append(
+            {
+                "cause": "main_thread_bound",
+                "severity": round(min(1.0, main_share), 2),
+                "detail": f"main thread = {main_cpu}% CPU, {int(main_share * 100)}% of process "
+                f"across {threads.get('n_threads')} threads"
+                + (f"; tick hot paths: {hot_str}" if hot_str else ""),
+                "fix": "do less on the tick (LOD/tier-skip entities) or extract sim off "
+                "main (SIM_PARALLELISM); more cores do not help a single-thread bottleneck",
+            }
+        )
+
+    disk_ms = float((signals.get("scheduler") or {}).get("disk_block_ms") or 0)
+    if disk_ms >= 50:
+        causes.append(
+            {
+                "cause": "disk_io_stall",
+                "severity": round(min(1.0, disk_ms / 5000), 2),
+                "detail": f"{disk_ms} ms main-thread disk blocking",
+                "fix": "move saves/region IO off the tick thread; NVMe for Saves; "
+                "spread autosave (see io/vfs.bt.out SLOW_VFS_MAIN sites)",
+            }
+        )
+
+    mem = metadata.get("memory") or {}
+    rss_slope = float(mem.get("rss_growth_mb_per_s") or 0)
+    fd_growth = int(mem.get("fd_end") or 0) - int(mem.get("fd_start") or 0)
+    if rss_slope >= 5 or fd_growth >= 100:
+        causes.append(
+            {
+                "cause": "memory_growth",
+                "severity": round(min(1.0, rss_slope / 20 + fd_growth / 500), 2),
+                "detail": f"RSS +{rss_slope} MB/s, fd {fd_growth:+d} over the window",
+                "fix": "unbounded buffer or leak (not GC churn: RSS climbs steadily); "
+                "check send queues / caches / event subscriptions",
+            }
+        )
+
+    runq_stall = float((signals.get("scheduler") or {}).get("main_runq_stall_ms") or 0)
+    if runq_stall >= 50:
+        causes.append(
+            {
+                "cause": "cpu_starvation",
+                "severity": round(min(1.0, runq_stall / 2000), 2),
+                "detail": f"{runq_stall} ms main tick thread ready but not scheduled (OS starvation)",
+                "fix": "pin/isolate server cores (taskset/cgroup), remove noisy neighbors "
+                "(HOST_TUNING.md); not a game-code issue",
+            }
+        )
+
+    sync_signals = signals.get("sync_locks") or {}
+    slow_futex = int(sync_signals.get("slow_futex_lines") or 0)
+    wait_ms = float(sync_signals.get("main_thread_futex_wait_ms") or 0)
+    wait_share = float(sync_signals.get("main_thread_futex_wait_share") or 0)
+    # Fire on either the count of slow waits OR the main thread spending a real
+    # slice of wall-clock blocked on locks (the direct "laggy without CPU" tell).
+    if slow_futex >= 5 or wait_share >= 0.05:
+        causes.append(
+            {
+                "cause": "lock_contention",
+                "severity": round(min(1.0, max(slow_futex / 100, wait_share)), 2),
+                "detail": f"{slow_futex} slow futex waits on the main thread"
+                + (f"; {wait_ms} ms ({wait_share:.1%}) main-thread lock wait" if wait_ms else ""),
+                "fix": "reduce main-thread lock hold time"
+                + (
+                    f" at {', '.join(lock_sites)}"
+                    if (
+                        lock_sites := (
+                            top_stack_sites(session, "sync/futex.bt.out", "waiter stacks by count")
+                            if session
+                            else []
+                        )
+                    )
+                    else "; inspect sync/futex.bt.out waiter stacks"
+                ),
+            }
+        )
+
+    transfers = metadata.get("transfers") or {}
+    bridge_mb_s = float(transfers.get("mb_per_second") or 0)  # since-reset average
+    kernel_send = float((metadata.get("net") or {}).get("udp_send_mb_per_second") or 0)
+    # Kernel UDP send is always the capture window; the bridge counter averages
+    # since the last reset and is inflated by the initial join chunk burst.
+    # Prefer the windowed kernel rate as the current headline when we have it.
+    current_mb_s = kernel_send if kernel_send > 0 else bridge_mb_s
+    if current_mb_s >= 20 or bridge_mb_s >= 20:
+        burst_note = (
+            f" (bridge since-reset avg {bridge_mb_s} MB/s is join-burst weighted)"
+            if kernel_send > 0 and bridge_mb_s >= current_mb_s * 2
+            else ""
+        )
+        causes.append(
+            {
+                "cause": "chunk_bandwidth",
+                "severity": round(min(1.0, current_mb_s / 100), 2),
+                "detail": f"{current_mb_s} MB/s chunk streaming "
+                f"({transfers.get('packages_per_second')} pkg/s){burst_note}",
+                "fix": "reduce chunk churn: lower view/sim distance, cluster players; "
+                "moving players reload chunks constantly (B4)",
+            }
+        )
+
+    subsystems = (attribution or {}).get("subsystems") or []
+    # subsystem shares are of instrumented managed time; a dominant additive
+    # bucket names the workload driving the frame even when no host probe fired.
+    # frame_core (GameManager.UpdateTick) is INCLUSIVE of the others, so skip it
+    # and name the top DISJOINT subsystem - else a network-bound tick where
+    # frame_core is nominally top would surface nothing (missed the player wall).
+    disjoint = [s for s in subsystems if str(s.get("subsystem")) not in ("frame_core",)]
+    # Pick by share, not list order, so a mis-sorted attribution can't name the
+    # wrong bottleneck.
+    top = max(disjoint, key=lambda s: float(s.get("share") or 0), default=None)
+    if top:
+        share = float(top.get("share") or 0)
+        name = str(top.get("subsystem"))
+        friendly = {
+            "network": "network serialization + entity distribution to clients",
+            "io_saves": "chunk/region save + streaming",
+            "entity_tick": "entity tick machinery",
+            "mesh": "dynamic mesh",
+        }.get(name, name)
+        if share >= 0.45:
+            causes.append(
+                {
+                    "cause": f"{name}_bound",
+                    "severity": round(min(1.0, share), 2),
+                    "detail": f"{friendly} = {int(share * 100)}% of instrumented managed time"
+                    + (
+                        " (per-player serialization/distribution is the player-scale wall)"
+                        if name == "network"
+                        else ""
+                    ),
+                    "fix": {
+                        "network": "off-thread package serialization; spatially cull "
+                        "NetEntityDistribution (per-player lists ~O(players x entities)); "
+                        "batch ConnectionManager work (optimizer 4d/B3)",
+                        "io_saves": "chunk view/sim distance + save cadence (B4); NVMe Saves",
+                        "entity_tick": "tick-stride far entities at TickEntity level (A1/A3)",
+                        "mesh": "tighter DynamicMesh budgets / OnlyPlayerAreas (B5)",
+                    }.get(name, "see optimizer OPTIMIZATION_CANDIDATES.md"),
+                }
+            )
+
+    causes.sort(key=lambda c: -float(c["severity"]))
+    # Tick headroom: gmUpdate compute vs the 50ms (20 TPS) budget. Low compute
+    # with late ticks = SPIKE-driven lag (GC pauses / stalls punctuating an
+    # otherwise-paced server), the classic "laggy without CPU". High compute =
+    # sustained saturation. This tells the reader which regime they are in.
+    gm_avg = float(frame.get("gmUpdateAvgMs") or 0)
+    budget_ms = 50.0
+    headroom_pct = round(max(0.0, (budget_ms - gm_avg) / budget_ms) * 100, 1) if gm_avg else None
+    if headroom_pct is not None and laggy:
+        if gm_avg < budget_ms * 0.6:
+            profile = (
+                f"spike-driven: avg compute {gm_avg:.1f} ms leaves {headroom_pct}% headroom, "
+                "so lag is bursty (GC pauses / stalls), not sustained CPU"
+            )
+        else:
+            profile = (
+                f"compute-bound: avg compute {gm_avg:.1f} ms of the 50 ms budget "
+                f"({headroom_pct}% headroom) - sustained work, not just spikes"
+            )
+    else:
+        profile = None
+    if not laggy:
+        verdict = "server met its tick deadline this window"
+    elif saturated:
+        verdict = f"SATURATED ({tps:.2f} TPS, {late}/{window_updates} ticks late) - " + "; ".join(
+            str(c["cause"]) for c in causes
+        )
+    elif causes:
+        verdict = f"laggy ({late} late ticks, {round(tick_stall)} ms overage) - " + "; ".join(
+            str(c["cause"]) for c in causes
+        )
+    else:
+        verdict = f"laggy ({late} late ticks) but no instrumented cause dominated - check flames"
+    result: dict[str, Any] = {"laggy": laggy, "verdict": verdict, "causes": causes}
+    if saturated:
+        result["saturated"] = True
+        result["tps"] = round(tps, 2)
+    if profile is not None:
+        result["profile"] = profile
+        result["tick_headroom_pct"] = headroom_pct
+    return result
+
+
+def build_summary(session: Path) -> SummaryV2:
+    """Score all layers and write summary.json (the only writer of that file)."""
+    meta: dict[str, Any] = {}
+    meta_path = session / "meta.json"
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text())
+
+    texts = load_texts(session)
+    hw = parse_perf_stat(texts.get("hw") or "")
+    layers = layer_scores(session, hw, texts)
+
+    threads = thread_summary(session)
+    main_share = threads.get("main_thread_share_of_process_avg")
+    main_cpu = threads.get("main_thread_cpu_pct_avg")
+    if main_share is not None:
+        for layer in layers:
+            if layer.layer == "cpu" and layer.state == "collected":
+                layer.signals["main_thread_cpu_pct"] = main_cpu
+                layer.signals["main_thread_share_of_process"] = main_share
+                # One thread carrying most of the process while the box looks
+                # idle = main-thread-bound. Near a full core is the ceiling.
+                if main_share >= 0.5 and (main_cpu or 0) >= 80:
+                    layer.score = max(layer.score or 0, 85)
+                elif main_share >= 0.5:
+                    layer.score = max(layer.score or 0, 55)
+
+    measured = [layer for layer in layers if layer.score is not None]
+    top = measured[0] if measured else None
+    recommendation = (
+        f"Focus on **{top.layer}** (pressure {top.score}). " + "; ".join(top.optimize[:2])
+        if top
+        else "No measured layer has sufficient evidence for a recommendation."
+    )
+
+    metadata: dict[str, Any] = {}
+    snapshot_path = session / "app/apm_app.json"
+    if snapshot_path.is_file():
+        try:
+            snapshot = json.loads(snapshot_path.read_text())
+            world = snapshot.get("world") or {}
+            update = snapshot.get("update") or {}
+            metadata["world"] = {
+                "entities": world.get("entities"),
+                "players": world.get("players"),
+                "entityAlives": world.get("entityAlives"),
+                "clients": world.get("clients"),
+            }
+            metadata["frame"] = {
+                "gmUpdateAvgMs": update.get("gmUpdateDurationAvgMs"),
+                "tickIntervalAvgMs": update.get("serverTickIntervalAvgMs"),
+                "windowUpdates": update.get("windowUpdates"),
+                "spikes": update.get("totalSpikes"),
+                "lateTicks": update.get("lateTicks"),
+                "tickStallMsTotal": update.get("tickStallMsTotal"),
+            }
+            transfers = snapshot.get("mapTransfers") or []
+            window_s = float((snapshot.get("gc") or {}).get("windowSeconds") or 0)
+            if transfers and window_s > 0:
+                total_bytes = sum(int(x.get("bytes") or 0) for x in transfers)
+                total_pkgs = sum(int(x.get("packages") or 0) for x in transfers)
+                metadata["transfers"] = {
+                    "mb_per_second": round(total_bytes / 1048576 / window_s, 2),
+                    "packages_per_second": round(total_pkgs / window_s, 1),
+                    "by_type": {
+                        str(x.get("name")): round(int(x.get("bytes") or 0) / 1048576, 1)
+                        for x in transfers
+                    },
+                }
+            gc_window = snapshot.get("gc") or {}
+            if gc_window:
+                window_s = float(gc_window.get("windowSeconds") or 0)
+                heap_delta = int(gc_window.get("heapDeltaBytes") or 0)
+                # Boehm (Mono's default here) is non-generational: gen0==gen2, so
+                # the collection counts are not a generational signal. The real
+                # allocation-pressure gauge is heap growth rate; each full
+                # collection it triggers is a stop-the-world frame hitch.
+                alloc_mb_s = (heap_delta / 1048576 / window_s) if window_s > 0 else 0
+                collections = int(gc_window.get("gen2Collections") or 0)
+                # Gross allocation is the real GC-pause driver. Unity 2022 Mono
+                # lacks GC.GetTotalAllocatedBytes (bridge counter is -1), so the
+                # opt-in mono_alloc probe (Boehm GC_malloc arg0) is the source
+                # on this runtime. Left None when unmeasured so the budget gate
+                # treats it as UNKNOWN, never a healthy zero.
+                gross_bps = float(gc_window.get("grossAllocBytesPerSecond") or -1)
+                gross_mb_s: float | None = round(gross_bps / 1048576, 2) if gross_bps >= 0 else None
+                if gross_mb_s is None and window_s > 0:
+                    alloc_match = re.search(
+                        r"@alloc_bytes_total:\s*(\d+)", texts.get("mono_alloc", "")
+                    )
+                    if alloc_match:
+                        gross_mb_s = round(int(alloc_match.group(1)) / 1048576 / window_s, 2)
+                metadata["gc"] = {
+                    "allocMBPerSecond": round(alloc_mb_s, 2),  # net heap growth
+                    "fullCollections": collections,
+                    "heapDeltaBytes": heap_delta,
+                    "windowSeconds": round(window_s, 1),
+                }
+                if gross_mb_s is not None:
+                    metadata["gc"]["grossAllocMBPerSecond"] = gross_mb_s  # true churn
+                    # Allocation per tick (KB): the garbage each tick creates that
+                    # Boehm must eventually scan. Ties churn to the tick budget.
+                    ticks = int((update or {}).get("windowUpdates") or 0)
+                    if ticks and window_s > 0:
+                        alloc_kb_tick = gross_mb_s * 1024 * window_s / ticks
+                        metadata["gc"]["grossAllocKBPerTick"] = round(alloc_kb_tick, 1)
+                for layer in layers:
+                    if layer.layer == "runtime_gc" and layer.state == "collected":
+                        layer.signals["alloc_mb_per_second"] = round(alloc_mb_s, 2)
+                        layer.signals["full_gc_collections"] = collections
+                        # Score on GROSS churn (the GC-pause driver) when measured;
+                        # net heap growth reads ~0 at steady state and would leave
+                        # the layer (and health) blind to real allocation pressure.
+                        churn = gross_mb_s if gross_mb_s is not None else alloc_mb_s
+                        if churn >= 10 or collections >= 3:
+                            layer.score = max(layer.score or 0, 80)
+                        elif churn >= 4 or collections >= 1:
+                            layer.score = max(layer.score or 0, 50)
+            late = int(update.get("lateTicks") or 0)
+            window = int(update.get("windowUpdates") or 0)
+            if window:
+                late_share = late / window
+                for layer in layers:
+                    if layer.layer == "app_sim" and layer.state == "collected":
+                        layer.signals["late_ticks"] = late
+                        layer.signals["late_tick_share"] = round(late_share, 4)
+                        layer.signals["tick_stall_ms"] = update.get("tickStallMsTotal")
+                        if late_share >= 0.25:
+                            layer.score = max(layer.score or 0, 90)
+                        elif late_share >= 0.05:
+                            layer.score = max(layer.score or 0, 60)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    io_net_text = texts.get("io_net", "")
+    net_window = max(1.0, float(meta.get("seconds") or 1))
+    net: dict[str, float] = {}
+    # UDP is 7DTD game traffic (chunk streaming); TCP is only telnet/http.
+    for label, marker in (
+        ("udp_send_mb_per_second", "udp_send_bytes"),
+        ("udp_recv_mb_per_second", "udp_recv_bytes"),
+        ("tcp_send_mb_per_second", "tcp_send_bytes"),
+        ("tcp_recv_mb_per_second", "tcp_recv_bytes"),
+    ):
+        match = re.search(rf"@{marker}:\s*(\d+)", io_net_text)
+        if match:
+            net[label] = round(int(match.group(1)) / 1048576 / net_window, 2)
+    if net:
+        metadata["net"] = net
+    metadata["top_alloc_sites"] = top_alloc_sites(session)
+    metadata["top_churn_sites"] = top_churn_sites(session)
+    metadata["cpu_hot_paths"] = top_cpu_hot_paths(session)
+    mem = memory_trend(session)
+    if mem:
+        metadata["memory"] = mem
+        # sustained RSS climb (not GC oscillation) = leak / unbounded buffer.
+        slope = float(mem.get("rss_growth_mb_per_s") or 0)
+        fd_growth = int(mem.get("fd_end") or 0) - int(mem.get("fd_start") or 0)
+        for layer in layers:
+            if layer.layer == "memory_cache" and layer.state == "collected":
+                layer.signals["rss_growth_mb_per_s"] = slope
+                layer.signals["fd_growth"] = fd_growth
+                if slope >= 5 or fd_growth >= 100:
+                    layer.score = max(layer.score or 0, 70)
+    # Subsystem attribution lets the verdict name a dominant managed subsystem
+    # (e.g. network serialization at player scale) even when no host probe fired.
+    # Compute it fresh from this session's bridge snapshot so the diagnosis is not
+    # one finalize behind the bridge stage (which runs after summary). Falls back
+    # to a prior csharp_bridge.json when the raw snapshot is absent.
+    attribution: dict[str, Any] | None = None
+    snapshot_path = session / "app/apm_app.json"
+    if snapshot_path.is_file():
+        with contextlib.suppress(Exception):
+            from .bridge import attribute_subsystems
+
+            snap = json.loads(snapshot_path.read_text())
+            attribution = attribute_subsystems(
+                snap.get("sections") or [],
+                int((snap.get("measurement") or {}).get("deepSampleRate") or 1),
+                window_updates=int((snap.get("update") or {}).get("windowUpdates") or 0),
+                entities=int((snap.get("world") or {}).get("entities") or 0),
+            )
+    if not attribution:
+        prior_bridge = session / "csharp_bridge.json"
+        if prior_bridge.is_file():
+            with contextlib.suppress(Exception):
+                attribution = json.loads(prior_bridge.read_text()).get("attribution") or {}
+    metadata["lag_diagnosis"] = diagnose_lag(layers, metadata, threads, attribution, session)
+
+    perf_dir = session / "cpu" / "perf"
+    flames = {
+        "interactive": "cpu/perf/flame.html" if (perf_dir / "flame.html").exists() else None,
+        "speedscope": "cpu/perf/profile.speedscope.json"
+        if (perf_dir / "profile.speedscope.json").exists()
+        else None,
+        "svg": "cpu/perf/flame.svg" if (perf_dir / "flame.svg").exists() else None,
+        "folded": "cpu/perf/stacks.folded" if (perf_dir / "stacks.folded").exists() else None,
+    }
+    summary = SummaryV2(
+        session_id=session.name,
+        metadata=metadata,
+        meta=meta,
+        hw=hw,
+        layers=layers,
+        threads=threads,
+        recommendation=recommendation,
+        flames=flames,
+        files={
+            "futex": "sync/futex.bt.out",
+            "vfs": "io/vfs.bt.out",
+            "block": "io/block.bt.out",
+            "hw_stat": "memory/hw_stat.txt",
+            "flame_html": "cpu/perf/flame.html",
+            "speedscope": "cpu/perf/profile.speedscope.json",
+            "mono_gc": "runtime/mono_gc.bt.out",
+        },
+    )
+    atomic_json(session / "summary.json", schema_dict(summary))
+    return summary

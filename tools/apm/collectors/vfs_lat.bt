@@ -1,0 +1,100 @@
+/* VFS read/write latency attributed to TARGET process (blocking file IO). */
+#ifndef TARGET_PID
+#error "Define TARGET_PID"
+#endif
+#ifndef TARGET_COMM
+#define TARGET_COMM "7DaysToDieServe"
+#endif
+
+kprobe:vfs_read
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @r_enter[tid] = nsecs;
+    @r_n = count();
+}
+
+kretprobe:vfs_read
+/@r_enter[tid]/
+{
+    $us = (nsecs - @r_enter[tid]) / 1000;
+    delete(@r_enter[tid]);
+    @read_us = hist($us);
+    @read_sum_us = sum($us);
+    if ($us >= 1000) {
+        @slow_read_stack[ustack] = count();
+        /* main thread doing file IO = direct frame stall */
+        if (tid == TARGET_PID) {
+            @main_io_us = sum($us);
+            printf("SLOW_VFS_MAIN read %d us\n", $us);
+        }
+    }
+}
+
+kprobe:vfs_write
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @w_enter[tid] = nsecs;
+    @w_n = count();
+}
+
+kretprobe:vfs_write
+/@w_enter[tid]/
+{
+    $us = (nsecs - @w_enter[tid]) / 1000;
+    delete(@w_enter[tid]);
+    @write_us = hist($us);
+    if ($us >= 1000 && tid == TARGET_PID) {
+        @main_io_us = sum($us);
+        printf("SLOW_VFS_MAIN write %d us\n", $us);
+    }
+    @write_sum_us = sum($us);
+    if ($us >= 1000) {
+        @slow_write_stack[ustack] = count();
+    }
+}
+
+kprobe:vfs_fsync
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @fsync_enter[tid] = nsecs;
+    @fsync_n = count();
+}
+
+kretprobe:vfs_fsync
+/@fsync_enter[tid]/
+{
+    $us = (nsecs - @fsync_enter[tid]) / 1000;
+    delete(@fsync_enter[tid]);
+    @fsync_us = hist($us);
+    @fsync_sum_us = sum($us);
+}
+
+tracepoint:syscalls:sys_enter_openat
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @open_n = count();
+    @open_path[str(args.filename)] = count();
+}
+
+interval:s:5
+{
+    time("%H:%M:%S ");
+    print(@r_n); print(@w_n); print(@fsync_n); print(@open_n);
+    print(@read_sum_us); print(@write_sum_us); print(@fsync_sum_us);
+}
+
+END
+{
+    printf("\n=== vfs_read latency us ===\n");
+    print(@read_us);
+    printf("\n=== vfs_write latency us ===\n");
+    print(@write_us);
+    printf("\n=== vfs_fsync latency us ===\n");
+    print(@fsync_us);
+    printf("\n=== slow read stacks (>=1ms) ===\n");
+    print(@slow_read_stack, 25);
+    printf("\n=== slow write stacks (>=1ms) ===\n");
+    print(@slow_write_stack, 25);
+    printf("\n=== top openat paths ===\n");
+    print(@open_path, 40);
+}

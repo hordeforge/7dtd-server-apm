@@ -1,0 +1,10 @@
+{
+  "Enabled": true,
+  "DeepMode": true,
+  "SpikeThresholdMs": 50.0,
+  "PeriodicExportSeconds": 30.0,
+  "LogPeriodicSummary": true,
+  "LogSpikes": true,
+  "MaxSpikeRecords": 128,
+  "DeepSampleRate": 16
+}

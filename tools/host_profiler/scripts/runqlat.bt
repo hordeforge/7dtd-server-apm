@@ -1,0 +1,33 @@
+/* Run-queue latency for TARGET_COMM: wakeup → scheduled. */
+#ifndef TARGET_COMM
+#define TARGET_COMM "7DaysToDieServe"
+#endif
+
+tracepoint:sched:sched_wakeup
+/args.comm == TARGET_COMM/
+{
+    @wake[args.pid] = nsecs;
+}
+
+tracepoint:sched:sched_wakeup_new
+/args.comm == TARGET_COMM/
+{
+    @wake[args.pid] = nsecs;
+}
+
+tracepoint:sched:sched_switch
+/args.next_comm == TARGET_COMM && @wake[args.next_pid]/
+{
+    $us = (nsecs - @wake[args.next_pid]) / 1000;
+    delete(@wake[args.next_pid]);
+    if ($us >= 0 && $us < 5000000) {
+        @runqlat_us = hist($us);
+    }
+}
+
+END
+{
+    printf("\n=== run-queue latency (us) for %s ===\n", TARGET_COMM);
+    printf("0-10us ideal; multi-ms = CPU contention or affinity issues\n");
+    print(@runqlat_us);
+}

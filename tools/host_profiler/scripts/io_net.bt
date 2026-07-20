@@ -1,0 +1,88 @@
+/* VFS / TCP / page-fault activity for TARGET_COMM / TARGET_PID. */
+#ifndef TARGET_PID
+#error "Define TARGET_PID"
+#endif
+#ifndef TARGET_COMM
+#define TARGET_COMM "7DaysToDieServe"
+#endif
+
+kprobe:vfs_read
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @vfs_read = count();
+}
+
+kprobe:vfs_write
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @vfs_write = count();
+}
+
+kprobe:tcp_sendmsg
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @tcp_send = count();
+    /* arg2 = size; total send bytes cross-checks the bridge chunk MB/s */
+    @tcp_send_bytes = sum(arg2);
+}
+
+kprobe:tcp_recvmsg
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @tcp_recv = count();
+    @tcp_recv_bytes = sum(arg2);
+}
+
+/* 7DTD game traffic is UDP (LiteNetLib). arg2 = len; this is the real
+ * chunk-streaming bandwidth path, TCP above is only telnet/http. */
+kprobe:udp_sendmsg
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @udp_send = count();
+    @udp_send_bytes = sum(arg2);
+}
+
+kprobe:udp_recvmsg
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @udp_recv = count();
+    @udp_recv_bytes = sum(arg2);
+}
+
+software:page-faults:1
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @pagefaults = count();
+}
+
+/* open/openat — save path storms (world chunks) */
+tracepoint:syscalls:sys_enter_openat
+/comm == TARGET_COMM || pid == TARGET_PID/
+{
+    @opens = count();
+    @open_path[str(args.filename)] = count();
+}
+
+interval:s:5
+{
+    time("%H:%M:%S ");
+    print(@vfs_read);
+    print(@vfs_write);
+    print(@tcp_send);
+    print(@tcp_recv);
+    print(@pagefaults);
+    print(@opens);
+}
+
+END
+{
+    printf("\n=== totals ===\n");
+    print(@vfs_read); print(@vfs_write);
+    print(@tcp_send); print(@tcp_recv);
+    print(@tcp_send_bytes); print(@tcp_recv_bytes);
+    print(@udp_send); print(@udp_recv);
+    print(@udp_send_bytes); print(@udp_recv_bytes);
+    print(@pagefaults); print(@opens);
+    printf("\n=== top openat paths ===\n");
+    print(@open_path, 30);
+}

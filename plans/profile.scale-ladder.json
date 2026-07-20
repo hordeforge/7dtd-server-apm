@@ -1,0 +1,53 @@
+[
+  {
+    "label": "canonical-scale-25",
+    "seed": 20240717,
+    "clients": 25,
+    "actions": 8000,
+    "warmup": 75,
+    "seconds": 120,
+    "preset": "forensic",
+    "reset_bridge": true,
+    "bot_mix": "traverse:35,wander:15,combat:20,bait:15,demolition:10,chatty:5",
+    "spawn_entity": "zombieBoe,zombieArlene,zombieMoe,animalDireWolf,animalMountainLion,animalStag,animalBoar,animalZombieVulture,zombieDemolition,vehicleMotorcycle,vehicleTruck4x4,entityJunkDrone",
+    "spawn_per_player": 4,
+    "spawn_every_ms": 12000,
+    "horde_every_ms": 45000,
+    "horde_waves": 3,
+    "max_dynamite": 60
+  },
+  {
+    "label": "canonical-scale-50",
+    "seed": 20240717,
+    "clients": 50,
+    "actions": 8000,
+    "warmup": 90,
+    "seconds": 120,
+    "preset": "forensic",
+    "reset_bridge": true,
+    "bot_mix": "traverse:35,wander:15,combat:20,bait:15,demolition:10,chatty:5",
+    "spawn_entity": "zombieBoe,zombieArlene,zombieMoe,animalDireWolf,animalMountainLion,animalStag,animalBoar,animalZombieVulture,zombieDemolition,vehicleMotorcycle,vehicleTruck4x4,entityJunkDrone",
+    "spawn_per_player": 4,
+    "spawn_every_ms": 12000,
+    "horde_every_ms": 45000,
+    "horde_waves": 3,
+    "max_dynamite": 60
+  },
+  {
+    "label": "canonical-scale-100",
+    "seed": 20240717,
+    "clients": 100,
+    "actions": 8000,
+    "warmup": 120,
+    "seconds": 120,
+    "preset": "forensic",
+    "reset_bridge": true,
+    "bot_mix": "traverse:35,wander:15,combat:20,bait:15,demolition:10,chatty:5",
+    "spawn_entity": "zombieBoe,zombieArlene,zombieMoe,animalDireWolf,animalMountainLion,animalStag,animalBoar,animalZombieVulture,zombieDemolition,vehicleMotorcycle,vehicleTruck4x4,entityJunkDrone",
+    "spawn_per_player": 3,
+    "spawn_every_ms": 12000,
+    "horde_every_ms": 40000,
+    "horde_waves": 3,
+    "max_dynamite": 60
+  }
+]
