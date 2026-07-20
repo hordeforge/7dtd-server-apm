@@ -96,7 +96,15 @@ namespace DtdApmBridge
                 "VehicleManager:Update", "DroneManager:Update", "PowerManager:Update",
                 // Pathfinding maintenance + blood-moon director (optimizer A/B list).
                 "AstarManager:UpdateGraphs", "AIDirectorBloodMoonComponent:Tick",
-                "World:AddFallingBlock"
+                "World:AddFallingBlock",
+                // Dark-matter attribution: UpdateTick / OnUpdateTick callees that were
+                // untimed, to close the parent-minus-children residual at heavy load.
+                // (Chunk:UpdateTick is deliberately absent: thousands of calls/tick
+                // would make the per-call Stopwatch overhead distort the measurement.)
+                "GameStateManager:OnUpdateTick", "ChunkManager:GetActiveChunkSet",
+                "ChunkProviderGenerateWorld:MainThreadCacheProtectedPositions",
+                "MultiBlockManager:MainThreadUpdate", "World:updateChunksToUncull",
+                "World:checkPOIUnculling", "Conductor:Update"
             };
             string[] deep = { "EntityAlive:updateTasks", "EAIManager:Update",
                 "GamePath.PathNavigate:UpdateNavigation", "GamePath.ASPPathNavigate:UpdateNavigation",
