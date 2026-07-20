@@ -61,6 +61,12 @@ namespace DtdApmBridge
                 "SpawnManagerBiomes:SpawnUpdate", "WorldBlockTicker:Tick",
                 // Expensive, player-visible operations that are easy to miss in frame aggregates.
                 "GameManager:ExplosionServer", "GameManager:explode",
+                // explode sub-split: block-damage sphere vs entity-damage (OverlapSphere
+                // + per-victim LOS raycast) vs the client-visual path (which on a
+                // dedicated server still Instantiates the explosion prefab) vs the
+                // block-change application. Attributes the blood-moon explode cost.
+                "Explosion:AttackBlocks", "Explosion:AttackEntites",
+                "GameManager:ExplosionClient", "GameManager:ChangeBlocks",
                 "GameManager:SaveWorld", "GameManager:SavePlayerData",
                 "NetEntityDistribution:OnUpdateEntities",
                 "ChunkManager:SendChunksToClients", "NetPackageChunk:Setup",
