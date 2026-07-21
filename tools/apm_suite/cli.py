@@ -188,6 +188,11 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
             zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as archive,
         ):
             temp = Path(tmp)
+            # perf.script / report txt / stacks.folded / flame.html embed dso paths
+            # like /home/<user>/... - replace the home prefix so bundles do not leak
+            # the host username. Applied to known-text artifacts only.
+            home = str(Path.home())
+            text_suffixes = {".txt", ".folded", ".html", ".script", ".md", ".log"}
             for source in session.rglob("*"):
                 if not source.is_file() or source.name in excluded or source.suffix == ".err":
                     continue
@@ -199,7 +204,19 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
                         raise typer.BadParameter(f"cannot parse {relative}: {error}") from None
                     sanitized = temp / relative
                     sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(json.dumps(_scrub(data), indent=2) + "\n")
+                    sanitized.write_text(
+                        json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n"
+                    )
+                    archive.write(sanitized, relative)
+                elif source.suffix in text_suffixes:
+                    try:
+                        text = source.read_text(errors="replace")
+                    except OSError:
+                        archive.write(source, relative)
+                        continue
+                    sanitized = temp / relative
+                    sanitized.parent.mkdir(parents=True, exist_ok=True)
+                    sanitized.write_text(text.replace(home, "~"))
                     archive.write(sanitized, relative)
                 else:
                     archive.write(source, relative)
@@ -378,7 +395,12 @@ def monitor(
     interval: Annotated[float, typer.Option(min=0.5)] = 5,
     count: Annotated[int, typer.Option(min=0, help="Samples to take; 0 = until Ctrl+C.")] = 0,
     output: Annotated[
-        Path | None, typer.Option("--output", "-o", help="Append JSONL here.")
+        Path | None,
+        typer.Option(
+            "--output", "-o",
+            help="Append JSONL here. Grows without bound - if run as a 24/7 service, "
+            "rotate it (logrotate or a size check); ~1 line per interval.",
+        ),
     ] = None,
 ) -> None:
     """Continuously sample process and bridge health without a full capture."""
@@ -419,11 +441,18 @@ def monitor(
                     sample["spikes"] = update.get("totalSpikes")
                     sample["entities"] = world.get("entities")
                     sample["players"] = world.get("clients") or world.get("players")
-                    # TPS from the tick interval; the honest health headline (20 =
-                    # target, well under = falling behind). Survives when telnet
-                    # is too saturated to answer, unlike a listplayers poll.
-                    tick = update.get("serverTickIntervalAvgMs") or 0
-                    sample["tps"] = round(1000 / tick, 1) if tick else None
+                    # TPS headline. serverTickIntervalAvgMs is a LIFETIME average
+                    # (since apm reset), which stops reflecting current lag after
+                    # hours of 24/7 uptime - prefer the instantaneous frame period
+                    # from the world sample (current by construction), fall back to
+                    # the lifetime average, and expose both so long-run dashboards
+                    # can tell them apart. Survives when telnet is too saturated to
+                    # answer, unlike a listplayers poll.
+                    frame_now = world.get("unityDeltaMs") or 0
+                    tick_life = update.get("serverTickIntervalAvgMs") or 0
+                    sample["tps"] = round(1000 / frame_now, 1) if frame_now else (
+                        round(1000 / tick_life, 1) if tick_life else None)
+                    sample["tps_lifetime"] = round(1000 / tick_life, 1) if tick_life else None
                     # Each full (gen2) collection is a Boehm stop-the-world pause.
                     sample["full_gc"] = (snapshot.get("gc") or {}).get("gen2Collections")
                     # The bridge exports every PeriodicExportSeconds (default 30);

@@ -806,7 +806,33 @@ def run_capture(
         outcome.exit_code = finalize_result.exit_code or (0 if valid else 1)
     if outcome.interrupted:
         outcome.exit_code = 130
+    _auto_prune_sessions()
     return outcome
+
+
+def _auto_prune_sessions() -> None:
+    """Sessions accumulate tens of MB each and nothing pruned them automatically -
+    a 24/7 host with periodic captures grows without bound. Keep the newest
+    APM_KEEP_SESSIONS (default 40; 0 disables). Never prunes the just-created
+    session (it is the newest)."""
+    try:
+        keep = int(os.environ.get("APM_KEEP_SESSIONS", "40"))
+    except ValueError:
+        keep = 40
+    if keep <= 0:
+        return
+    root = apm_root()
+    sessions = sorted(
+        (p for p in root.glob("session_*") if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    for old in sessions[keep:]:
+        try:
+            shutil.rmtree(old)
+            print(f"pruned old session {old.name} (APM_KEEP_SESSIONS={keep})", file=sys.stderr)
+        except OSError as error:
+            print(f"WARNING: prune failed for {old.name}: {error}", file=sys.stderr)
 
 
 def _launch_collectors(
