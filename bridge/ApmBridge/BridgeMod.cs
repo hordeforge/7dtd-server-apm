@@ -140,12 +140,19 @@ namespace DtdApmBridge
                 catch (Exception ex) { Status[typeName + ":transfer-counter"] = "failed:" + ex.Message; }
             }
         }
+        // GetLength lookup cache: this postfix fires per network package (hundreds/s
+        // during joins and steady chunk streaming), so uncached AccessTools.Method
+        // reflection per call is real 24/7 overhead. Keyed by concrete package type.
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<Type, MethodInfo> GetLengthCache
+            = new System.Collections.Concurrent.ConcurrentDictionary<Type, MethodInfo>();
+
         public static void MapTransferPostfix(MethodBase __originalMethod, object __result)
         {
             try
             {
                 object package = __result;
-                MethodInfo getLength = package == null ? null : AccessTools.Method(package.GetType(), "GetLength");
+                MethodInfo getLength = package == null ? null
+                    : GetLengthCache.GetOrAdd(package.GetType(), t => AccessTools.Method(t, "GetLength"));
                 int bytes = getLength == null ? 0 : Convert.ToInt32(getLength.Invoke(package, null));
                 Telemetry.RecordTransfer(__originalMethod.DeclaringType.Name, bytes);
             }

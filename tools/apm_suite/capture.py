@@ -387,6 +387,18 @@ def _unmount_mono(link: Path | None) -> None:
         if result.returncode == 0:
             return
         stderr = (result.stderr or "").strip()
+        # Busy target (e.g. perf still mapping the .so): a lazy unmount detaches it
+        # once the last user exits, so prune's rmtree does not hit EBUSY forever.
+        lazy = subprocess.run(
+            ["sudo", "-n", "umount", "-l", str(link)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        if lazy.returncode == 0:
+            return
+        stderr = f"{stderr}; lazy: {(lazy.stderr or '').strip()}"
     except (subprocess.TimeoutExpired, OSError) as error:
         stderr = str(error)
     # A left-behind bind mount blocks the next run's mount; make it loud.
@@ -598,6 +610,12 @@ def run_capture(
     session = root / f"session_{stamp}_pid{pid}"
     for sub in ("app", "runtime", "threads", "sync", "scheduler", "cpu", "memory", "io", "bt"):
         (session / sub).mkdir(parents=True, exist_ok=True)
+    # Raw sessions capture the server log stream (player names/IPs/SteamIDs via the
+    # telnet drain), unlike the scrubbed export bundle - keep them owner-only on
+    # shared hosts.
+    with suppress(OSError):
+        root.chmod(0o700)
+        session.chmod(0o700)
     outcome = CaptureOutcome(session=session)
 
     sudo_ok = (

@@ -1,6 +1,6 @@
 {
   "Enabled": true,
-  "DeepMode": true,
+  "DeepMode": false,
   "SpikeThresholdMs": 50.0,
   "PeriodicExportSeconds": 30.0,
   "LogPeriodicSummary": true,

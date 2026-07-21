@@ -24,20 +24,39 @@ namespace DtdApmBridge
             Calls++; TotalMs += ms; LastMs = ms; if (ms > MaxMs) MaxMs = ms;
             _ring[_write] = ms; _write = (_write + 1) % RingSize; if (_count < RingSize) _count++;
         }
-        double Percentile(double p)
+        static double Percentile(double[] sorted, double p)
         {
-            if (_count == 0) return 0;
-            var values = new double[_count]; Array.Copy(_ring, values, _count); Array.Sort(values);
-            return values[(int)Math.Min(values.Length - 1, Math.Round((p / 100.0) * (values.Length - 1)))];
+            if (sorted.Length == 0) return 0;
+            return sorted[(int)Math.Min(sorted.Length - 1, Math.Round((p / 100.0) * (sorted.Length - 1)))];
         }
-        public object Snapshot(bool deep) => new {
-            name = Name, calls = Calls, avgMs = Calls == 0 ? 0 : TotalMs / Calls,
-            lastMs = LastMs, maxMs = MaxMs, p50Ms = Percentile(50), p95Ms = Percentile(95),
-            p99Ms = Percentile(99), totalMs = TotalMs,
-            // Sampled 1-in-DeepSampleRate; scale calls/totalMs by the rate for
-            // attribution. Per-call stats (avg/percentiles) are unbiased.
-            deep
-        };
+        // Two-phase snapshot so the ~150-200 Array.Sorts across all metrics run
+        // OUTSIDE the global Gate lock: Copy under the lock is a cheap memcpy; Build
+        // (sorts + object shaping) happens lock-free on the exporting thread, so the
+        // sim thread's Record/BeginFrame never wait on percentile math (a ms-scale
+        // self-inflicted hitch every export period on a 24/7 server).
+        public sealed class Copied
+        {
+            public string Name; public long Calls; public double TotalMs, MaxMs, LastMs;
+            public double[] Ring; public bool Deep;
+        }
+        public Copied CopyUnderLock(bool deep)
+        {
+            var values = new double[_count]; Array.Copy(_ring, values, _count);
+            return new Copied { Name = Name, Calls = Calls, TotalMs = TotalMs, MaxMs = MaxMs,
+                LastMs = LastMs, Ring = values, Deep = deep };
+        }
+        public static object Build(Copied c)
+        {
+            Array.Sort(c.Ring);
+            return new {
+                name = c.Name, calls = c.Calls, avgMs = c.Calls == 0 ? 0 : c.TotalMs / c.Calls,
+                lastMs = c.LastMs, maxMs = c.MaxMs, p50Ms = Percentile(c.Ring, 50),
+                p95Ms = Percentile(c.Ring, 95), p99Ms = Percentile(c.Ring, 99), totalMs = c.TotalMs,
+                // Sampled 1-in-DeepSampleRate; scale calls/totalMs by the rate for
+                // attribution. Per-call stats (avg/percentiles) are unbiased.
+                deep = c.Deep
+            };
+        }
         public void Reset() { Calls = 0; TotalMs = MaxMs = LastMs = 0; _write = _count = 0; }
     }
 
@@ -105,6 +124,10 @@ namespace DtdApmBridge
                 : (long)_totalAllocated.Invoke(null, new object[] { false });
         }
         static double _updateTotal, _updateMax, _lastUpdate, _tickTotal, _tickMax, _lastTick, _nextExport;
+        // Spike side-effect rate limit (see EndFrame): counters count every spike,
+        // but sampling/logging happens at most once per this many seconds.
+        const double SpikeSampleMinSeconds = 5.0;
+        static double _nextSpikeSample;
         static WorldSample _lastWorld = new WorldSample { utc = "unavailable" };
         static int _exportQueued;
         // Written on the main thread (SampleWorld, outside Gate) and the export
@@ -186,11 +209,20 @@ namespace DtdApmBridge
                 lastTick = _lastTick;
             }
             if (!spike && !export) return;
+            // Rate-limit the spike SIDE EFFECTS (world sample + log line + spike
+            // record) to one per SpikeSampleMinSeconds: a production server that
+            // settles above the threshold makes EVERY frame a spike, and per-frame
+            // Process-handle walks + log lines (~1.7M lines/day at 20 TPS) would
+            // degrade exactly the overloaded server being observed. The _updateSpikes
+            // COUNTER above still counts every spike, so rates stay accurate.
+            bool sampleSpike = spike && now >= _nextSpikeSample;
+            if (sampleSpike) _nextSpikeSample = now + SpikeSampleMinSeconds;
+            if (!sampleSpike && !export) return;
             // SampleWorld touches game state and Process handles; keep it
             // outside Gate so Snapshot() is never blocked behind it.
             WorldSample world = SampleWorld();
             lock (Gate) _lastWorld = world;
-            if (spike)
+            if (sampleSpike)
             {
                 AddSpike(new SpikeSample { utc = DateTime.UtcNow.ToString("o"), gmUpdateDurationMs = ms,
                     serverTickIntervalMs = lastTick, world = world });
@@ -232,27 +264,40 @@ namespace DtdApmBridge
         }
         static object Snapshot()
         {
+            List<SpikeSample> spikes;
+            Metric.Copied[] copies;
+            object update, health, transfers, gcWindow;
+            WorldSample world;
             lock (Gate)
             {
-                var spikes = new List<SpikeSample>(_spikeCount);
+                spikes = new List<SpikeSample>(_spikeCount);
                 for (int i = 0; i < _spikeCount; i++) spikes.Add(_spikes[(_spikeWrite - _spikeCount + i + _spikes.Length) % _spikes.Length]);
-                return new {
-                    schema = "7dtd.apm.app.v3", provider = "7dtd-apm-bridge", providerVersion = BridgeMod.Version,
-                    utc = DateTime.UtcNow.ToString("o"), capabilities = BridgeMod.Capabilities(),
-                    measurement = new { updateDurationName = "GameManager.gmUpdate", durationUnit = "ms", deepSampleRate = BridgeMod.Config.DeepSampleRate },
-                    update = new { gmUpdateDurationLastMs = _lastUpdate, gmUpdateDurationAvgMs = _updates == 0 ? 0 : _updateTotal / _updates,
-                        gmUpdateDurationMaxMs = _updateMax, serverTickIntervalLastMs = _lastTick,
-                        serverTickIntervalAvgMs = _updates <= 1 ? 0 : _tickTotal / (_updates - 1), serverTickIntervalMaxMs = _tickMax,
-                        lateTicks = _lateTicks, tickStallMsTotal = _tickStallMs,
-                        windowUpdates = _updates, totalSpikes = _updateSpikes, deep = BridgeMod.Config.DeepMode },
-                    health = new { exportQueued = _exportQueued != 0, droppedExports = _droppedExports, lastExportError = _lastExportError },
-                    gc = GcWindow(),
-                    world = _lastWorld,
-                    mapTransfers = Transfers.OrderBy(x => x.Key).Select(x => x.Value.Snapshot(x.Key)).ToArray(),
-                    sections = Metrics.Select((x, i) => i < _metricCount ? x.Snapshot(Deep[i]) : null)
-                        .Where(x => x != null).ToArray(), spikes = spikes.ToArray()
-                };
+                update = new { gmUpdateDurationLastMs = _lastUpdate, gmUpdateDurationAvgMs = _updates == 0 ? 0 : _updateTotal / _updates,
+                    gmUpdateDurationMaxMs = _updateMax, serverTickIntervalLastMs = _lastTick,
+                    serverTickIntervalAvgMs = _updates <= 1 ? 0 : _tickTotal / (_updates - 1), serverTickIntervalMaxMs = _tickMax,
+                    lateTicks = _lateTicks, tickStallMsTotal = _tickStallMs,
+                    windowUpdates = _updates, totalSpikes = _updateSpikes, deep = BridgeMod.Config.DeepMode };
+                health = new { exportQueued = _exportQueued != 0, droppedExports = _droppedExports, lastExportError = _lastExportError };
+                transfers = Transfers.OrderBy(x => x.Key).Select(x => x.Value.Snapshot(x.Key)).ToArray();
+                world = _lastWorld;
+                gcWindow = GcWindow(); // reads shared window fields - stay under Gate
+                // Cheap memcpy per metric under the lock; the expensive percentile
+                // sorts run below, lock-free, so the sim thread never waits on them.
+                copies = new Metric.Copied[_metricCount];
+                for (int i = 0; i < _metricCount; i++) copies[i] = Metrics[i].CopyUnderLock(Deep[i]);
             }
+            var sections = new object[copies.Length];
+            for (int i = 0; i < copies.Length; i++) sections[i] = Metric.Build(copies[i]);
+            return new {
+                schema = "7dtd.apm.app.v3", provider = "7dtd-apm-bridge", providerVersion = BridgeMod.Version,
+                utc = DateTime.UtcNow.ToString("o"), capabilities = BridgeMod.Capabilities(),
+                measurement = new { updateDurationName = "GameManager.gmUpdate", durationUnit = "ms", deepSampleRate = BridgeMod.Config.DeepSampleRate },
+                update, health,
+                gc = gcWindow,
+                world,
+                mapTransfers = transfers,
+                sections, spikes = spikes.ToArray()
+            };
         }
         static object GcWindow()
         {
@@ -282,9 +327,15 @@ namespace DtdApmBridge
         public static string SnapshotJson() => JsonConvert.SerializeObject(Snapshot());
         static void Write(string path)
         {
-            Directory.CreateDirectory(BridgeMod.OutputDir); string temp = path + ".tmp";
+            // Unique temp (a console `apm dump` can race the ThreadPool export) and
+            // File.Replace so `latest` never has a does-not-exist window for external
+            // consumers (scrapers/dashboards read it continuously in production).
+            Directory.CreateDirectory(BridgeMod.OutputDir);
+            string temp = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
             File.WriteAllText(temp, JsonConvert.SerializeObject(Snapshot(), Formatting.Indented));
-            if (File.Exists(path)) File.Delete(path); File.Move(temp, path); _lastExportError = "";
+            if (File.Exists(path)) File.Replace(temp, path, null);
+            else File.Move(temp, path);
+            _lastExportError = "";
         }
         public static void QueueLatest()
         {
@@ -296,7 +347,24 @@ namespace DtdApmBridge
         public static string Dump()
         {
             string path = Path.Combine(BridgeMod.OutputDir, "apm_app_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + ".json");
-            Write(path); Write(Path.Combine(BridgeMod.OutputDir, "apm_app_latest.json")); return path;
+            Write(path); Write(Path.Combine(BridgeMod.OutputDir, "apm_app_latest.json"));
+            PruneTimestampedDumps(keep: 32);
+            return path;
+        }
+
+        // `apm dump` fires every scrape interval during captures; without pruning
+        // the telemetry dir grows without bound over months of 24/7 operation.
+        static void PruneTimestampedDumps(int keep)
+        {
+            try
+            {
+                string[] files = Directory.GetFiles(BridgeMod.OutputDir, "apm_app_2*.json");
+                if (files.Length <= keep) return;
+                Array.Sort(files, StringComparer.Ordinal); // timestamped names sort chronologically
+                for (int i = 0; i < files.Length - keep; i++)
+                    File.Delete(files[i]);
+            }
+            catch (Exception ex) { BridgeMod.Log("dump prune failed: " + ex.Message); }
         }
         public static string Summary()
         {

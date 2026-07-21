@@ -91,10 +91,12 @@ def capture(
     symbolize: Annotated[
         bool,
         typer.Option(
-            help="Export the JIT map so managed frames resolve to method names "
-            "(pre-window burst). Disable only for a faster, unresolved capture."
+            help="Export the full JIT map so managed frames resolve to method names. "
+            "The map burst runs on the server's MAIN thread and can freeze a loaded "
+            "server for tens of seconds - default OFF so a capture against a "
+            "production server is safe; pass --symbolize for bench/flamegraph runs."
         ),
-    ] = True,
+    ] = False,
     dry_run: Annotated[bool, typer.Option(help="Print the resolved collector plan.")] = False,
 ) -> None:
     if dry_run:

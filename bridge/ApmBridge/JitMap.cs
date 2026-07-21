@@ -102,6 +102,15 @@ namespace DtdApmBridge
             int pid = Process.GetCurrentProcess().Id;
             Directory.CreateDirectory(BridgeMod.OutputDir);
             string path = Path.Combine(BridgeMod.OutputDir, "perf-" + pid + ".map");
+            // Maps from previous server pids accumulate (~5-10 MB each in full mode);
+            // only the current pid's map is ever useful, so sweep the rest.
+            try
+            {
+                foreach (string old in Directory.GetFiles(BridgeMod.OutputDir, "perf-*.map"))
+                    if (!old.EndsWith("perf-" + pid + ".map", StringComparison.Ordinal))
+                        File.Delete(old);
+            }
+            catch { /* stale-map sweep is best-effort */ }
             using (var writer = new StreamWriter(path, false))
             {
                 for (int i = 0; i < entries.Count; i++)
