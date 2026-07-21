@@ -953,9 +953,18 @@ def build_summary(session: Path) -> SummaryV2:
                 "entityAlives": world.get("entityAlives"),
                 "clients": world.get("clients"),
             }
+            # engineGap = frame period minus managed gmUpdate: the unattributed
+            # ENGINE slice (animator eval, transforms, player-loop overhead) that no
+            # managed section can see. It is where headless-waste findings like the
+            # zombie-animator path live; a healthy idle server shows ~frame-target
+            # minus ~1-2 ms.
+            frame_now = (world.get("unityDeltaMs") or 0)
+            gm_avg = update.get("gmUpdateDurationAvgMs") or 0
             metadata["frame"] = {
                 "gmUpdateAvgMs": update.get("gmUpdateDurationAvgMs"),
                 "tickIntervalAvgMs": update.get("serverTickIntervalAvgMs"),
+                "unityDeltaMs": world.get("unityDeltaMs"),
+                "engineGapMs": round(frame_now - gm_avg, 2) if frame_now else None,
                 "windowUpdates": update.get("windowUpdates"),
                 "spikes": update.get("totalSpikes"),
                 "lateTicks": update.get("lateTicks"),
