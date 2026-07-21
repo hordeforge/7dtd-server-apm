@@ -117,6 +117,12 @@ namespace DtdApmBridge
                 // half hides in UnityPlayer.so; sized via `es animoff` A/B).
                 "AvatarZombieController:Update", "AvatarZombieController:LateUpdate",
                 "EModelBase:Update", "EModelBase:LateUpdate",
+                // OnUpdateLive interior split: 73% of the entity tick is OnUpdateLive
+                // (~36 us/zombie/tick) but its named callees (updateTasks, EAI, move
+                // helper) are individually small - attribute the interior mass.
+                "EntityAlive:MoveEntityHeaded", "EntityStats:Tick",
+                "EntityAlive:updateCurrentBlockPosAndValue", "EntityAlive:UpdateJump",
+                "EntityAlive:CanSee:EntityAlive", "EntityZombie:OnUpdateLive",
                 // Path pipeline: enqueue is EntityAlive:FindPath above; these
                 // cover the worker drain and per-path compute (admission
                 // experiments need enqueue vs drain vs compute).
