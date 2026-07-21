@@ -113,6 +113,10 @@ namespace DtdApmBridge
                 "NetEntityDistributionEntry:updatePlayerList",
                 "World:TickEntity:Entity,System.Single",
                 "Entity:OnUpdateEntity", "EntityAlive:OnUpdateLive",
+                // Managed half of the server-side zombie animator path (the engine
+                // half hides in UnityPlayer.so; sized via `es animoff` A/B).
+                "AvatarZombieController:Update", "AvatarZombieController:LateUpdate",
+                "EModelBase:Update", "EModelBase:LateUpdate",
                 // Path pipeline: enqueue is EntityAlive:FindPath above; these
                 // cover the worker drain and per-path compute (admission
                 // experiments need enqueue vs drain vs compute).
