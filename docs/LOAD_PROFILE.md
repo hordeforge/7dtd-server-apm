@@ -192,7 +192,7 @@ uv run 7dtd-apm scenario run --preset forensic --clients 60 --warmup 60 \
 | [APM](APM.md) | Evidence model |
 | [FEATURES](FEATURES.md) | CLI surface |
 | Loadgen README | [`../../7dtd-loadgen/docs/README.md`](../../7dtd-loadgen/docs/README.md) |
-| Measured scaling | [`../../research/docs/measured-scaling.md`](../../research/docs/measured-scaling.md) |
+| Measured scaling | [`../../7dtd-research/docs/measured-scaling.md`](../../7dtd-research/docs/measured-scaling.md) |
 
 ## Changelog
 

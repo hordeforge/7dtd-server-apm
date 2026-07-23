@@ -38,7 +38,7 @@ The `forensic` preset (`scenario run --preset forensic`) attributes it:
    `PooledBinaryWriter` *reflection* (`Type.GetMethod` per serialize); the IL shows
    an enum switch, not reflection, so that attribution was wrong and is dropped.
    The cost is allocation, not compute. See
-   [`../research/docs/measured-scaling.md`](../research/docs/measured-scaling.md) §4b.
+   [`../7dtd-research/docs/measured-scaling.md`](../7dtd-research/docs/measured-scaling.md) §4b.
 4. **Main-thread-bound.** The 20 TPS game loop is single-threaded, so any
    pause or per-entity cost lands on one thread across ~200.
 5. **Per-entity tick cost is linear** at ~0.08 ms/entity/tick, so 1000 AI

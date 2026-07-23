@@ -693,7 +693,7 @@ def analyze(session: Path, snapshot: Path | None = None) -> dict[str, Any]:
             "1": "Read bridges[] ordered by inference.priority",
             "2": "Check evidence/derived to see exactly why each bridge fired",
             "3": "Run the suggested experiment and compare compatible APM sessions",
-            "4": "For exact method bodies see research/il/<Type>.txt or ILSpy Assembly-CSharp",
+            "4": "For exact method bodies see 7dtd-research/il/<Type>.txt or ILSpy Assembly-CSharp",
         },
     }
     atomic_json(session / "csharp_bridge.json", out)
