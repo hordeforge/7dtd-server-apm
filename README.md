@@ -15,7 +15,7 @@ Project boundaries are deliberate:
 
 ## Measured bottleneck findings ("laggy without CPU")
 
-Validated against the V3.0.1 dedicated under sibling load (20 bots + telnet
+Validated against the V3.1.0 dedicated under sibling load (20 bots + telnet
 zombies). The server can miss its 20 TPS (50 ms) tick deadline while gmUpdate
 compute averages ~10 ms with **~77% headroom** - so the lag is not CPU-bound.
 The `forensic` preset (`scenario run --preset forensic`) attributes it:
@@ -38,7 +38,7 @@ The `forensic` preset (`scenario run --preset forensic`) attributes it:
    `PooledBinaryWriter` *reflection* (`Type.GetMethod` per serialize); the IL shows
    an enum switch, not reflection, so that attribution was wrong and is dropped.
    The cost is allocation, not compute. See
-   [`../7dtd-research/docs/measured-scaling.md`](../7dtd-research/docs/measured-scaling.md) §4b.
+   [`../7dtd-research/docs/measured-scaling.md`](../7dtd-optimizer/docs/measured-scaling.md) §4b.
 4. **Main-thread-bound.** The 20 TPS game loop is single-threaded, so any
    pause or per-entity cost lands on one thread across ~200.
 5. **Per-entity tick cost is linear** at ~0.08 ms/entity/tick, so 1000 AI

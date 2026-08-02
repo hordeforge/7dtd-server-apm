@@ -1,7 +1,7 @@
 # AGENTS.md - 7dtd-apm
 
 Host-only observability and performance analysis for Linux **7 Days to Die**
-dedicated servers (target **V3.0.1**). Optional managed bridge times game methods.
+dedicated servers (target **V3.1.0**). Optional managed bridge times game methods.
 Does **not** optimize the game or generate load.
 
 Workspace root guide: [`../MODDING_BEST_PRACTICES.md`](../MODDING_BEST_PRACTICES.md)
@@ -105,3 +105,13 @@ scripts/               bridge build/install, checks
 | `../7days-realworld` | Terrain product; optional world under test |
 
 Do not silently install or rewrite sibling trees.
+
+## Stock-game research -> 7dtd-research
+
+Anything that studies the **stock** dedicated server belongs in
+[`../7dtd-research/`](../7dtd-research/), not here: reverse-engineering
+narratives (`docs/`), the Mono.Cecil dump tooling (`tools/`), wire/protocol
+analysis, and engine cost/loop RE. This repo owns host measurement, profiling, and budgeting;
+it does not host stock-game RE docs or dumpers. When RE is needed, add it
+under `../7dtd-research/` and link back. How to RE:
+[`../7dtd-research/docs/re-methodology.md`](../7dtd-research/docs/re-methodology.md).
