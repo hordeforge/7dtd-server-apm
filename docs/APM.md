@@ -115,7 +115,7 @@ uv run 7dtd-apm prune --keep 20 --dry-run
 | [ROADMAP](ROADMAP.md) | Backlog |
 | Loadgen | [`../../7dtd-loadgen/docs/README.md`](../../7dtd-loadgen/docs/README.md) |
 | Host topology | [`../../7dtd-optimizer/docs/HOST_TUNING.md`](../../7dtd-optimizer/docs/HOST_TUNING.md) |
-| Research scale | [`../../7dtd-research/docs/measured-scaling.md`](../../7dtd-research/docs/measured-scaling.md) |
+| Measured scale laws | [`../../7dtd-optimizer/docs/measured-scaling.md`](../../7dtd-optimizer/docs/measured-scaling.md) |
 
 ## Changelog
 
