@@ -102,7 +102,7 @@ scripts/               bridge build/install, checks
 |---|---|
 | `../7dtd-loadgen` | Controlled clients; APM may invoke public runner only |
 | `../7dtd-optimizer` | Reviewed optim patches; never auto-mutated by APM |
-| `../7days-realworld` | Terrain product; optional world under test |
+| `../7dtd-realworld` | Terrain product; optional world under test |
 
 Do not silently install or rewrite sibling trees.
 
