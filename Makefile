@@ -18,6 +18,9 @@ format-check:
 typecheck:
 	$(UV) mypy
 check: lint lint-shell format-check typecheck test check-bt
+# CI variant: GitHub Actions runners cannot validate bpftrace probes (no host
+# kernel access), so check-bt stays a local gate.
+check-ci: lint lint-shell format-check typecheck test
 bridge-build:
 	chmod +x scripts/build_bridge.sh
 	./scripts/build_bridge.sh
