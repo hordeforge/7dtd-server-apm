@@ -96,7 +96,7 @@ reproducible validation command. Missing evidence must never be presented as a
 healthy zero, and optional tooling must fail visibly without invalidating usable
 raw evidence.
 
-## Bottleneck-hunt round ledger (goal: 100 rounds, started 2026-07-17)
+## Bottleneck-hunt round ledger (goal: 100 rounds - reached, 116 logged, started 2026-07-17)
 
 - R1: offcpu.bt rewritten: main-thread only, duration-weighted blocking stacks (>=1ms), STALL_MAIN markers >=10ms.
 - R2: scheduler layer scores main_thread_stall_ms/share; STALL_MAIN lines enter the event timeline.
