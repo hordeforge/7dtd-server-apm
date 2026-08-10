@@ -172,7 +172,8 @@ uv run 7dtd-apm export SESSION -o support-bundle.zip
 uv run 7dtd-apm prune --keep 20 --dry-run
 uv run 7dtd-apm flame build SESSION_DIR
 uv run 7dtd-apm bridge --help
-make check
+make check     # full local gate incl. bpftrace probe validation
+make check-ci  # CI variant (no bpftrace; GitHub Actions has no host kernel)
 ```
 
 Sessions live under `~/.local/share/7dtd-apm/session_*` (override with
