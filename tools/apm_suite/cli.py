@@ -297,9 +297,7 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
         # A non-finite score (inf/nan) must never reach the scrape line.
         if layer.get("state") == "collected" and score is not None and math.isfinite(float(score)):
             name = _prom_label(layer.get("layer", "unknown"))
-            lines.append(
-                f'sevendtd_apm_layer_pressure{{layer="{name}"}} {float(score):.6f}'
-            )
+            lines.append(f'sevendtd_apm_layer_pressure{{layer="{name}"}} {float(score):.6f}')
     health_path = session / "health.json"
     health = load_json(health_path) if health_path.is_file() else summary.get("health") or {}
     if health.get("coverage") is not None:
@@ -322,9 +320,7 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
                 if subsystem is None or scaled is None:
                     continue
                 name = _prom_label(subsystem)
-                lines.append(
-                    f'sevendtd_apm_subsystem_ms{{subsystem="{name}"}} {float(scaled):.3f}'
-                )
+                lines.append(f'sevendtd_apm_subsystem_ms{{subsystem="{name}"}} {float(scaled):.3f}')
     lag = (summary.get("metadata") or {}).get("lag_diagnosis") or {}
     if lag:
         lines += [
@@ -397,7 +393,8 @@ def monitor(
     output: Annotated[
         Path | None,
         typer.Option(
-            "--output", "-o",
+            "--output",
+            "-o",
             help="Append JSONL here. Grows without bound - if run as a 24/7 service, "
             "rotate it (logrotate or a size check); ~1 line per interval.",
         ),
@@ -450,8 +447,11 @@ def monitor(
                     # answer, unlike a listplayers poll.
                     frame_now = world.get("unityDeltaMs") or 0
                     tick_life = update.get("serverTickIntervalAvgMs") or 0
-                    sample["tps"] = round(1000 / frame_now, 1) if frame_now else (
-                        round(1000 / tick_life, 1) if tick_life else None)
+                    sample["tps"] = (
+                        round(1000 / frame_now, 1)
+                        if frame_now
+                        else (round(1000 / tick_life, 1) if tick_life else None)
+                    )
                     sample["tps_lifetime"] = round(1000 / tick_life, 1) if tick_life else None
                     # Each full (gen2) collection is a Boehm stop-the-world pause.
                     sample["full_gc"] = (snapshot.get("gc") or {}).get("gen2Collections")

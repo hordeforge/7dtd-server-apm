@@ -958,7 +958,7 @@ def build_summary(session: Path) -> SummaryV2:
             # managed section can see. It is where headless-waste findings like the
             # zombie-animator path live; a healthy idle server shows ~frame-target
             # minus ~1-2 ms.
-            frame_now = (world.get("unityDeltaMs") or 0)
+            frame_now = world.get("unityDeltaMs") or 0
             gm_avg = update.get("gmUpdateDurationAvgMs") or 0
             metadata["frame"] = {
                 "gmUpdateAvgMs": update.get("gmUpdateDurationAvgMs"),

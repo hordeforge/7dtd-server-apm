@@ -112,7 +112,11 @@ def test_alloc_sites_rank_by_bytes_skip_noise(tmp_path: Path) -> None:
     )
     sites = top_alloc_sites(tmp_path, limit=3)
     # heaviest first; profiler/BCL/hex skipped; the count section is not read.
-    assert sites == ["AstarVoxelGrid.InitScan", "NetEntityDistribution.OnUpdateEntities", "GameTimer.Reset"]
+    assert sites == [
+        "AstarVoxelGrid.InitScan",
+        "NetEntityDistribution.OnUpdateEntities",
+        "GameTimer.Reset",
+    ]
     assert "DoNotPick.Me" not in sites
 
 
@@ -172,9 +176,9 @@ def test_export_scrub_redacts_nested_cmdline_exe() -> None:
 
     data = {"meta": {"cmdline": "-configfile=/secret", "exe": "/opt/7dtd", "pid": 42}}
     out = _scrub(data)
-    assert out["meta"]["cmdline"] == "<redacted>"
-    assert out["meta"]["exe"] == "<redacted>"
-    assert out["meta"]["pid"] == 42  # non-sensitive fields preserved
+    assert out == {
+        "meta": {"cmdline": "<redacted>", "exe": "<redacted>", "pid": 42}
+    }  # nested redaction; non-sensitive fields preserved
 
 
 def test_models_emit_v2_schema() -> None:
