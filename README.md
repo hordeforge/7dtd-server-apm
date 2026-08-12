@@ -73,6 +73,17 @@ uv run 7dtd-apm scenario run --seconds 60 --clients 6 --actions 500 --preset sta
 Passwords should be supplied through `SEVENDTD_TELNET_PASSWORD`; they are never
 placed in child-process arguments. EAC must be disabled when using server mods.
 
+## Harness integration (7dtd-loadgen comparison runs)
+
+`7dtd-loadgen`'s stock-vs-zdtd harness (scripts/compare_sut.sh) drives this
+tool automatically on the stock phase of every comparison scenario:
+`COMPARE_APM=1` runs `7dtd-apm capture --seconds N --no-app` over the
+connected window, finalizes the session under `stock/apm/session_*/`, and
+summarizes it into the comparison surface (layer scores, IPC, GC alloc rate,
+lag verdict). The bridge must be installed in the stock dedicated server (the
+`make bridge-install` step above). `COMPARE_APM=0` disables; see
+`../7dtd-loadgen/docs/SUT_COMPARE.md` for the full picture.
+
 ## Capture presets
 
 | Preset | Purpose | Expected observer overhead |
