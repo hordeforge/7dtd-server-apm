@@ -3,19 +3,27 @@ from __future__ import annotations
 import io
 import json
 import os
+import subprocess
+import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
+import psutil
 import pytest
+from apm_suite import capture
 from apm_suite.analysis.bridge import match_rules, parse_section_line
 from apm_suite.analysis.events import PER_SOURCE_MAX, build_timeline
 from apm_suite.analysis.health import build_health
 from apm_suite.analysis.report import parse_perf_stat, top_alloc_sites
+from apm_suite.capture import CaptureContext, CollectorSpec
 from apm_suite.cli import app
 from apm_suite.finalize import finalize
 from apm_suite.io import atomic_json, load_json
 from apm_suite.models import LayerScore, ManifestV2, Target, schema_dict
 from apm_suite.reporting import render_session
+from apm_suite.runner import terminate_tree
 from apm_suite.session import REQUIRED, audit_session
 from typer.testing import CliRunner
 
@@ -1731,6 +1739,79 @@ def test_prune_size_budget_removes_oldest_kept_first(
     result = runner.invoke(app, ["prune", "--keep", "3", "--max-gb", str(2500 / 1024**3)])
     assert result.exit_code == 0
     assert sorted(p.name for p in root.glob("session_*")) == ["session_1", "session_2"]
+
+
+# --- resource lifecycle ------------------------------------------------------------
+
+
+def test_terminate_tree_kills_launcher_and_grandchild() -> None:
+    """The group kill must reach grandchildren: a launcher shell that dies alone
+    orphans its bot binary (which keeps sockets open) until its own timeout."""
+    launcher = subprocess.Popen(
+        ["bash", "-c", 'sleep 30 & wait "$!"'],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    deadline = time.monotonic() + 5
+    grandchildren: list[psutil.Process] = []
+    while time.monotonic() < deadline:
+        grandchildren = psutil.Process(launcher.pid).children()
+        if grandchildren:
+            break
+        time.sleep(0.05)
+    assert grandchildren, "test setup failed: grandchild never appeared"
+
+    reaped = terminate_tree(launcher, term_grace=1)
+
+    assert reaped is not None
+    assert launcher.poll() is not None
+    deadline = time.monotonic() + 5
+    while any(child.is_running() for child in grandchildren) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not any(child.is_running() for child in grandchildren)
+
+
+def _boom_spec() -> CollectorSpec:
+    return CollectorSpec(
+        name="boom",
+        layer="threads",
+        artifact="threads/out.jsonl",
+        tool="sh",  # must pass the shutil.which gate on any Linux host
+        aliases=frozenset({"boom"}),
+        build=lambda ctx: [sys.executable, "-c", "pass"],
+        stdout_to="threads/out.txt",
+    )
+
+
+def test_launch_collectors_closes_opened_streams_on_open_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An OSError between the stdout open and Popen (e.g. stderr path is a
+    directory) must close the already-opened descriptor and record a failed
+    result instead of leaking an fd and aborting the launch pipeline."""
+    (tmp_path / "threads").mkdir()
+    (tmp_path / "threads" / "boom.err").mkdir()  # IsADirectoryError on stderr open
+    opened: list[Any] = []
+    real_open = Path.open
+
+    def tracking_open(self: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        handle = real_open(self, mode, *args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", tracking_open)
+    monkeypatch.setattr(capture, "SPECS", (_boom_spec(),))
+    ctx = CaptureContext(session=tmp_path, pid=os.getpid(), comm="test", seconds=1)
+    running: list[capture._Running] = []
+
+    capture._launch_collectors(ctx, "boom", False, running)
+
+    assert running == []
+    assert opened, "expected at least one tracked stream to be opened"
+    assert all(handle.closed for handle in opened)
+    result = json.loads((tmp_path / "threads" / "boom.result.json").read_text())
+    assert result["status"] == "failed"
 
 
 # --- live server (opt-in) ----------------------------------------------------------

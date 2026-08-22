@@ -880,26 +880,30 @@ def _launch_collectors(
         if spec.env:
             env.update(spec.env(ctx))
         artifact = session / spec.artifact
-        artifact.parent.mkdir(parents=True, exist_ok=True)
         streams: list[BinaryIO] = []
-        if spec.tool == "bpftrace":
-            stdout: BinaryIO | int = artifact.open("wb")
-        elif spec.stdout_to:
-            target = session / spec.stdout_to
-            target.parent.mkdir(parents=True, exist_ok=True)
-            stdout = target.open("wb")
-        else:
-            stdout = subprocess.DEVNULL
-        if not isinstance(stdout, int):
-            streams.append(stdout)
-        stderr = (artifact.parent / f"{spec.name}.err").open("wb")
-        streams.append(stderr)
-        print(f">> [{spec.layer}] {spec.name} ({seconds}s)")
         try:
+            artifact.parent.mkdir(parents=True, exist_ok=True)
+            stdout: BinaryIO | int
+            if spec.tool == "bpftrace":
+                stdout = artifact.open("wb")
+            elif spec.stdout_to:
+                target = session / spec.stdout_to
+                target.parent.mkdir(parents=True, exist_ok=True)
+                stdout = target.open("wb")
+            else:
+                stdout = subprocess.DEVNULL
+            if not isinstance(stdout, int):
+                streams.append(stdout)
+            stderr = (artifact.parent / f"{spec.name}.err").open("wb")
+            streams.append(stderr)
+            print(f">> [{spec.layer}] {spec.name} ({seconds}s)")
             process = subprocess.Popen(
                 command, stdout=stdout, stderr=stderr, env=env, start_new_session=True
             )
         except OSError as error:
+            # An open/Popen failure here (disk full, EMFILE, bad path) must not
+            # leak the already-opened descriptors nor abort the remaining
+            # pipeline: close what was opened, record, keep launching.
             for stream in streams:
                 with suppress(OSError):
                     stream.close()

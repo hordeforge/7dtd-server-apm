@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import math
 import os
@@ -25,7 +24,7 @@ from .doctor import inspect
 from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, load_json
 from .paths import REPO, apm_root
-from .runner import backend_python, run
+from .runner import backend_python, run, terminate_tree
 from .session import audit_session
 
 app = typer.Typer(help="Host-only APM for 7 Days to Die dedicated servers.", no_args_is_help=True)
@@ -800,7 +799,9 @@ def scenario_run(
         f"starting sibling 7dtd-loadgen: clients={clients} actions={actions} "
         f"mode={bot_mode or 'auto'} warmup={warmup}s"
     )
-    load_process = subprocess.Popen([str(loadgen)], env=env)
+    # Own session: the teardown below kills the whole process group, so it must
+    # not share ours (and pid == pgid only with start_new_session).
+    load_process = subprocess.Popen([str(loadgen)], env=env, start_new_session=True)
     session: Path | None = None
     capture_rc = 130
     load_rc = 130
@@ -836,21 +837,15 @@ def scenario_run(
         capture_rc = 130
     finally:
         # Deterministic loadgen shutdown even when the capture is interrupted.
+        # The script runs the bot client as its own child, so a plain
+        # terminate()/kill() on the shell would orphan that cohort (and its
+        # sockets); escalate against the whole process group instead.
         try:
             load_rc = load_process.wait(timeout=30)
         except subprocess.TimeoutExpired:
-            load_process.terminate()
-            try:
-                load_rc = load_process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                load_process.kill()
-                # Bounded: an uninterruptible-sleep child must not hang shutdown
-                # forever; leave it to the OS if it will not die.
-                with contextlib.suppress(subprocess.TimeoutExpired):
-                    load_rc = load_process.wait(timeout=5)
-                # Reap it if it exited right after the SIGKILL so we don't leave a
-                # zombie behind (a still-D-state child can't be reaped by anyone).
-                load_process.poll()
+            reaped = terminate_tree(load_process)
+            if reaped is not None:
+                load_rc = reaped
     if session is not None and workload.is_file():
         doc = json.loads(workload.read_text())
         if label:
