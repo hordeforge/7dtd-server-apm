@@ -111,25 +111,14 @@ def top_threads(pid: int, n: int = 8) -> list[dict]:
     return rows[:n]
 
 
-def sample(pid: int, prev: Sample | None, hz: float) -> Sample:
+def sample(pid: int) -> Sample:
     st = read_stat(pid)
     vol, non = read_status_ctx(pid)
     io = read_io(pid)
     page = os.sysconf("SC_PAGE_SIZE")
+    # cpu_pct is derived in the main loop from the real elapsed dt between
+    # samples (the interval here is only the target); first sample stays 0.
     cpu_pct = 0.0
-    if prev is not None:
-        d_ticks = (st["utime"] + st["stime"]) - (prev.utime + prev.stime)
-        # ticks are USER_HZ (usually 100)
-        cpu_pct = (
-            100.0
-            * d_ticks
-            / max(hz, 0.01)
-            / os.sysconf(os.sysconf_names["SC_CLK_TCK"])
-            * os.sysconf(os.sysconf_names["SC_CLK_TCK"])
-        )
-        # simpler: d_ticks / USER_HZ / wall = fraction of one core
-        user_hz = os.sysconf("SC_CLK_TCK")
-        cpu_pct = 100.0 * (d_ticks / user_hz) / max(hz, 0.01)
     return Sample(
         t=time.time(),
         pid=pid,
@@ -185,12 +174,11 @@ def main() -> int:
         if not Path(f"/proc/{pid}").exists():
             print("process exited")
             break
-        wall = args.interval if prev else args.interval
         t_before = time.time()
         # /proc reads race with process exit (the exists() check above is TOCTOU)
         # and can return short/empty files; a bad sample must not kill the run.
         try:
-            s = sample(pid, prev, wall if prev else args.interval)
+            s = sample(pid)
         except (OSError, ValueError, IndexError):
             print("process exited or /proc read raced")
             break
@@ -213,12 +201,15 @@ def main() -> int:
             f"{dr:7.2f} {dw:7.2f} {dvc:5d} {dnc:5d}"
         )
         if args.threads:
+            # One walk of /proc/pid/task per sample feeds both the console line
+            # and the JSONL record; a second call would re-read stat+comm for
+            # every thread (100+ files/s wasted on a loaded server).
             thr = top_threads(pid)
             for t in thr[:5]:
                 print(f"    tid={t['tid']:<7} {t['comm']:<16} ticks={t['cpu_ticks']}")
         rec = asdict(s)
         if args.threads:
-            rec["top_threads"] = top_threads(pid)
+            rec["top_threads"] = thr
         rows.append(rec)
         prev = s
         # sleep remaining

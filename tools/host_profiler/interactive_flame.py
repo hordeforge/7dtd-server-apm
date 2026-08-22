@@ -145,14 +145,15 @@ function render() {
   }
   place(focus, 0, width, 0);
 
-  for (const n of nodes) {
+  for (let i = 0; i < nodes.length; i++) {
+    const n = nodes[i];
     const cls = "frame" + (n.dim ? " dim" : "") + (n.hit ? " hit" : "");
     const showText = n.w > 40;
     const text = showText ? escapeXml(n.label.slice(0, Math.floor(n.w / 7))) : "";
     // Keyboard access: every visible frame is a focusable button-like node
     // with a full accessible name (WCAG 2.1.1 / 4.1.2); Enter/Space zooms.
     const kbd = ` tabindex="0" role="button" aria-label="${escapeXml(n.label)}"`;
-    svg += `<g class="${cls}" data-i="${nodes.indexOf(n)}"${kbd}>`;
+    svg += `<g class="${cls}" data-i="${i}"${kbd}>`;
     svg += `<rect x="${n.x0.toFixed(2)}" y="${n.y}" width="${Math.max(n.w - 0.5, 0.5).toFixed(2)}" height="${H - PAD}" fill="${color(n.node.name)}"/>`;
     if (text)
       svg += `<text x="${(n.x0 + 3).toFixed(2)}" y="${n.y + 12}">${text}</text>`;

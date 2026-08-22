@@ -278,6 +278,20 @@ def attribute_subsystems(
     }
 
 
+def attribute_document(doc: dict[str, Any]) -> dict[str, Any]:
+    """Subsystem attribution from an already-parsed bridge snapshot document.
+
+    Raises on malformed nested values (a non-object "measurement"/"update"/
+    "world" block); callers decide whether that poisons the whole stage.
+    """
+    return attribute_subsystems(
+        doc.get("sections") or [],
+        int((doc.get("measurement") or {}).get("deepSampleRate") or 1),
+        window_updates=int((doc.get("update") or {}).get("windowUpdates") or 0),
+        entities=int((doc.get("world") or {}).get("entities") or 0),
+    )
+
+
 def attribute_snapshot(session: Path) -> dict[str, Any] | None:
     """Subsystem attribution computed fresh from the session's bridge snapshot.
 
@@ -289,13 +303,7 @@ def attribute_snapshot(session: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        doc = json.loads(path.read_text())
-        return attribute_subsystems(
-            doc.get("sections") or [],
-            int((doc.get("measurement") or {}).get("deepSampleRate") or 1),
-            window_updates=int((doc.get("update") or {}).get("windowUpdates") or 0),
-            entities=int((doc.get("world") or {}).get("entities") or 0),
-        )
+        return attribute_document(json.loads(path.read_text()))
     except (AttributeError, TypeError, ValueError, OSError):
         # AttributeError: a "measurement"/"update"/"world" block that parsed as
         # a non-object (list/str) has no .get; treat the whole document as bad.
@@ -366,10 +374,20 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
             if isinstance(section, dict) and section.get("name") and section not in sections:
                 sections.append(section)
 
-    for path in [extra, session / "app/managed_sections.json", session / "app/apm_app.json"]:
-        if path and Path(path).is_file():
-            with contextlib.suppress(json.JSONDecodeError):
-                ingest_obj(json.loads(Path(path).read_text()))
+    def ingest_file(path: Path) -> None:
+        with contextlib.suppress(json.JSONDecodeError):
+            ingest_obj(json.loads(path.read_text()))
+
+    named = [
+        path
+        for path in (extra, session / "app/managed_sections.json", session / "app/apm_app.json")
+        if path and Path(path).is_file()
+    ]
+    # Ingest each distinct file once; the *.json sweep below must not re-parse
+    # the ones already read by name.
+    ingested: set[Path] = {Path(path).resolve() for path in named}
+    for path in named:
+        ingest_file(Path(path))
 
     scrape = session / "app/bridge.jsonl"
     if scrape.exists():
@@ -386,7 +404,9 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
 
     app_dir = session / "app"
     if app_dir.is_dir():
-        for path in app_dir.glob("*.json"):
+        for path in sorted(app_dir.glob("*.json")):
+            if path.resolve() in ingested:
+                continue
             with contextlib.suppress(json.JSONDecodeError, OSError):
                 ingest_obj(json.loads(path.read_text()))
 

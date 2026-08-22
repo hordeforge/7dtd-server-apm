@@ -415,6 +415,93 @@ def test_bridge_spikes_become_timeline_events(tmp_path: Path) -> None:
     assert "entities=500" in spikes[0].message
 
 
+def test_attribute_document_matches_attribute_snapshot(tmp_path: Path) -> None:
+    from apm_suite.analysis.bridge import attribute_document, attribute_snapshot
+
+    session = tmp_path / "session_attr"
+    session.mkdir()
+    doc = {
+        "sections": [
+            {"name": "DecoManager.UpdateTick", "totalMs": 400.0, "calls": 2000},
+            {"name": "World.TickEntity", "totalMs": 100.0, "calls": 40, "deep": True},
+        ],
+        "measurement": {"deepSampleRate": 16},
+        "update": {"windowUpdates": 100},
+        "world": {"entities": 50},
+    }
+    atomic_json(session / "app/apm_app.json", doc)
+    # The doc-level helper (used by build_summary to avoid a re-read) must apply
+    # the identical deep-sample scaling as the session-level entry point.
+    assert attribute_document(doc) == attribute_snapshot(session)
+
+
+def test_build_summary_lag_attribution_uses_snapshot(tmp_path: Path) -> None:
+    from apm_suite.analysis.report import build_summary
+
+    session = tmp_path / "session_lagattr"
+    (session / "app").mkdir(parents=True)
+    atomic_json(
+        session / "app/apm_app.json",
+        {
+            "sections": [{"name": "DecoManager.UpdateTick", "totalMs": 900.0, "calls": 2000}],
+            "measurement": {"deepSampleRate": 1},
+            "update": {"windowUpdates": 100},
+            "world": {"entities": 10},
+        },
+    )
+    atomic_json(session / "meta.json", _meta())
+    summary = build_summary(session)
+    causes = (summary.metadata.get("lag_diagnosis") or {}).get("causes") or []
+    # The dominant managed subsystem is named even with no host probe fired.
+    assert any(c["cause"] == "deco_world_bound" for c in causes)
+
+
+def test_parse_managed_sections_reads_each_named_file_once(tmp_path: Path) -> None:
+    from apm_suite.analysis.bridge import parse_managed_sections
+
+    session = tmp_path / "session_sections"
+    (session / "app").mkdir(parents=True)
+    snapshot = {
+        "sections": [
+            {"name": "GmUpdate", "avgMs": 5.0, "calls": 100},
+            {"name": "DecoManager.UpdateTick", "avgMs": 2.0, "calls": 800},
+        ]
+    }
+    extra = session / "app/apm_app.json"
+    atomic_json(extra, snapshot)
+    # managed_sections.json repeats one section identically and adds another;
+    # it is matched BOTH by the explicit name list and the *.json sweep.
+    atomic_json(
+        session / "app/managed_sections.json",
+        {"sections": [{"name": "GmUpdate", "avgMs": 5.0, "calls": 100}]},
+    )
+    atomic_json(
+        session / "app/other_dump.json",
+        {"sections": [{"name": "World.SaveWorldState", "avgMs": 9.0, "calls": 3}]},
+    )
+    sections = parse_managed_sections(session, extra)
+    names = [s["name"] for s in sections]
+    # Every source contributes; identical dicts still dedupe; nothing is lost
+    # or duplicated by the named-list/glob overlap.
+    assert sorted(names) == ["DecoManager.UpdateTick", "GmUpdate", "World.SaveWorldState"]
+
+
+def test_alloc_site_rankings_equal_with_preloaded_text(tmp_path: Path) -> None:
+    from apm_suite.analysis.report import _alloc_source_text, top_churn_sites
+
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    (runtime / "mono_alloc.bt.annotated.txt").write_text(
+        "=== top sampled (1/4096, all sizes) (top 20) ===\n"
+        "@alloc_bytes[\n"
+        "        GC_malloc+0\n"
+        "        EntityAlive.updateTasks+0x1\n"
+        "]: 12345678\n"
+    )
+    text = _alloc_source_text(tmp_path)
+    assert top_churn_sites(tmp_path, text=text) == top_churn_sites(tmp_path)
+
+
 def test_jitsym_annotates_hex_against_map(tmp_path: Path) -> None:
     from apm_suite.analysis.jitsym import annotate, load_map
 

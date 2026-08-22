@@ -15,7 +15,7 @@ from typing import Any
 
 from ..io import atomic_json
 from ..models import LayerScore, SummaryV2, layer_requested, schema_dict
-from .bridge import attribute_snapshot
+from .bridge import attribute_document, attribute_snapshot
 
 
 def parse_perf_stat(text: str) -> dict[str, float]:
@@ -487,20 +487,30 @@ def _alloc_stack_site(frames: list[str]) -> str | None:
     return None
 
 
-def _alloc_block_sites(session: Path, header: str, limit: int) -> list[str]:
+def _alloc_source_text(session: Path) -> str:
+    """Full text of the mono_alloc probe output (jitsym-annotated when present)."""
+    annotated = session / "runtime" / "mono_alloc.bt.annotated.txt"
+    source = annotated if annotated.is_file() else session / "runtime" / "mono_alloc.bt.out"
+    return source.read_text(errors="replace") if source.is_file() else ""
+
+
+def _alloc_block_sites(
+    session: Path, header: str, limit: int, text: str | None = None
+) -> list[str]:
     """Rank allocation sites in a bpftrace ustack block by total bytes.
 
     bpftrace prints maps ascending, so the biggest allocations are LAST; naive
     top-down reading grabs the smallest, noisiest stacks. Instead parse every
     (stack, bytes) record, attribute each to its owning game frame, aggregate by
-    bytes, and return the true heaviest sites.
+    bytes, and return the true heaviest sites. Pass `text` (from
+    _alloc_source_text) when ranking several blocks so the file is read once.
     """
-    annotated = session / "runtime" / "mono_alloc.bt.annotated.txt"
-    source = annotated if annotated.is_file() else session / "runtime" / "mono_alloc.bt.out"
-    if not source.is_file():
-        return []
+    if text is None:
+        text = _alloc_source_text(session)
+        if not text:
+            return []
     # Slice to just this section: from the header to the next "===" divider.
-    block = source.read_text(errors="replace").partition(header)[2].split("\n===", 1)[0]
+    block = text.partition(header)[2].split("\n===", 1)[0]
     totals: dict[str, int] = {}
     for match in _ALLOC_RECORD.finditer(block):
         frames = [ln.strip() for ln in match.group("frames").splitlines() if ln.strip()]
@@ -578,17 +588,17 @@ def top_cpu_hot_paths(session: Path, limit: int = 12) -> dict[str, list[tuple[st
     }
 
 
-def top_alloc_sites(session: Path, limit: int = 3) -> list[str]:
+def top_alloc_sites(session: Path, limit: int = 3, text: str | None = None) -> list[str]:
     """Top methods behind the biggest LARGE (>=4KB) allocations (heap spikes)."""
-    return _alloc_block_sites(session, "top large-allocation sites by bytes", limit)
+    return _alloc_block_sites(session, "top large-allocation sites by bytes", limit, text)
 
 
-def top_churn_sites(session: Path, limit: int = 3) -> list[str]:
+def top_churn_sites(session: Path, limit: int = 3, text: str | None = None) -> list[str]:
     """Top methods behind the steady small-object churn (1/4096 sampled, all sizes).
 
     This is the GC-pause FLOOR source, which the >=4KB large-alloc view misses.
     """
-    return _alloc_block_sites(session, "top sampled (1/4096, all sizes)", limit)
+    return _alloc_block_sites(session, "top sampled (1/4096, all sizes)", limit, text)
 
 
 def top_stack_sites(session: Path, rel: str, header: str, limit: int = 3) -> list[str]:
@@ -1090,15 +1100,18 @@ def build_summary(session: Path) -> SummaryV2:
 
     metadata: dict[str, Any] = {}
     snapshot_path = session / "app/apm_app.json"
+    snapshot: dict[str, Any] | None = None
     if snapshot_path.is_file():
         # A malformed bridge snapshot must not lose the host-side evidence
         # collected below; drop just the snapshot-derived blocks instead.
         try:
-            snapshot = json.loads(snapshot_path.read_text())
-            metadata.update(_snapshot_metadata(snapshot, texts.get("mono_alloc", "")))
+            loaded = json.loads(snapshot_path.read_text())
+            if isinstance(loaded, dict):
+                snapshot = loaded
+            metadata.update(_snapshot_metadata(snapshot or {}, texts.get("mono_alloc", "")))
             if "gc" in metadata:
                 _apply_gc_pressure(layers, metadata["gc"])
-            _apply_late_tick_pressure(layers, snapshot.get("update") or {})
+            _apply_late_tick_pressure(layers, (snapshot or {}).get("update") or {})
         except (json.JSONDecodeError, ValueError):
             pass
 
@@ -1106,8 +1119,10 @@ def build_summary(session: Path) -> SummaryV2:
     net = _net_rates(texts.get("io_net", ""), net_window)
     if net:
         metadata["net"] = net
-    metadata["top_alloc_sites"] = top_alloc_sites(session)
-    metadata["top_churn_sites"] = top_churn_sites(session)
+    # One read of the (forensic-sized) alloc probe output feeds both rankings.
+    alloc_text = _alloc_source_text(session)
+    metadata["top_alloc_sites"] = top_alloc_sites(session, text=alloc_text)
+    metadata["top_churn_sites"] = top_churn_sites(session, text=alloc_text)
     metadata["cpu_hot_paths"] = top_cpu_hot_paths(session)
     mem = memory_trend(session)
     if mem:
@@ -1116,9 +1131,15 @@ def build_summary(session: Path) -> SummaryV2:
     # Subsystem attribution lets the verdict name a dominant managed subsystem
     # (e.g. network serialization at player scale) even when no host probe fired.
     # Compute it fresh from this session's bridge snapshot so the diagnosis is not
-    # one finalize behind the bridge stage (which runs after summary). Falls back
-    # to a prior csharp_bridge.json when the raw snapshot is absent.
-    attribution = attribute_snapshot(session)
+    # one finalize behind the bridge stage (which runs after summary). Reuses the
+    # snapshot parsed above; only falls back to a re-read (or a prior
+    # csharp_bridge.json) when that parse failed or the raw snapshot is absent.
+    attribution: dict[str, Any] | None = None
+    if snapshot is not None:
+        with contextlib.suppress(AttributeError, TypeError, ValueError):
+            attribution = attribute_document(snapshot)
+    if not attribution:
+        attribution = attribute_snapshot(session)
     if not attribution:
         prior_bridge = session / "csharp_bridge.json"
         if prior_bridge.is_file():
