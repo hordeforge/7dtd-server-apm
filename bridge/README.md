@@ -30,9 +30,11 @@ send-queue flushing. The snapshot and dashboard also expose per-package counts,
 total bytes, and last/maximum package size under `mapTransfers`.
 
 The `gc` block reports window-scoped Boehm collections, heap delta, and a gross
-allocation counter (`grossAllocBytesPerSecond`) via `GC.GetTotalAllocatedBytes`
-where the runtime provides it (Unity 2022 Mono does not, reporting `-1`; the
-host `mono_alloc` probe supplies gross allocation there instead). Deep hooks
+allocation counter (`grossAllocBytesPerSecond`). Gross comes from a native
+P/Invoke of Boehm's `GC_get_total_bytes`, so it works on Unity 2022 Mono (which
+lacks managed `GC.GetTotalAllocatedBytes`; that API is only the fallback, and
+`-1` means neither was available). Without the bridge installed at all, the host
+`mono_alloc` probe supplies gross allocation. Deep hooks
 include tile-entity chunk load (`TileEntity.InstantiateFromRead`,
 `TileEntityFeatureData.InstantiateModule`) so serialization cost is measurable
 alongside the allocation churn it drives. Current schema `7dtd.apm.app.v3`,
