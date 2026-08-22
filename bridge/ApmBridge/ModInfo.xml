@@ -4,7 +4,7 @@
   <DisplayName value="7dtd-apm Instrumentation Bridge" />
   <Description value="Optional instrumentation-only telemetry provider for the host 7dtd-apm suite." />
   <Author value="7dtd-apm" />
-  <Version value="2.2.0" />
+  <Version value="2.2.2" />
   <Website value="" />
   <SkipWithAntiCheat value="true" />
 </xml>

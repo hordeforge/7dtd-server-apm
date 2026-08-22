@@ -1,0 +1,160 @@
+{
+  // oxlint config for the WebMod TypeScript source (bridge/ApmBridge/WebMod/
+  // bundle.ts, scripts/lint-webui.sh, `make lint-webui`).
+  //
+  // Target: bundle.ts, compiled by tsc (WebMod/tsconfig.json, pinned
+  // TSC_VERSION) into the classic browser script bundle.js that the stock
+  // WebDashboard loads. env browser + es2024; the emitted target is ES2017,
+  // which is why the ES2022+ array APIs (at, toSorted, toReversed) are off.
+  //
+  // Rule set: the Rika-Labs/oxlint-standards v0.8.1 anti-slop baseline plus the
+  // strict-core subset applicable to browser classic scripts (same provenance
+  // as ../zdtd/.oxlintrc.jsonc and ../7dtd-realworld/.oxlintrc.jsonc),
+  // extended 2026-08-22 with the typescript/unicorn rules the source passes
+  // (array-type, consistent-type-definitions, explicit-function-return-type,
+  // prefer-number-properties, prefer-global-this, prefer-spread,
+  // explicit-length-check, numeric-separators-style, ...). Warnings and errors
+  // are both enforced because scripts/lint-webui.sh runs with --deny-warnings.
+  //
+  // Thresholds match the strict preset: max-lines-per-function 60 (ApmPanel
+  // and the render helpers are split to fit), max-classes-per-file 1,
+  // max-lines 1500, max-nested-callbacks 4.
+  //
+  // Deliberate off entries:
+  //   no-array-sort, no-array-reverse, unicorn/prefer-at: tsconfig targets
+  //     ES2017 (no lib bump), so toSorted/toReversed/at are unavailable; the
+  //     code keeps [...x].sort() / [...x].reverse() / index access instead.
+  //   @rikalabs/no-single-use-trivial-helpers: the render helpers (renderGrid,
+  //     renderSectionsSection, pushHistory, ...) exist to keep ApmPanel under
+  //     the 60-line cap; inlining them would blow the cap.
+  //   @rikalabs/no-trivial-runtime-guard-helpers: only the standard
+  //     Array.isArray builtin is used; the rule bans the builtin call itself.
+  //   eslint/no-implicit-globals, import/unambiguous: the bundle is a classic
+  //     script; top-level functions are the page contract, and there are no
+  //     imports by design.
+  //   vitest/*, jsdoc/*, strict-runtime node/*: not applicable (no tests, no
+  //     node runtime).
+  //
+  // Type-aware: options.typeAware (the strict preset's typescript/* rules that
+  // need real type info) is intentionally OFF here. The source types the
+  // snapshot shape through the Any alias (see the no-explicit-any disable
+  // comment in bundle.ts) because the dashboard payload is injected and
+  // untyped; a type-aware pass would flag ~150 no-unsafe-* findings. Enabling
+  // it requires re-typing the payload accessors against Snapshot and is a
+  // follow-up, not part of this gate.
+  "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
+  "env": { "browser": true, "es2024": true },
+  "categories": {
+    "correctness": "error",
+    "suspicious": "error"
+  },
+  "plugins": ["typescript", "unicorn"],
+  "jsPlugins": ["@rikalabs/oxlint-standards/plugin"],
+  "rules": {
+    // ---- dead / debug code ----
+    "no-debugger": "error",
+    "no-console": "error", // dashboard panel: console is debug leftover, never intended output
+    "no-unused-vars": "error",
+    "no-empty": "error",
+    "no-empty-function": "error",
+    "no-unreachable": "error",
+    "no-useless-catch": "error",
+    "no-self-compare": "error",
+    "no-constant-condition": "error",
+    "no-sequences": "error",
+    "no-alert": "error",
+    // ---- correctness of intent ----
+    "eqeqeq": ["error", "always"],
+    "no-cond-assign": "error",
+    "no-fallthrough": "error",
+    "no-implicit-coercion": ["error", { "allow": ["!!"] }],
+    "radix": "error",
+    "no-eval": "error",
+    "no-new-func": "error",
+    "no-new-wrappers": "error",
+    "no-script-url": "error",
+    "no-throw-literal": "error",
+    "no-param-reassign": "error",
+    "no-async-promise-executor": "error",
+    "no-promise-executor-return": "error",
+    "no-undef": "error",
+    // ---- idiomatic modern JS ----
+    "no-var": "error",
+    "prefer-const": "error",
+    "prefer-template": "error",
+    "no-useless-concat": "error",
+    "object-shorthand": "error",
+    "prefer-destructuring": "error",
+    "prefer-spread": "error",
+    // ---- shape caps (strict-core thresholds) ----
+    "max-lines-per-function": ["error", { "max": 60, "skipBlankLines": true, "skipComments": true }],
+    "max-classes-per-file": ["error", 1],
+    "max-lines": ["error", { "max": 1500, "skipBlankLines": true, "skipComments": true }],
+    "max-nested-callbacks": ["error", 4],
+    "no-nested-ternary": "error",
+    "no-lonely-if": "error",
+    "no-negated-condition": "error",
+    "no-else-return": "error",
+    "no-useless-return": "error",
+    "default-case": "error",
+    // ---- oxlint-standards strict-core native rules applicable to browser JS ----
+    "no-warning-comments": "error",
+    "no-shadow": ["error", { "hoist": "functions" }],
+    "no-return-assign": "error",
+    "no-loop-func": "error",
+    "no-constructor-return": "error",
+    "curly": ["error", "all"],
+    "no-multi-assign": "error",
+    "no-template-curly-in-string": "error",
+    "no-labels": "error",
+    "no-lone-blocks": "error",
+    "prefer-object-has-own": "error",
+    "no-implied-eval": "error",
+    "prefer-promise-reject-errors": "error",
+    "array-callback-return": "error",
+    // ---- typescript/* the source passes (2026-08-22) ----
+    "typescript/no-explicit-any": "error", // bundle.ts alias line carries a documented disable
+    "typescript/consistent-type-definitions": ["error", "type"],
+    "typescript/array-type": ["error", { "default": "generic" }],
+    "typescript/explicit-function-return-type": "error",
+    "typescript/consistent-type-assertions": ["error", { "assertionStyle": "as" }],
+    // ---- unicorn rules the source passes (2026-08-22) ----
+    "unicorn/catch-error-name": "error",
+    "unicorn/prefer-number-properties": "error",
+    "unicorn/prefer-global-this": "error",
+    "unicorn/prefer-optional-catch-binding": "error",
+    "unicorn/prefer-spread": "error",
+    "unicorn/explicit-length-check": "error",
+    "unicorn/numeric-separators-style": "error",
+    "unicorn/no-nested-ternary": "error",
+    "unicorn/consistent-function-scoping": "error",
+    // ---- oxlint-standards custom plugin (@rikalabs/*): anti-slop heuristics ----
+    "@rikalabs/no-commented-out-code": "error",
+    "@rikalabs/no-identical-branches": "error",
+    "@rikalabs/no-tutorial-comments": "error",
+    "@rikalabs/no-ai-debt-comments": "error",
+    "@rikalabs/no-placeholder-implementation": "error",
+    "@rikalabs/no-disable-without-rationale": "error",
+    "@rikalabs/no-todo-without-issue": "error",
+    "@rikalabs/no-low-signal-variable-names": "error",
+    "@rikalabs/no-vague-verbs": "error",
+    "@rikalabs/no-bare-wrapper-functions": "error",
+    "@rikalabs/no-silent-catch-fallback": "error",
+    "@rikalabs/no-trivial-property-helpers": "error",
+    "@rikalabs/no-pass-through-intermediate-vars": "error",
+    "@rikalabs/no-anemic-errors": "error",
+    "@rikalabs/no-duplicate-context": "error",
+    "@rikalabs/no-is-record-helpers": "error",
+    "@rikalabs/no-property-default-fallbacks": "error",
+    "@rikalabs/no-double-type-assertion": "error",
+    "@rikalabs/no-redundant-const-assertion": "error",
+    "@rikalabs/no-hardcoded-secrets": "error",
+    "@rikalabs/no-sql-string-concat": "error",
+    // ---- off, with reason (see header) ----
+    "no-array-sort": "off",
+    "no-array-reverse": "off",
+    "unicorn/prefer-at": "off",
+    "@rikalabs/no-single-use-trivial-helpers": "off",
+    "@rikalabs/no-trivial-runtime-guard-helpers": "off"
+  }
+}

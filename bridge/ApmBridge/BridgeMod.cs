@@ -10,7 +10,7 @@ namespace DtdApmBridge
 {
     public sealed class BridgeMod : IModApi
     {
-        public const string Version = "2.2.0";
+        public const string Version = "2.2.2";
         static readonly Dictionary<string, string> Status = new Dictionary<string, string>();
         static readonly Dictionary<MethodBase, int> SectionIds = new Dictionary<MethodBase, int>();
         static readonly HashSet<int> DeepIds = new HashSet<int>();
