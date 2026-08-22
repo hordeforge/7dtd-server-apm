@@ -482,9 +482,6 @@ def monitor(
             if isinstance(current_gc, int):
                 previous_gc = current_gc
 
-            def _ms(value: object) -> str:
-                return f"{value:.1f}" if isinstance(value, (int, float)) else "-"
-
             tps = sample.get("tps")
             tps_str = f"{tps:.1f}" if isinstance(tps, (int, float)) else "-"
             console.print(
@@ -501,6 +498,10 @@ def monitor(
             taken += 1
     except (KeyboardInterrupt, psutil.NoSuchProcess):
         console.print("monitor stopped")
+
+
+def _ms(value: object) -> str:
+    return f"{value:.1f}" if isinstance(value, (int, float)) else "-"
 
 
 @app.command("prune")

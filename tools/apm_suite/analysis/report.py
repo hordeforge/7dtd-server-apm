@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json
-from ..models import LayerScore, SummaryV2, schema_dict
+from ..models import LayerScore, SummaryV2, layer_requested, schema_dict
+from .bridge import attribute_snapshot
 
 
 def parse_perf_stat(text: str) -> dict[str, float]:
@@ -320,15 +321,6 @@ def _app_layer(texts: dict[str, str]) -> LayerScore:
     )
 
 
-ALIASES = {
-    "memory_cache": {"memory", "hw", "cache"},
-    "sync_locks": {"sync", "locks", "futex"},
-    "runtime_gc": {"runtime", "gc"},
-    "app_sim": {"app"},
-    "scheduler": {"scheduler", "sched"},
-}
-
-
 def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> list[LayerScore]:
     """Heuristic 0-100 severity scores (higher = more pressure), coverage-aware."""
     meta: dict[str, Any] = {}
@@ -345,7 +337,9 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
         _gc_layer(texts),
         _app_layer(texts),
     ]
-    requested = {token.strip() for token in str(meta.get("only") or "all").split(",")}
+    requested = {
+        token.strip() for token in str(meta.get("only") or "all").split(",") if token.strip()
+    }
     sources = {
         "cpu": [session / "cpu/oncpu.bt.out", session / "cpu/perf/stacks.folded"],
         "memory_cache": [session / "memory/hw_stat.txt", session / "memory/proc.jsonl"],
@@ -356,11 +350,7 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
         "app_sim": [session / "app/apm_app.json", session / "app/bridge.jsonl"],
     }
     for score in scores:
-        wanted = (
-            "all" in requested
-            or score.layer in requested
-            or bool(ALIASES.get(score.layer, {score.layer}) & requested)
-        )
+        wanted = layer_requested(score.layer, requested)
         present = any(p.is_file() and p.stat().st_size for p in sources[score.layer])
         score.state = "collected" if present else "unavailable" if wanted else "skipped"
         score.confidence = "medium" if score.state == "collected" else "low"
@@ -724,7 +714,7 @@ def diagnose_lag(
             {
                 "cause": "main_thread_bound",
                 "severity": round(min(1.0, main_share), 2),
-                "detail": f"main thread = {main_cpu}% CPU, {int(main_share * 100)}% of process "
+                "detail": f"main thread = {main_cpu}% CPU, {round(main_share * 100)}% of process "
                 f"across {threads.get('n_threads')} threads"
                 + (f"; tick hot paths: {hot_str}" if hot_str else ""),
                 "fix": "do less on the tick (LOD/tier-skip entities) or extract sim off "
@@ -846,7 +836,7 @@ def diagnose_lag(
                 {
                     "cause": f"{name}_bound",
                     "severity": round(min(1.0, share), 2),
-                    "detail": f"{friendly} = {int(share * 100)}% of instrumented managed time"
+                    "detail": f"{friendly} = {round(share * 100)}% of instrumented managed time"
                     + (
                         " (per-player serialization/distribution is the player-scale wall)"
                         if name == "network"
@@ -906,31 +896,189 @@ def diagnose_lag(
     return result
 
 
+def _load_meta(session: Path) -> dict[str, Any]:
+    meta_path = session / "meta.json"
+    return json.loads(meta_path.read_text()) if meta_path.exists() else {}
+
+
+def _apply_main_thread_pressure(layers: list[LayerScore], threads: dict[str, Any]) -> None:
+    """One thread carrying most of the process while the box looks idle is
+    main-thread-bound; near a full core is that ceiling."""
+    share = threads.get("main_thread_share_of_process_avg")
+    cpu = threads.get("main_thread_cpu_pct_avg")
+    if share is None:
+        return
+    for layer in layers:
+        if layer.layer != "cpu" or layer.state != "collected":
+            continue
+        layer.signals["main_thread_cpu_pct"] = cpu
+        layer.signals["main_thread_share_of_process"] = share
+        if share >= 0.5 and (cpu or 0) >= 80:
+            layer.score = max(layer.score or 0, 85)
+        elif share >= 0.5:
+            layer.score = max(layer.score or 0, 55)
+
+
+def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, Any]:
+    """world/frame/transfers/gc blocks derived from a bridge snapshot.
+
+    Raises on malformed values so the caller decides what to keep; absent
+    blocks are simply omitted from the result.
+    """
+    world = snapshot.get("world") or {}
+    update = snapshot.get("update") or {}
+    metadata: dict[str, Any] = {
+        "world": {
+            "entities": world.get("entities"),
+            "players": world.get("players"),
+            "entityAlives": world.get("entityAlives"),
+            "clients": world.get("clients"),
+        }
+    }
+    # engineGap = frame period minus managed gmUpdate: the unattributed
+    # ENGINE slice (animator eval, transforms, player-loop overhead) that no
+    # managed section can see. It is where headless-waste findings like the
+    # zombie-animator path live; a healthy idle server shows ~frame-target
+    # minus ~1-2 ms.
+    frame_now = world.get("unityDeltaMs") or 0
+    gm_avg = update.get("gmUpdateDurationAvgMs") or 0
+    metadata["frame"] = {
+        "gmUpdateAvgMs": update.get("gmUpdateDurationAvgMs"),
+        "tickIntervalAvgMs": update.get("serverTickIntervalAvgMs"),
+        "unityDeltaMs": world.get("unityDeltaMs"),
+        "engineGapMs": round(frame_now - gm_avg, 2) if frame_now else None,
+        "windowUpdates": update.get("windowUpdates"),
+        "spikes": update.get("totalSpikes"),
+        "lateTicks": update.get("lateTicks"),
+        "tickStallMsTotal": update.get("tickStallMsTotal"),
+    }
+    window_s = float((snapshot.get("gc") or {}).get("windowSeconds") or 0)
+    transfers = snapshot.get("mapTransfers") or []
+    if transfers and window_s > 0:
+        total_bytes = sum(int(x.get("bytes") or 0) for x in transfers)
+        total_pkgs = sum(int(x.get("packages") or 0) for x in transfers)
+        metadata["transfers"] = {
+            "mb_per_second": round(total_bytes / 1048576 / window_s, 2),
+            "packages_per_second": round(total_pkgs / window_s, 1),
+            "by_type": {
+                str(x.get("name")): round(int(x.get("bytes") or 0) / 1048576, 1) for x in transfers
+            },
+        }
+    gc_window = snapshot.get("gc") or {}
+    if gc_window:
+        heap_delta = int(gc_window.get("heapDeltaBytes") or 0)
+        # Boehm (Mono's default here) is non-generational: gen0==gen2, so
+        # the collection counts are not a generational signal. The real
+        # allocation-pressure gauge is heap growth rate; each full
+        # collection it triggers is a stop-the-world frame hitch.
+        alloc_mb_s = (heap_delta / 1048576 / window_s) if window_s > 0 else 0
+        collections = int(gc_window.get("gen2Collections") or 0)
+        # Gross allocation is the real GC-pause driver. Unity 2022 Mono
+        # lacks GC.GetTotalAllocatedBytes (bridge counter is -1), so the
+        # opt-in mono_alloc probe (Boehm GC_malloc arg0) is the source
+        # on this runtime. Left None when unmeasured so the budget gate
+        # treats it as UNKNOWN, never a healthy zero.
+        gross_bps = float(gc_window.get("grossAllocBytesPerSecond") or -1)
+        gross_mb_s: float | None = round(gross_bps / 1048576, 2) if gross_bps >= 0 else None
+        if gross_mb_s is None and window_s > 0:
+            alloc_match = re.search(r"@alloc_bytes_total:\s*(\d+)", mono_alloc)
+            if alloc_match:
+                gross_mb_s = round(int(alloc_match.group(1)) / 1048576 / window_s, 2)
+        gc_meta: dict[str, Any] = {
+            "allocMBPerSecond": round(alloc_mb_s, 2),  # net heap growth
+            "fullCollections": collections,
+            "heapDeltaBytes": heap_delta,
+            "windowSeconds": round(window_s, 1),
+        }
+        if gross_mb_s is not None:
+            gc_meta["grossAllocMBPerSecond"] = gross_mb_s  # true churn
+            # Allocation per tick (KB): the garbage each tick creates that
+            # Boehm must eventually scan. Ties churn to the tick budget.
+            ticks = int(update.get("windowUpdates") or 0)
+            if ticks and window_s > 0:
+                alloc_kb_tick = gross_mb_s * 1024 * window_s / ticks
+                gc_meta["grossAllocKBPerTick"] = round(alloc_kb_tick, 1)
+        metadata["gc"] = gc_meta
+    return metadata
+
+
+def _apply_gc_pressure(layers: list[LayerScore], gc_meta: dict[str, Any]) -> None:
+    """Raise runtime_gc on real allocation pressure. Scored on GROSS churn (the
+    GC-pause driver) when measured; net heap growth reads ~0 at steady state and
+    would leave the layer (and health) blind to real allocation pressure."""
+    alloc_mb_s = float(gc_meta.get("allocMBPerSecond") or 0)
+    gross = gc_meta.get("grossAllocMBPerSecond")
+    churn = float(gross) if gross is not None else alloc_mb_s
+    collections = int(gc_meta.get("fullCollections") or 0)
+    for layer in layers:
+        if layer.layer != "runtime_gc" or layer.state != "collected":
+            continue
+        layer.signals["alloc_mb_per_second"] = round(alloc_mb_s, 2)
+        layer.signals["full_gc_collections"] = collections
+        if churn >= 10 or collections >= 3:
+            layer.score = max(layer.score or 0, 80)
+        elif churn >= 4 or collections >= 1:
+            layer.score = max(layer.score or 0, 50)
+
+
+def _apply_late_tick_pressure(layers: list[LayerScore], update: dict[str, Any]) -> None:
+    """Raise app_sim when the server missed its tick deadline this window."""
+    late = int(update.get("lateTicks") or 0)
+    window = int(update.get("windowUpdates") or 0)
+    if not window:
+        return
+    late_share = late / window
+    for layer in layers:
+        if layer.layer != "app_sim" or layer.state != "collected":
+            continue
+        layer.signals["late_ticks"] = late
+        layer.signals["late_tick_share"] = round(late_share, 4)
+        layer.signals["tick_stall_ms"] = update.get("tickStallMsTotal")
+        if late_share >= 0.25:
+            layer.score = max(layer.score or 0, 90)
+        elif late_share >= 0.05:
+            layer.score = max(layer.score or 0, 60)
+
+
+def _net_rates(io_net_text: str, seconds: float) -> dict[str, float]:
+    """Windowed MB/s from the io_net.bt.out byte counters.
+
+    UDP is 7DTD game traffic (chunk streaming); TCP is only telnet/http."""
+    rates: dict[str, float] = {}
+    for label, marker in (
+        ("udp_send_mb_per_second", "udp_send_bytes"),
+        ("udp_recv_mb_per_second", "udp_recv_bytes"),
+        ("tcp_send_mb_per_second", "tcp_send_bytes"),
+        ("tcp_recv_mb_per_second", "tcp_recv_bytes"),
+    ):
+        match = re.search(rf"@{marker}:\s*(\d+)", io_net_text)
+        if match:
+            rates[label] = round(int(match.group(1)) / 1048576 / seconds, 2)
+    return rates
+
+
+def _apply_memory_trend(layers: list[LayerScore], mem: dict[str, Any]) -> None:
+    """Sustained RSS climb (not GC oscillation) = leak / unbounded buffer."""
+    slope = float(mem.get("rss_growth_mb_per_s") or 0)
+    fd_growth = int(mem.get("fd_end") or 0) - int(mem.get("fd_start") or 0)
+    for layer in layers:
+        if layer.layer != "memory_cache" or layer.state != "collected":
+            continue
+        layer.signals["rss_growth_mb_per_s"] = slope
+        layer.signals["fd_growth"] = fd_growth
+        if slope >= 5 or fd_growth >= 100:
+            layer.score = max(layer.score or 0, 70)
+
+
 def build_summary(session: Path) -> SummaryV2:
     """Score all layers and write summary.json (the only writer of that file)."""
-    meta: dict[str, Any] = {}
-    meta_path = session / "meta.json"
-    if meta_path.exists():
-        meta = json.loads(meta_path.read_text())
-
+    meta = _load_meta(session)
     texts = load_texts(session)
     hw = parse_perf_stat(texts.get("hw") or "")
     layers = layer_scores(session, hw, texts)
 
     threads = thread_summary(session)
-    main_share = threads.get("main_thread_share_of_process_avg")
-    main_cpu = threads.get("main_thread_cpu_pct_avg")
-    if main_share is not None:
-        for layer in layers:
-            if layer.layer == "cpu" and layer.state == "collected":
-                layer.signals["main_thread_cpu_pct"] = main_cpu
-                layer.signals["main_thread_share_of_process"] = main_share
-                # One thread carrying most of the process while the box looks
-                # idle = main-thread-bound. Near a full core is the ceiling.
-                if main_share >= 0.5 and (main_cpu or 0) >= 80:
-                    layer.score = max(layer.score or 0, 85)
-                elif main_share >= 0.5:
-                    layer.score = max(layer.score or 0, 55)
+    _apply_main_thread_pressure(layers, threads)
 
     measured = [layer for layer in layers if layer.score is not None]
     top = measured[0] if measured else None
@@ -943,124 +1091,19 @@ def build_summary(session: Path) -> SummaryV2:
     metadata: dict[str, Any] = {}
     snapshot_path = session / "app/apm_app.json"
     if snapshot_path.is_file():
+        # A malformed bridge snapshot must not lose the host-side evidence
+        # collected below; drop just the snapshot-derived blocks instead.
         try:
             snapshot = json.loads(snapshot_path.read_text())
-            world = snapshot.get("world") or {}
-            update = snapshot.get("update") or {}
-            metadata["world"] = {
-                "entities": world.get("entities"),
-                "players": world.get("players"),
-                "entityAlives": world.get("entityAlives"),
-                "clients": world.get("clients"),
-            }
-            # engineGap = frame period minus managed gmUpdate: the unattributed
-            # ENGINE slice (animator eval, transforms, player-loop overhead) that no
-            # managed section can see. It is where headless-waste findings like the
-            # zombie-animator path live; a healthy idle server shows ~frame-target
-            # minus ~1-2 ms.
-            frame_now = world.get("unityDeltaMs") or 0
-            gm_avg = update.get("gmUpdateDurationAvgMs") or 0
-            metadata["frame"] = {
-                "gmUpdateAvgMs": update.get("gmUpdateDurationAvgMs"),
-                "tickIntervalAvgMs": update.get("serverTickIntervalAvgMs"),
-                "unityDeltaMs": world.get("unityDeltaMs"),
-                "engineGapMs": round(frame_now - gm_avg, 2) if frame_now else None,
-                "windowUpdates": update.get("windowUpdates"),
-                "spikes": update.get("totalSpikes"),
-                "lateTicks": update.get("lateTicks"),
-                "tickStallMsTotal": update.get("tickStallMsTotal"),
-            }
-            transfers = snapshot.get("mapTransfers") or []
-            window_s = float((snapshot.get("gc") or {}).get("windowSeconds") or 0)
-            if transfers and window_s > 0:
-                total_bytes = sum(int(x.get("bytes") or 0) for x in transfers)
-                total_pkgs = sum(int(x.get("packages") or 0) for x in transfers)
-                metadata["transfers"] = {
-                    "mb_per_second": round(total_bytes / 1048576 / window_s, 2),
-                    "packages_per_second": round(total_pkgs / window_s, 1),
-                    "by_type": {
-                        str(x.get("name")): round(int(x.get("bytes") or 0) / 1048576, 1)
-                        for x in transfers
-                    },
-                }
-            gc_window = snapshot.get("gc") or {}
-            if gc_window:
-                window_s = float(gc_window.get("windowSeconds") or 0)
-                heap_delta = int(gc_window.get("heapDeltaBytes") or 0)
-                # Boehm (Mono's default here) is non-generational: gen0==gen2, so
-                # the collection counts are not a generational signal. The real
-                # allocation-pressure gauge is heap growth rate; each full
-                # collection it triggers is a stop-the-world frame hitch.
-                alloc_mb_s = (heap_delta / 1048576 / window_s) if window_s > 0 else 0
-                collections = int(gc_window.get("gen2Collections") or 0)
-                # Gross allocation is the real GC-pause driver. Unity 2022 Mono
-                # lacks GC.GetTotalAllocatedBytes (bridge counter is -1), so the
-                # opt-in mono_alloc probe (Boehm GC_malloc arg0) is the source
-                # on this runtime. Left None when unmeasured so the budget gate
-                # treats it as UNKNOWN, never a healthy zero.
-                gross_bps = float(gc_window.get("grossAllocBytesPerSecond") or -1)
-                gross_mb_s: float | None = round(gross_bps / 1048576, 2) if gross_bps >= 0 else None
-                if gross_mb_s is None and window_s > 0:
-                    alloc_match = re.search(
-                        r"@alloc_bytes_total:\s*(\d+)", texts.get("mono_alloc", "")
-                    )
-                    if alloc_match:
-                        gross_mb_s = round(int(alloc_match.group(1)) / 1048576 / window_s, 2)
-                metadata["gc"] = {
-                    "allocMBPerSecond": round(alloc_mb_s, 2),  # net heap growth
-                    "fullCollections": collections,
-                    "heapDeltaBytes": heap_delta,
-                    "windowSeconds": round(window_s, 1),
-                }
-                if gross_mb_s is not None:
-                    metadata["gc"]["grossAllocMBPerSecond"] = gross_mb_s  # true churn
-                    # Allocation per tick (KB): the garbage each tick creates that
-                    # Boehm must eventually scan. Ties churn to the tick budget.
-                    ticks = int((update or {}).get("windowUpdates") or 0)
-                    if ticks and window_s > 0:
-                        alloc_kb_tick = gross_mb_s * 1024 * window_s / ticks
-                        metadata["gc"]["grossAllocKBPerTick"] = round(alloc_kb_tick, 1)
-                for layer in layers:
-                    if layer.layer == "runtime_gc" and layer.state == "collected":
-                        layer.signals["alloc_mb_per_second"] = round(alloc_mb_s, 2)
-                        layer.signals["full_gc_collections"] = collections
-                        # Score on GROSS churn (the GC-pause driver) when measured;
-                        # net heap growth reads ~0 at steady state and would leave
-                        # the layer (and health) blind to real allocation pressure.
-                        churn = gross_mb_s if gross_mb_s is not None else alloc_mb_s
-                        if churn >= 10 or collections >= 3:
-                            layer.score = max(layer.score or 0, 80)
-                        elif churn >= 4 or collections >= 1:
-                            layer.score = max(layer.score or 0, 50)
-            late = int(update.get("lateTicks") or 0)
-            window = int(update.get("windowUpdates") or 0)
-            if window:
-                late_share = late / window
-                for layer in layers:
-                    if layer.layer == "app_sim" and layer.state == "collected":
-                        layer.signals["late_ticks"] = late
-                        layer.signals["late_tick_share"] = round(late_share, 4)
-                        layer.signals["tick_stall_ms"] = update.get("tickStallMsTotal")
-                        if late_share >= 0.25:
-                            layer.score = max(layer.score or 0, 90)
-                        elif late_share >= 0.05:
-                            layer.score = max(layer.score or 0, 60)
+            metadata.update(_snapshot_metadata(snapshot, texts.get("mono_alloc", "")))
+            if "gc" in metadata:
+                _apply_gc_pressure(layers, metadata["gc"])
+            _apply_late_tick_pressure(layers, snapshot.get("update") or {})
         except (json.JSONDecodeError, ValueError):
             pass
 
-    io_net_text = texts.get("io_net", "")
     net_window = max(1.0, float(meta.get("seconds") or 1))
-    net: dict[str, float] = {}
-    # UDP is 7DTD game traffic (chunk streaming); TCP is only telnet/http.
-    for label, marker in (
-        ("udp_send_mb_per_second", "udp_send_bytes"),
-        ("udp_recv_mb_per_second", "udp_recv_bytes"),
-        ("tcp_send_mb_per_second", "tcp_send_bytes"),
-        ("tcp_recv_mb_per_second", "tcp_recv_bytes"),
-    ):
-        match = re.search(rf"@{marker}:\s*(\d+)", io_net_text)
-        if match:
-            net[label] = round(int(match.group(1)) / 1048576 / net_window, 2)
+    net = _net_rates(texts.get("io_net", ""), net_window)
     if net:
         metadata["net"] = net
     metadata["top_alloc_sites"] = top_alloc_sites(session)
@@ -1069,33 +1112,13 @@ def build_summary(session: Path) -> SummaryV2:
     mem = memory_trend(session)
     if mem:
         metadata["memory"] = mem
-        # sustained RSS climb (not GC oscillation) = leak / unbounded buffer.
-        slope = float(mem.get("rss_growth_mb_per_s") or 0)
-        fd_growth = int(mem.get("fd_end") or 0) - int(mem.get("fd_start") or 0)
-        for layer in layers:
-            if layer.layer == "memory_cache" and layer.state == "collected":
-                layer.signals["rss_growth_mb_per_s"] = slope
-                layer.signals["fd_growth"] = fd_growth
-                if slope >= 5 or fd_growth >= 100:
-                    layer.score = max(layer.score or 0, 70)
+        _apply_memory_trend(layers, mem)
     # Subsystem attribution lets the verdict name a dominant managed subsystem
     # (e.g. network serialization at player scale) even when no host probe fired.
     # Compute it fresh from this session's bridge snapshot so the diagnosis is not
     # one finalize behind the bridge stage (which runs after summary). Falls back
     # to a prior csharp_bridge.json when the raw snapshot is absent.
-    attribution: dict[str, Any] | None = None
-    snapshot_path = session / "app/apm_app.json"
-    if snapshot_path.is_file():
-        with contextlib.suppress(Exception):
-            from .bridge import attribute_subsystems
-
-            snap = json.loads(snapshot_path.read_text())
-            attribution = attribute_subsystems(
-                snap.get("sections") or [],
-                int((snap.get("measurement") or {}).get("deepSampleRate") or 1),
-                window_updates=int((snap.get("update") or {}).get("windowUpdates") or 0),
-                entities=int((snap.get("world") or {}).get("entities") or 0),
-            )
+    attribution = attribute_snapshot(session)
     if not attribution:
         prior_bridge = session / "csharp_bridge.json"
         if prior_bridge.is_file():

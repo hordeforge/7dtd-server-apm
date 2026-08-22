@@ -692,7 +692,9 @@ def run_capture(
             # any bpftrace output (allocation/stall sites), not just perf flames.
             with suppress(OSError):
                 shutil.copy2(map_source, session / "runtime" / f"perf-{pid}.map")
-            print(f">> jitmap: {sum(1 for _ in map_source.open())} managed symbols mapped")
+            with map_source.open(errors="replace") as handle:
+                symbols = sum(1 for _ in handle)
+            print(f">> jitmap: {symbols} managed symbols mapped")
         else:
             _warn(session, "bridge jitmap export failed; managed perf frames stay [jit]")
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 
@@ -23,9 +24,14 @@ def load_folded(path: Path) -> list[tuple[list[str], int]]:
         # last token is count
         try:
             stack_s, count_s = line.rsplit(" ", 1)
-            count = int(float(count_s))
+            value = float(count_s)
         except ValueError:
             continue
+        # int(float("inf")) raises OverflowError; a non-finite count is not a
+        # real sample count, so skip it rather than crash the conversion.
+        if not math.isfinite(value):
+            continue
+        count = int(value)
         if count <= 0:
             continue
         frames = [f for f in stack_s.split(";") if f]

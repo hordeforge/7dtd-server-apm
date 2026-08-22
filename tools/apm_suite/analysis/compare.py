@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
+from ..models import collected_layer_scores
 from .flame_delta import delta, load_weights
 
 
@@ -57,16 +58,7 @@ def load_sections(session: Path) -> dict[str, float]:
 
 
 def layer_map(summary: dict[str, Any]) -> dict[str, float]:
-    out: dict[str, float] = {}
-    for layer in summary.get("layers") or []:
-        name = layer.get("layer")
-        if (
-            name is not None
-            and layer.get("state", "collected") == "collected"
-            and layer.get("score") is not None
-        ):
-            out[str(name)] = float(layer["score"])
-    return out
+    return collected_layer_scores(summary)
 
 
 def _flame_path(session: Path) -> Path | None:

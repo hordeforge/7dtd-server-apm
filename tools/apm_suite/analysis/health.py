@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..io import atomic_json, load_json
-from ..models import HealthV2, schema_dict
+from ..models import HealthV2, collected_layer_scores, schema_dict
 
 # Weights sum ~1.0 for known layers
 WEIGHTS = {
@@ -26,16 +26,7 @@ COVERAGE_MIN = 0.8
 
 
 def layers_from_summary(summary: dict[str, object]) -> dict[str, float]:
-    layers = summary.get("layers")
-    out: dict[str, float] = {}
-    for layer in layers if isinstance(layers, list) else []:
-        if (
-            layer.get("layer")
-            and layer.get("state", "collected") == "collected"
-            and layer.get("score") is not None
-        ):
-            out[str(layer["layer"])] = float(layer["score"])
-    return out
+    return collected_layer_scores(summary)
 
 
 def compute_health(layers: dict[str, float]) -> HealthV2:

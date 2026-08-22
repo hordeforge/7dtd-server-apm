@@ -18,6 +18,7 @@ from .models import (
     MetaV2,
     SummaryV2,
     Target,
+    layer_requested,
     schema_dict,
 )
 
@@ -65,9 +66,10 @@ def _date(value: Any) -> datetime:
 def _int(value: Any, default: int) -> int:
     # audit_session runs on untrusted/malformed meta.json: a non-numeric value
     # must not crash the audit (its job is to record the problem, not raise).
+    # int(float("inf")) raises OverflowError (e.g. JSON "1e999"), not ValueError.
     try:
         return int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -123,19 +125,7 @@ def _legacy_results(session: Path) -> list[CollectorResult]:
 
 
 def _requested(name: str, layer: str, requested_set: set[str]) -> bool:
-    aliases = {
-        "memory_cache": {"memory", "hw", "cache", "proc"},
-        "sync_locks": {"sync", "locks", "futex"},
-        "runtime_gc": {"runtime", "gc"},
-        "app_sim": {"app"},
-        "scheduler": {"scheduler", "sched"},
-        "io": {"io", "net"},
-    }
-    return bool(
-        "all" in requested_set
-        or {name, layer} & requested_set
-        or aliases.get(layer, set()) & requested_set
-    )
+    return bool({name, layer} & requested_set) or layer_requested(layer, requested_set)
 
 
 def audit_session(session: Path) -> tuple[ManifestV2, bool]:

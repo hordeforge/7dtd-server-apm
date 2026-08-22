@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -153,3 +154,44 @@ def schema_dict(model: BaseModel) -> dict[str, Any]:
 
 def relative_artifact(root: Path, path: Path) -> str:
     return path.relative_to(root).as_posix()
+
+
+# Request tokens accepted for each canonical layer beyond the layer name itself.
+# One table shared by capture planning (capture.wanted), summary scoring
+# (report.layer_scores), and the audit (session._requested) so they cannot
+# drift into disagreeing about what a `--only` token means.
+LAYER_ALIASES: dict[str, frozenset[str]] = {
+    "app_sim": frozenset({"app"}),
+    "io": frozenset({"net"}),
+    "memory_cache": frozenset({"memory", "hw", "cache", "proc"}),
+    "runtime_gc": frozenset({"runtime", "gc"}),
+    "scheduler": frozenset({"sched"}),
+    "sync_locks": frozenset({"sync", "locks", "futex"}),
+}
+
+
+def layer_requested(layer: str, requested: set[str]) -> bool:
+    """True when a capture requested this layer by name, alias, or "all"."""
+    return bool(
+        "all" in requested
+        or layer in requested
+        or LAYER_ALIASES.get(layer, frozenset()) & requested
+    )
+
+
+def collected_layer_scores(summary: Mapping[str, Any]) -> dict[str, float]:
+    """layer name -> pressure score for layers with state "collected" and a score.
+
+    Summary JSON is unvalidated on read paths (hand-edited or older sessions),
+    so shape is checked here rather than assumed.
+    """
+    out: dict[str, float] = {}
+    entries = summary.get("layers")
+    for layer in entries if isinstance(entries, list) else []:
+        if not isinstance(layer, dict):
+            continue
+        name = layer.get("layer")
+        score = layer.get("score")
+        if name and layer.get("state", "collected") == "collected" and score is not None:
+            out[str(name)] = float(score)
+    return out

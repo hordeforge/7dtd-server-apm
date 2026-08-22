@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import sys
 import xml.sax.saxutils as xu
 from collections import defaultdict
@@ -36,6 +37,10 @@ def main() -> int:
         try:
             c = float(count_s)
         except ValueError:
+            continue
+        # NaN/inf would poison every downstream coordinate and serialize a
+        # broken SVG ("nan" widths); skip non-finite counts.
+        if not math.isfinite(c):
             continue
         stack = [f for f in parts[0].split(";") if f] if parts else []
         if not stack:

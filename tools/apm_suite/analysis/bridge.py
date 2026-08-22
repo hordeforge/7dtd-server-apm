@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import math
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -277,6 +278,30 @@ def attribute_subsystems(
     }
 
 
+def attribute_snapshot(session: Path) -> dict[str, Any] | None:
+    """Subsystem attribution computed fresh from the session's bridge snapshot.
+
+    Shared by the finalize-time lag diagnosis and this analyzer so both apply
+    identical deep-sample scaling. Returns None when the snapshot is missing or
+    malformed: attribution is best-effort enrichment, never a failed stage.
+    """
+    path = session / "app/apm_app.json"
+    if not path.is_file():
+        return None
+    try:
+        doc = json.loads(path.read_text())
+        return attribute_subsystems(
+            doc.get("sections") or [],
+            int((doc.get("measurement") or {}).get("deepSampleRate") or 1),
+            window_updates=int((doc.get("update") or {}).get("windowUpdates") or 0),
+            entities=int((doc.get("world") or {}).get("entities") or 0),
+        )
+    except (AttributeError, TypeError, ValueError, OSError):
+        # AttributeError: a "measurement"/"update"/"world" block that parsed as
+        # a non-object (list/str) has no .get; treat the whole document as bad.
+        return None
+
+
 def load_folded_frames(session: Path) -> list[tuple[str, int]]:
     """Return (frame_name, weight) from folded stacks (weight per frame occurrence)."""
     folded = session / "cpu/perf/stacks.folded"
@@ -289,9 +314,14 @@ def load_folded_frames(session: Path) -> list[tuple[str, int]]:
             continue
         try:
             stack, raw_count = line.rsplit(" ", 1)
-            count = int(float(raw_count))
+            value = float(raw_count)
         except ValueError:
             continue
+        # int(float("inf")) raises OverflowError; a non-finite weight is not a
+        # real sample count, so skip it rather than crash the whole load.
+        if not math.isfinite(value):
+            continue
+        count = int(value)
         for frame in stack.split(";"):
             if frame:
                 weights[frame] += count
@@ -313,9 +343,17 @@ def load_speedscope_frames(session: Path) -> list[tuple[str, int]]:
         samples = profile.get("samples") or []
         weights = profile.get("weights") or [1] * len(samples)
         for sample, weight in zip(samples, weights, strict=False):
+            # json.loads accepts Infinity/NaN literals; int(inf) would raise
+            # OverflowError and crash the whole analysis. Skip non-finite weights.
+            try:
+                count = float(weight)
+            except (TypeError, ValueError):
+                continue
+            if not math.isfinite(count):
+                continue
             for index in sample:
                 if 0 <= index < len(names):
-                    counts[names[index]] += int(weight)
+                    counts[names[index]] += int(count)
     return sorted(counts.items(), key=lambda kv: -kv[1])
 
 
@@ -608,7 +646,6 @@ def stall_correlation(session: Path) -> list[dict[str, Any]]:
         events = load_json(events_path).get("events") or []
     except (ValueError, OSError):
         return []
-    all_events = events
     timed = [e for e in events if isinstance(e.get("t"), (int, float))]
     spikes = sorted(
         (e for e in timed if e.get("kind") == "frame_spike"),
@@ -631,7 +668,7 @@ def stall_correlation(session: Path) -> list[dict[str, Any]]:
         # A zero-duration "spike" carries no magnitude to match a GC pause
         # against (the tolerance collapses to exact-zero); skip the correlation.
         if spike_ms > 0:
-            for event in all_events:
+            for event in events:
                 if event.get("kind") != "gc":
                     continue
                 match = re.search(r"(\d+)\s*us", str(event.get("message") or ""))
@@ -666,18 +703,7 @@ def analyze(session: Path, snapshot: Path | None = None) -> dict[str, Any]:
     hits = match_rules(frames, sections, collected_layers, layer_signals)
     playbook = build_playbook(hits, sections)
 
-    attribution: dict[str, Any] = {}
-    snapshot_path = session / "app/apm_app.json"
-    if snapshot_path.is_file():
-        with contextlib.suppress(json.JSONDecodeError, ValueError):
-            snapshot_doc = load_json(snapshot_path)
-            rate = int((snapshot_doc.get("measurement") or {}).get("deepSampleRate") or 1)
-            attribution = attribute_subsystems(
-                snapshot_doc.get("sections") or [],
-                rate,
-                window_updates=int((snapshot_doc.get("update") or {}).get("windowUpdates") or 0),
-                entities=int((snapshot_doc.get("world") or {}).get("entities") or 0),
-            )
+    attribution: dict[str, Any] = attribute_snapshot(session) or {}
 
     top_frames = frames[:25]
     out: dict[str, Any] = {

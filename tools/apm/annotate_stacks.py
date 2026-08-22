@@ -61,7 +61,9 @@ def annotate_folded_line(line: str) -> str:
     try:
         stack_s, count_s = line.rsplit(" ", 1)
         int(float(count_s))
-    except ValueError:
+    except (ValueError, OverflowError):
+        # Malformed or non-finite count (int(inf) raises OverflowError): leave
+        # the line untouched rather than crash the annotation pass.
         return line
     frames = [tag_frame(f) for f in stack_s.split(";") if f]
     return " ".join([";".join(frames), count_s])

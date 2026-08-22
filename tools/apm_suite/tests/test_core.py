@@ -681,6 +681,34 @@ def test_budget_absent_gross_is_skipped_not_passed(tmp_path: Path) -> None:
     assert any("skip max_gross_alloc_mb_per_second (no data)" in ln for ln in lines)
 
 
+def test_layer_requested_shared_alias_table() -> None:
+    # One table feeds capture planning, summary scoring, and the audit; these
+    # cases pin tokens that previously worked in only some of the three.
+    from apm_suite.models import layer_requested
+
+    assert layer_requested("io", {"all"})
+    assert layer_requested("io", {"net"})  # was missing from the report-side map
+    assert layer_requested("memory_cache", {"proc"})  # was missing from the report-side map
+    assert layer_requested("sync_locks", {"futex"})
+    assert layer_requested("scheduler", {"sched"})
+    assert not layer_requested("io", {"cpu"})
+
+
+def test_build_summary_marks_only_requested_layers_collected(tmp_path: Path) -> None:
+    from apm_suite.analysis.report import build_summary
+
+    session = tmp_path / "session_alias"
+    (session / "sync").mkdir(parents=True)
+    (session / "sync/futex.bt.out").write_text("SLOW_FUTEX tid=1 wait=9ms\n")
+    atomic_json(session / "meta.json", _meta(only="locks"))
+    summary = build_summary(session)
+    by_layer = {layer.layer: layer for layer in summary.layers}
+    assert by_layer["sync_locks"].state == "collected"
+    assert by_layer["sync_locks"].score is not None
+    assert by_layer["cpu"].state == "skipped"  # not requested -> no fake zero
+    assert by_layer["cpu"].score is None
+
+
 # --- golden report -------------------------------------------------------------
 
 
@@ -906,6 +934,95 @@ def test_flame_load_weights_and_delta_rank_by_abs(tmp_path: Path) -> None:
     assert abs(rows[0]["delta"]) == 7
     abs_deltas = [abs(int(r["delta"])) for r in rows]
     assert abs_deltas == sorted(abs_deltas, reverse=True)
+
+
+# --- non-finite sample weights must never crash a load ----------------------------
+
+
+def test_bridge_load_folded_frames_skips_non_finite_counts(tmp_path: Path) -> None:
+    from apm_suite.analysis.bridge import load_folded_frames
+
+    folded = tmp_path / "cpu/perf/stacks.folded"
+    folded.parent.mkdir(parents=True)
+    folded.write_text(
+        "alpha;beta 5\n"
+        "gamma inf\n"  # int(inf) raises OverflowError, not ValueError
+        "delta nan\n"  # NaN is not a sample count either
+        "alpha 2\n"
+    )
+    assert dict(load_folded_frames(tmp_path)) == {"alpha": 7, "beta": 5}
+
+
+def test_bridge_load_speedscope_frames_skips_non_finite_weights(tmp_path: Path) -> None:
+    from apm_suite.analysis.bridge import load_speedscope_frames
+
+    profile = tmp_path / "cpu/perf/profile.speedscope.json"
+    profile.parent.mkdir(parents=True)
+    # json.loads accepts Infinity/NaN literals; a corrupt weight must not reach
+    # int() and crash the whole analysis.
+    profile.write_text(
+        json.dumps(
+            {
+                "shared": {"frames": [{"name": "a"}, {"name": "b"}]},
+                "profiles": [
+                    {
+                        "type": "sampled",
+                        "samples": [[0], [1], [0]],
+                        "weights": [4, float("inf"), float("nan")],
+                    }
+                ],
+            }
+        )
+    )
+    assert dict(load_speedscope_frames(tmp_path)) == {"a": 4}
+
+
+def test_folded_to_speedscope_load_folded_skips_non_finite_counts(tmp_path: Path) -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "folded_to_speedscope", REPO / "tools/host_profiler/folded_to_speedscope.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    folded = tmp_path / "stacks.folded"
+    folded.write_text("alpha;beta 5\ngamma inf\ndelta nan\nalpha 2\n")
+    assert module.load_folded(folded) == [(["alpha", "beta"], 5), (["alpha"], 2)]
+
+
+def test_annotate_stacks_leaves_non_finite_count_lines_untouched() -> None:
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "annotate_stacks", REPO / "tools/apm/annotate_stacks.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    line = "GameManager.gmUpdate inf"
+    assert module.annotate_folded_line(line) == line
+
+
+def test_flamegraph_svg_survives_non_finite_counts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "flamegraph", REPO / "tools/host_profiler/flamegraph.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    folded = tmp_path / "stacks.folded"
+    folded.write_text("alpha;beta 5\nalpha nan\nalpha inf\n")
+    out = tmp_path / "flame.svg"
+    monkeypatch.setattr(sys, "argv", ["flamegraph.py", str(folded), str(out)])
+    assert module.main() == 0
+    svg = out.read_text()
+    assert "nan" not in svg and "inf<" not in svg
 
 
 # --- scaling classification ------------------------------------------------------

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
+from ..models import collected_layer_scores
 
 DEFAULT_BUDGET: dict[str, Any] = {
     "schema": "7dtd.apm.budget.v2",
@@ -42,14 +43,7 @@ DEFAULT_BUDGET: dict[str, Any] = {
 
 
 def load_layers(session: Path) -> dict[str, float]:
-    summary = load_json(session / "summary.json")
-    return {
-        str(layer["layer"]): float(layer["score"])
-        for layer in summary.get("layers") or []
-        if layer.get("layer") is not None
-        and layer.get("state", "collected") == "collected"
-        and layer.get("score") is not None
-    }
+    return collected_layer_scores(load_json(session / "summary.json"))
 
 
 def load_sections(session: Path) -> dict[str, float]:
