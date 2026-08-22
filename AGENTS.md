@@ -94,6 +94,7 @@ scripts/               bridge build/install, checks
 | `bridge/README.md` | DLL design, schema, overhead controls |
 | `tools/README.md` | Backend ownership |
 | `TODO.md` | Phased plan and verification log |
+| `CHANGELOG.md` | Per-artifact release notes; tags mirror the bridge version |
 | `../7dtd-optimizer/docs/HOST_TUNING.md` | Host topology measured here, applied outside |
 
 ## Sibling projects

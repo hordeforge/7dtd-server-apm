@@ -36,7 +36,7 @@ host `mono_alloc` probe supplies gross allocation there instead). Deep hooks
 include tile-entity chunk load (`TileEntity.InstantiateFromRead`,
 `TileEntityFeatureData.InstantiateModule`) so serialization cost is measurable
 alongside the allocation churn it drives. Current schema `7dtd.apm.app.v3`,
-mod version 2.1.0.
+mod version 2.2.3.
 
 ```bash
 make bridge-build

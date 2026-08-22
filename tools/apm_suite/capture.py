@@ -23,12 +23,15 @@ from typing import BinaryIO
 
 from pydantic import ValidationError
 
+from . import __version__
 from .io import atomic_json
 from .models import BridgeSnapshotV3, CollectorResult, MetaV2, schema_dict
 from .paths import APM_BACKENDS, TOOLS, apm_root
 
 EBPF = TOOLS / "host_profiler"
-ANALYZER_VERSION = "2.1.0"
+# Single source of truth for the analyzer version is the package version
+# (pyproject.toml / __init__.py); compare gates session compatibility on it.
+ANALYZER_VERSION = __version__
 # minimum extra seconds beyond the capture window for perf post-processing
 # (flame build); long captures get a full extra window since perf script/report
 # time grows with recorded data volume
