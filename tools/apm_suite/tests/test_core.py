@@ -1814,6 +1814,62 @@ def test_launch_collectors_closes_opened_streams_on_open_error(
     assert result["status"] == "failed"
 
 
+# --- unit: identity + retention policy --------------------------------------------
+
+
+def test_unique_path_yields_unused_sibling(tmp_path: Path) -> None:
+    from apm_suite.io import unique_path
+
+    base = tmp_path / "session_20260101_000000_pid1"
+    assert unique_path(base) == base  # nothing exists yet
+    base.mkdir()
+    assert unique_path(base) == tmp_path / f"{base.name}_1"
+    (tmp_path / f"{base.name}_1").mkdir()
+    assert unique_path(base) == tmp_path / f"{base.name}_2"
+
+
+def test_retention_policy_shared_by_prune_and_auto_prune(tmp_path: Path) -> None:
+    """One retention implementation feeds the CLI prune command and post-capture
+    auto-prune: keep-N ordering and the size budget must behave identically."""
+    from apm_suite.session import list_sessions, sessions_beyond_budget
+
+    names = [f"session_{i:03d}" for i in range(5)]
+    for i, name in enumerate(names):
+        path = tmp_path / name
+        path.mkdir()
+        (path / "data.bin").write_bytes(b"x" * (10 + i))
+        os.utime(path, (1000 + i, 1000 + i))  # oldest first
+
+    sessions = list_sessions(tmp_path)
+    assert [s.name for s in sessions] == list(reversed(names))  # newest first
+
+    assert sessions_beyond_budget(sessions, 2) == [
+        tmp_path / "session_002",
+        tmp_path / "session_001",
+        tmp_path / "session_000",
+    ]
+
+    # Size budget: keep=5 retains everything under a generous cap...
+    assert sessions_beyond_budget(sessions, 5, max_bytes=1024**3) == []
+    # ...and evicts oldest kept first until the total fits a tight one
+    # (slice already removes 000/001; the 30-byte cap then also drops 002).
+    doomed = sessions_beyond_budget(sessions, 3, max_bytes=30)
+    assert doomed == [
+        tmp_path / "session_001",
+        tmp_path / "session_000",
+        tmp_path / "session_002",  # oldest kept session goes first under budget
+    ]
+
+
+def test_run_capture_resolves_session_dir_through_unique_path() -> None:
+    """The capture session directory must go through unique_path so two captures
+    started in the same second cannot interleave evidence in one directory."""
+    import inspect
+
+    source = inspect.getsource(capture.run_capture)
+    assert "unique_path(" in source
+
+
 # --- live server (opt-in) ----------------------------------------------------------
 
 

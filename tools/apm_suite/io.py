@@ -34,6 +34,22 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def unique_path(base: Path) -> Path:
+    """First non-existing path among base, base_1, base_2, ...
+
+    Second-resolution timestamps are not unique identity: two captures started
+    in the same second must not share one session directory and interleave
+    their evidence. (A second-level race between the existence check and the
+    later mkdir remains possible; it is far narrower than the same-second case.)
+    """
+    candidate = base
+    suffix = 1
+    while candidate.exists():
+        candidate = base.with_name(f"{base.name}_{suffix}")
+        suffix += 1
+    return candidate
+
+
 def file_sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:

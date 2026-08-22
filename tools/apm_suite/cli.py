@@ -22,10 +22,10 @@ from .analysis.index import write_index
 from .capture import find_server_pid, run_capture, unknown_only_tokens, write_plan_text
 from .doctor import inspect
 from .finalize import finalize as finalize_session
-from .io import atomic_json, atomic_text, load_json
+from .io import atomic_json, atomic_text, load_json, unique_path
 from .paths import REPO, apm_root
 from .runner import backend_python, run, terminate_tree
-from .session import audit_session
+from .session import audit_session, list_sessions, sessions_beyond_budget
 
 app = typer.Typer(help="Host-only APM for 7 Days to Die dedicated servers.", no_args_is_help=True)
 flame_app = typer.Typer(help="Build and compare flame profiles.", no_args_is_help=True)
@@ -600,24 +600,8 @@ def prune_sessions(
     ] = False,
 ) -> None:
     """Delete old sessions beyond --keep or a total size budget."""
-    root = apm_root()
-    sessions = sorted(
-        (p for p in root.glob("session_*") if p.is_dir()),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    doomed = list(sessions[keep:])
-    if max_gb is not None:
-        budget = max_gb * 1024**3
-        sizes = {p: sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) for p in sessions}
-        total = sum(sizes.values()) - sum(sizes[p] for p in doomed)
-        for session in reversed(sessions[:keep]):  # oldest kept first
-            if total <= budget:
-                break
-            if session not in doomed:
-                doomed.append(session)
-                total -= sizes[session]
-    for old in doomed:
+    max_bytes = max_gb * 1024**3 if max_gb is not None else None
+    for old in sessions_beyond_budget(list_sessions(apm_root()), keep, max_bytes):
         console.print(("would remove " if dry_run else "removing ") + str(old))
         if not dry_run:
             shutil.rmtree(old)
@@ -654,7 +638,11 @@ def budget(
         Path | None, typer.Option(help="Baseline session for regression deltas.")
     ] = None,
     max_regression: Annotated[
-        float, typer.Option(help="Allowed percent increase vs the baseline.")
+        float,
+        typer.Option(
+            help="Allowed increase in layer pressure points vs the baseline "
+            "(absolute 0-100 scale points, not percent)."
+        ),
     ] = 15,
 ) -> None:
     """Gate a finalized session against budgets; exits 1 on regression."""
@@ -757,8 +745,8 @@ def scenario_run(
     run_dir = apm_root() / ".scenario"
     run_dir.mkdir(parents=True, exist_ok=True)
     stamp = int(time.time())
-    workload = run_dir / f"loadgen_{stamp}.json"
-    stats = run_dir / f"loadgen_{stamp}_stats.json"
+    workload = unique_path(run_dir / f"loadgen_{stamp}.json")
+    stats = workload.with_name(f"{workload.stem}_stats.json")
     env = os.environ.copy()
     env.update(
         {

@@ -24,9 +24,10 @@ from typing import BinaryIO
 from pydantic import ValidationError
 
 from . import __version__
-from .io import atomic_json
+from .io import atomic_json, unique_path
 from .models import BridgeSnapshotV3, CollectorResult, MetaV2, schema_dict
 from .paths import APM_BACKENDS, TOOLS, apm_root
+from .session import list_sessions, sessions_beyond_budget
 
 EBPF = TOOLS / "host_profiler"
 # Single source of truth for the analyzer version is the package version
@@ -621,7 +622,7 @@ def run_capture(
 
     root = apm_root()
     stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    session = root / f"session_{stamp}_pid{pid}"
+    session = unique_path(root / f"session_{stamp}_pid{pid}")
     for sub in ("app", "runtime", "threads", "sync", "scheduler", "cpu", "memory", "io", "bt"):
         (session / sub).mkdir(parents=True, exist_ok=True)
     # Raw sessions capture the server log stream (player names/IPs/SteamIDs via the
@@ -829,21 +830,15 @@ def run_capture(
 def _auto_prune_sessions() -> None:
     """Sessions accumulate tens of MB each and nothing pruned them automatically -
     a 24/7 host with periodic captures grows without bound. Keep the newest
-    APM_KEEP_SESSIONS (default 40; 0 disables). Never prunes the just-created
-    session (it is the newest)."""
+    APM_KEEP_SESSIONS (default 40; 0 disables) via the shared retention policy.
+    Never prunes the just-created session (it is the newest)."""
     try:
         keep = int(os.environ.get("APM_KEEP_SESSIONS", "40"))
     except ValueError:
         keep = 40
     if keep <= 0:
         return
-    root = apm_root()
-    sessions = sorted(
-        (p for p in root.glob("session_*") if p.is_dir()),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
-    for old in sessions[keep:]:
+    for old in sessions_beyond_budget(list_sessions(apm_root()), keep):
         try:
             shutil.rmtree(old)
             print(f"pruned old session {old.name} (APM_KEEP_SESSIONS={keep})", file=sys.stderr)

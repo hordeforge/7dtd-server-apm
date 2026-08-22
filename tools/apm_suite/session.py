@@ -128,6 +128,38 @@ def _requested(name: str, layer: str, requested_set: set[str]) -> bool:
     return bool({name, layer} & requested_set) or layer_requested(layer, requested_set)
 
 
+def list_sessions(root: Path) -> list[Path]:
+    """Session directories under root, newest first (mtime)."""
+    return sorted(
+        (p for p in root.glob("session_*") if p.is_dir()),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+
+
+def sessions_beyond_budget(
+    sessions: list[Path], keep: int, max_bytes: float | None = None
+) -> list[Path]:
+    """Retention policy: everything past the newest `keep`, plus the oldest kept
+    sessions until the total fits `max_bytes` when given.
+
+    One implementation feeds both the CLI `prune` command and post-capture
+    auto-prune so the two entry points cannot drift into disagreeing about
+    which evidence gets deleted.
+    """
+    doomed = list(sessions[keep:])
+    if max_bytes is None:
+        return doomed
+    sizes = {p: sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) for p in sessions}
+    total = sum(sizes.values()) - sum(sizes[p] for p in doomed)
+    for session in reversed(sessions[:keep]):  # oldest kept first
+        if total <= max_bytes:
+            break
+        doomed.append(session)
+        total -= sizes[session]
+    return doomed
+
+
 def audit_session(session: Path) -> tuple[ManifestV2, bool]:
     meta = load_json(session / "meta.json") if (session / "meta.json").is_file() else {}
     errors = [
