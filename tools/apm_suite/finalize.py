@@ -8,6 +8,7 @@ integrity audit runs separately, after every session file is closed.
 from __future__ import annotations
 
 import json
+import sys
 import traceback
 from collections.abc import Callable
 from contextlib import suppress
@@ -62,7 +63,10 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
     stage("index", lambda: write_index(), required=False)
 
     if result.failed_stages:
-        print("required finalization stages failed: " + ", ".join(result.failed_stages))
+        print(
+            "required finalization stages failed: " + ", ".join(result.failed_stages),
+            file=sys.stderr,
+        )
     else:
         print(f"finalized {session}")
     summary_path = session / "summary.json"

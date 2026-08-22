@@ -20,7 +20,7 @@ from .analysis.bridge import analyze
 from .analysis.budget import check_budget
 from .analysis.compare import run_compare
 from .analysis.index import write_index
-from .capture import find_server_pid, run_capture, write_plan_text
+from .capture import find_server_pid, run_capture, unknown_only_tokens, write_plan_text
 from .doctor import inspect
 from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, load_json
@@ -36,6 +36,7 @@ scenario_app = typer.Typer(
 app.add_typer(flame_app, name="flame")
 app.add_typer(scenario_app, name="scenario")
 console = Console()
+err_console = Console(stderr=True)
 
 
 def _exit(code: int) -> None:
@@ -43,22 +44,43 @@ def _exit(code: int) -> None:
         raise typer.Exit(code)
 
 
-@app.callback()
-def root(version: Annotated[bool, typer.Option("--version", help="Show version.")] = False) -> None:
-    if version:
-        console.print(__version__)
+def _version_callback(value: bool) -> None:
+    if value:
+        print(__version__)
         raise typer.Exit()
+
+
+@app.callback()
+def root(
+    version: Annotated[
+        bool,
+        typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version."),
+    ] = False,
+) -> None:
+    """Host-only APM for 7 Days to Die dedicated servers."""
 
 
 @app.command()
 def doctor(
-    pid: Annotated[int | None, typer.Option(help="Server process ID.")] = None,
-    telnet_host: Annotated[str, typer.Option()] = "127.0.0.1",
-    telnet_port: Annotated[int, typer.Option()] = 8081,
-    strict: Annotated[bool, typer.Option()] = False,
-    json_output: Annotated[Path | None, typer.Option("--json")] = None,
+    pid: Annotated[
+        int | None,
+        typer.Option(help="Server process ID; auto-detects the unique server when omitted."),
+    ] = None,
+    telnet_host: Annotated[str, typer.Option(help="Server telnet host.")] = "127.0.0.1",
+    telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = 8081,
+    strict: Annotated[
+        bool, typer.Option(help="Exit 1 instead of 0 when the host is not ready.")
+    ] = False,
+    json_output: Annotated[
+        Path | None,
+        typer.Option("--json", help="Write the full report as JSON here ('-' = stdout)."),
+    ] = None,
 ) -> None:
+    """Check host readiness for each APM capture layer."""
     result = inspect(pid, telnet_host, telnet_port)
+    if json_output == Path("-"):
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
     if json_output:
         atomic_json(json_output, result)
     for layer, available in result["available_layers"].items():
@@ -71,9 +93,12 @@ def doctor(
 
 @app.command()
 def capture(
-    seconds: Annotated[int, typer.Option(min=1)] = 45,
-    pid: Annotated[int | None, typer.Option()] = None,
-    only: Annotated[str, typer.Option(help="Comma-separated collector names.")] = "all",
+    seconds: Annotated[int, typer.Option(min=1, help="Capture duration in seconds.")] = 45,
+    pid: Annotated[
+        int | None,
+        typer.Option(help="Server process ID; auto-detects the unique server when omitted."),
+    ] = None,
+    only: Annotated[str, typer.Option(help="Comma-separated collector names or layers.")] = "all",
     no_app: Annotated[bool, typer.Option()] = False,
     telnet_host: Annotated[str, typer.Option(help="Server telnet host.")] = "127.0.0.1",
     telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = 8081,
@@ -99,6 +124,13 @@ def capture(
     ] = False,
     dry_run: Annotated[bool, typer.Option(help="Print the resolved collector plan.")] = False,
 ) -> None:
+    """Run a timed collector session against the server and finalize it."""
+    if unknown := unknown_only_tokens(only):
+        err_console.print(
+            f"[red]unknown --only value(s): {', '.join(unknown)}; "
+            "use collector names or layers as listed by 'capture --dry-run'[/red]"
+        )
+        raise typer.Exit(2)
     if dry_run:
         console.print(
             write_plan_text(
@@ -119,24 +151,36 @@ def capture(
             symbolize=symbolize,
         )
     except RuntimeError as error:
-        console.print(f"[red]{error}[/red]")
+        err_console.print(f"[red]{error}[/red]")
         raise typer.Exit(2) from None
     console.print(f"APM session: {outcome.session}")
     _exit(outcome.exit_code)
 
 
 @app.command()
-def finalize(session: Path, skip_bridge: Annotated[bool, typer.Option()] = False) -> None:
+def finalize(
+    session: Path,
+    skip_bridge: Annotated[
+        bool, typer.Option(help="Skip the managed bridge correlation stage.")
+    ] = False,
+) -> None:
+    """Run finalization stages and write summary artifacts for a raw session."""
     if not session.is_dir():
-        console.print(f"[red]not a session directory: {session}[/red]")
+        err_console.print(f"[red]not a session directory: {session}[/red]")
         raise typer.Exit(2)
     _exit(finalize_session(session, skip_bridge=skip_bridge).exit_code)
 
 
 @app.command()
-def audit(session: Path, strict: Annotated[bool, typer.Option()] = False) -> None:
+def audit(
+    session: Path,
+    strict: Annotated[
+        bool, typer.Option(help="Exit 1 when warnings are present too, not only errors.")
+    ] = False,
+) -> None:
+    """Verify session artifact integrity against recorded hashes."""
     if not session.is_dir():
-        console.print(f"[red]not a session directory: {session}[/red]")
+        err_console.print(f"[red]not a session directory: {session}[/red]")
         raise typer.Exit(2)
     manifest, valid = audit_session(session)
     console.print(
@@ -147,7 +191,12 @@ def audit(session: Path, strict: Annotated[bool, typer.Option()] = False) -> Non
 
 
 @app.command()
-def index(root: Annotated[Path | None, typer.Option()] = None) -> None:
+def index(
+    root: Annotated[
+        Path | None, typer.Option(help="Sessions directory (default: the APM data root).")
+    ] = None,
+) -> None:
+    """Write the HTML session index over all finalized sessions."""
     count = write_index(root)
     console.print(f"indexed {count} sessions -> {(root or apm_root()) / 'index.html'}")
 
@@ -255,20 +304,27 @@ def scaling(
     by: Annotated[str, typer.Option(help="Scale variable: players or entities.")] = "players",
     output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
 ) -> None:
-    """Detect super-linear code: fit each managed section's cost vs load across a
-    ladder of captures and rank by scaling exponent (O(N^exp), worst first)."""
+    """Rank managed sections by load-scaling exponent across a session ladder.
+
+    Fits each section's cost vs load (players or entities) on a log-log fit and
+    ranks by exponent (O(N^exp), worst first). Needs 3+ finalized sessions at
+    distinct load levels.
+    """
     from .analysis.scaling import analyze_scaling
 
+    if by not in {"players", "entities"}:
+        err_console.print(f"[red]--by must be 'players' or 'entities', got {by!r}[/red]")
+        raise typer.Exit(2)
     usable = [s for s in sessions if (s / "summary.json").is_file()]
     if len(usable) < 3:
-        console.print(
+        err_console.print(
             "[red]need >= 3 finalized sessions (different load levels) to fit scaling[/red]"
         )
         raise typer.Exit(2)
     result = analyze_scaling(usable, scale_key=by)
     distinct = sorted(set(result["scales"]))
     if len(distinct) < 3:
-        console.print(
+        err_console.print(
             f"[red]sessions span only {len(distinct)} distinct {by} value(s) ({distinct}); "
             f"a log-log fit needs >= 3 distinct load levels. Capture at different {by} counts "
             "(e.g. via plans/profile.scale-ladder.json).[/red]"
@@ -310,7 +366,10 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
     summary_path = session / "summary.json"
     if not summary_path.is_file():
         raise typer.BadParameter("session has no summary.json")
-    summary = json.loads(summary_path.read_text())
+    try:
+        summary = json.loads(summary_path.read_text())
+    except json.JSONDecodeError as error:
+        raise typer.BadParameter(f"unreadable {summary_path}: {error}") from None
     lines = [
         "# HELP sevendtd_apm_layer_pressure Layer pressure from a collected APM layer.",
         "# TYPE sevendtd_apm_layer_pressure gauge",
@@ -410,8 +469,11 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
 
 @app.command()
 def monitor(
-    pid: Annotated[int | None, typer.Option()] = None,
-    interval: Annotated[float, typer.Option(min=0.5)] = 5,
+    pid: Annotated[
+        int | None,
+        typer.Option(help="Server process ID; auto-detects the unique server when omitted."),
+    ] = None,
+    interval: Annotated[float, typer.Option(min=0.5, help="Seconds between samples.")] = 5,
     count: Annotated[int, typer.Option(min=0, help="Samples to take; 0 = until Ctrl+C.")] = 0,
     output: Annotated[
         Path | None,
@@ -429,7 +491,7 @@ def monitor(
     if pid is None:
         pid = find_server_pid()
     if pid is None or not psutil.pid_exists(pid):
-        console.print("[red]no unique running 7DaysToDieServe process; pass --pid[/red]")
+        err_console.print("[red]no unique running 7DaysToDieServe process; pass --pid[/red]")
         raise typer.Exit(2)
     process = psutil.Process(pid)
     bridge_latest = (
@@ -529,13 +591,16 @@ def _ms(value: object) -> str:
 
 @app.command("prune")
 def prune_sessions(
-    keep: Annotated[int, typer.Option(min=1)] = 20,
+    keep: Annotated[int, typer.Option(min=1, help="Number of newest sessions to retain.")] = 20,
     max_gb: Annotated[
         float | None,
         typer.Option(help="Total size budget; oldest sessions removed until under it."),
     ] = None,
-    dry_run: Annotated[bool, typer.Option()] = False,
+    dry_run: Annotated[
+        bool, typer.Option(help="List what would be deleted without deleting.")
+    ] = False,
 ) -> None:
+    """Delete old sessions beyond --keep or a total size budget."""
     root = apm_root()
     sessions = sorted(
         (p for p in root.glob("session_*") if p.is_dir()),
@@ -561,24 +626,47 @@ def prune_sessions(
 
 @app.command()
 def compare(
-    before: Path, after: Path, output: Annotated[Path | None, typer.Option()] = None
+    before: Path,
+    after: Path,
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Report directory (default: the AFTER session)."),
+    ] = None,
 ) -> None:
+    """Diff two finalized sessions and write compare.json/compare.md."""
+    for name, path in (("before", before), ("after", after)):
+        if not (path / "summary.json").is_file():
+            err_console.print(f"[red]{name} session has no summary.json in {path}[/red]")
+            raise typer.Exit(2)
     try:
         run_compare(before, after, output)
-    except (ValueError, FileNotFoundError) as error:
-        console.print(f"[red]compare failed: {error}[/red]")
+    except ValueError as error:
+        err_console.print(f"[red]compare failed: {error}[/red]")
         raise typer.Exit(1) from None
 
 
 @app.command()
 def budget(
     session: Path,
-    budget_file: Annotated[Path | None, typer.Option("--budget")] = None,
-    baseline: Annotated[Path | None, typer.Option()] = None,
-    max_regression: Annotated[float, typer.Option()] = 15,
+    budget_file: Annotated[
+        Path | None, typer.Option("--budget", help="Budget JSON file (default: built-in budgets).")
+    ] = None,
+    baseline: Annotated[
+        Path | None, typer.Option(help="Baseline session for regression deltas.")
+    ] = None,
+    max_regression: Annotated[
+        float, typer.Option(help="Allowed percent increase vs the baseline.")
+    ] = 15,
 ) -> None:
+    """Gate a finalized session against budgets; exits 1 on regression."""
     if not (session / "summary.json").is_file():
-        console.print(f"[red]missing summary.json in {session}[/red]")
+        err_console.print(f"[red]missing summary.json in {session}[/red]")
+        raise typer.Exit(2)
+    if budget_file is not None and not budget_file.is_file():
+        err_console.print(f"[red]budget file not found: {budget_file}[/red]")
+        raise typer.Exit(2)
+    if baseline is not None and not (baseline / "summary.json").is_file():
+        err_console.print(f"[red]baseline session has no summary.json in {baseline}[/red]")
         raise typer.Exit(2)
     _exit(0 if check_budget(session, budget_file, baseline, max_regression) else 1)
 
@@ -590,8 +678,9 @@ def bridge(
         Path | None, typer.Option(help="Optional in-game APM bridge snapshot.")
     ] = None,
 ) -> None:
+    """Correlate managed timings into csharp_bridge.json with a remediation playbook."""
     if not session.is_dir():
-        console.print(f"[red]not a session directory: {session}[/red]")
+        err_console.print(f"[red]not a session directory: {session}[/red]")
         raise typer.Exit(2)
     result = analyze(session, snapshot)
     console.print(result["playbook_md"])
@@ -606,8 +695,11 @@ def scenario_run(
     seed: Annotated[
         int, typer.Option(help="Bot action RNG seed (fixed = reproducible cohort behaviour).")
     ] = 42,
-    game_port: Annotated[int, typer.Option()] = 26902,
-    pid: Annotated[int | None, typer.Option()] = None,
+    game_port: Annotated[int, typer.Option(help="Game UDP port.")] = 26902,
+    pid: Annotated[
+        int | None,
+        typer.Option(help="Server process ID; auto-detects the unique server when omitted."),
+    ] = None,
     preset: Annotated[
         str,
         typer.Option(
@@ -649,15 +741,19 @@ def scenario_run(
         bool, typer.Option(help="Reset bridge stats at capture start (window-scoped totals).")
     ] = True,
     label: Annotated[str, typer.Option(help="Experiment label stored in workload.json.")] = "",
-    telnet_password: Annotated[str, typer.Option(envvar="SEVENDTD_TELNET_PASSWORD")] = "",
+    telnet_password: Annotated[
+        str,
+        typer.Option(envvar="SEVENDTD_TELNET_PASSWORD", help="Prefer the environment variable."),
+    ] = "",
 ) -> None:
+    """Capture under sibling loadgen load (joins, actions, spawns)."""
     presets = {"standard": "app,threads,memory,cpu", "deep": "all", "forensic": "all,alloc"}
     if preset not in presets:
-        console.print("[red]preset must be standard, deep, or forensic[/red]")
+        err_console.print("[red]preset must be standard, deep, or forensic[/red]")
         raise typer.Exit(2)
     loadgen = REPO.parent / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
     if not loadgen.is_file():
-        console.print(f"[red]sibling load generator not found: {loadgen}[/red]")
+        err_console.print(f"[red]sibling load generator not found: {loadgen}[/red]")
         raise typer.Exit(2)
     run_dir = apm_root() / ".scenario"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -689,10 +785,6 @@ def scenario_run(
         "LOADGEN_NO_SPAWN": "1" if no_spawn else "",
     }
     env.update({key: value for key, value in optional_env.items() if value})
-    console.print(
-        f"starting sibling 7dtd-loadgen: clients={clients} actions={actions} "
-        f"mode={bot_mode or 'auto'} warmup={warmup}s"
-    )
     # Validate rally_at BEFORE starting bots so a typo fails fast with no leaked
     # subprocess and no wasted warmup.
     coordinates: tuple[int, int] | None = None
@@ -704,6 +796,10 @@ def scenario_run(
             raise typer.BadParameter(
                 f"--rally-at expects 'x,z' (two integers), got {rally_at!r}"
             ) from error
+    console.print(
+        f"starting sibling 7dtd-loadgen: clients={clients} actions={actions} "
+        f"mode={bot_mode or 'auto'} warmup={warmup}s"
+    )
     load_process = subprocess.Popen([str(loadgen)], env=env)
     session: Path | None = None
     capture_rc = 130
@@ -733,7 +829,7 @@ def scenario_run(
         session = outcome.session
         capture_rc = outcome.exit_code
     except RuntimeError as error:
-        console.print(f"[red]{error}[/red]")
+        err_console.print(f"[red]{error}[/red]")
         capture_rc = 2
     except KeyboardInterrupt:
         # Ctrl-C: still tear the loadgen down (finally) and report a session.
@@ -773,18 +869,27 @@ def scenario_run(
 @scenario_app.command("matrix")
 def scenario_matrix(
     plan: Path,
-    game_port: Annotated[int, typer.Option()] = 26902,
+    game_port: Annotated[int, typer.Option(help="Game UDP port.")] = 26902,
     cleanup: Annotated[
         str, typer.Option(help="Console command run between experiments ('' disables).")
     ] = "killall",
-    telnet_password: Annotated[str, typer.Option(envvar="SEVENDTD_TELNET_PASSWORD")] = "",
+    telnet_password: Annotated[
+        str,
+        typer.Option(envvar="SEVENDTD_TELNET_PASSWORD", help="Prefer the environment variable."),
+    ] = "",
 ) -> None:
     """Run a labeled experiment sequence from a JSON plan (list of scenario kwargs)."""
     from .capture import telnet_command
 
-    entries = json.loads(plan.read_text())
+    if not plan.is_file():
+        err_console.print(f"[red]plan file not found: {plan}[/red]")
+        raise typer.Exit(2)
+    try:
+        entries = json.loads(plan.read_text())
+    except json.JSONDecodeError as error:
+        raise typer.BadParameter(f"plan is not valid JSON ({plan}): {error}") from None
     if not isinstance(entries, list) or not entries:
-        console.print("[red]plan must be a non-empty JSON list of experiment objects[/red]")
+        err_console.print("[red]plan must be a non-empty JSON list of experiment objects[/red]")
         raise typer.Exit(2)
     allowed = {
         "seconds",
@@ -811,7 +916,9 @@ def scenario_matrix(
     for position, entry in enumerate(entries, 1):
         unknown = set(entry) - allowed
         if unknown:
-            console.print(f"[red]plan entry {position} has unknown keys: {sorted(unknown)}[/red]")
+            err_console.print(
+                f"[red]plan entry {position} has unknown keys: {sorted(unknown)}[/red]"
+            )
             raise typer.Exit(2)
         label = str(entry.get("label") or f"experiment-{position}")
         if cleanup:
@@ -835,11 +942,13 @@ def scenario_matrix(
 
 @flame_app.command("build")
 def flame_build(directory: Path) -> None:
+    """Render flamegraphs from a session's captured stacks."""
     _exit(run([str(REPO / "tools/host_profiler/make_flames.sh"), str(directory)], check=False))
 
 
 @flame_app.command("diff")
 def flame_diff(before: Path, after: Path) -> None:
+    """Build a differential flamegraph HTML from two sessions."""
     _exit(backend_python(APM_BACKENDS / "flame_diff_html.py", [str(before), str(after)]))
 
 

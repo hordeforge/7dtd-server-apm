@@ -84,6 +84,86 @@ def test_cli_help_and_dry_run() -> None:
     assert "app/bridge.jsonl" in result.stdout
 
 
+def test_cli_version_flag_works_without_subcommand() -> None:
+    from apm_suite import __version__
+    from typer.main import get_command
+
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.stdout
+    # Every command exposes a one-line summary for the top-level help listing.
+    commands = get_command(app).commands  # type: ignore[attr-defined]
+    for name in (
+        "doctor",
+        "capture",
+        "finalize",
+        "audit",
+        "index",
+        "export",
+        "scaling",
+        "prometheus",
+        "monitor",
+        "prune",
+        "compare",
+        "budget",
+        "bridge",
+        "flame",
+        "scenario",
+    ):
+        # click leaves short_help unset and renders the docstring's first line.
+        summary = commands[name].short_help or (commands[name].help or "").splitlines()[0]
+        assert summary.strip(), f"missing short help for {name}"
+
+
+def test_cli_usage_errors_exit_2_on_stderr_never_stdout(tmp_path: Path) -> None:
+    missing = tmp_path / "nope"
+    cases: list[list[str]] = [
+        ["finalize", str(missing)],
+        ["audit", str(missing)],
+        ["bridge", str(missing)],
+        ["budget", str(missing)],
+        ["compare", str(missing), str(tmp_path / "nope2")],
+        ["scaling", "--by", "bots", "a", "b", "c"],
+        ["monitor"],
+    ]
+    for argv in cases:
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 2, argv
+        assert result.stdout == "", f"error leaked to stdout: {argv}"
+        assert result.stderr.strip(), f"no stderr diagnostics: {argv}"
+        assert "[red]" not in result.stderr, f"raw markup leaked: {argv}"
+
+
+def test_capture_rejects_unknown_only_tokens_even_dry_run() -> None:
+    bad = runner.invoke(app, ["capture", "--only", "cpu,memry", "--dry-run"])
+    assert bad.exit_code == 2
+    assert "memry" in bad.stderr and "cpu" not in bad.stderr.split("unknown")[1]
+    for good in ("all", "alloc", "app_sim,futex", "cpu , memory"):
+        assert runner.invoke(app, ["capture", "--only", good, "--dry-run"]).exit_code == 0
+
+
+def test_budget_rejects_missing_budget_file_before_running(tmp_path: Path) -> None:
+    session = tmp_path / "session"
+    session.mkdir()
+    (session / "summary.json").write_text("{}")
+    result = runner.invoke(app, ["budget", str(session), "--budget", str(tmp_path / "b.json")])
+    assert result.exit_code == 2
+    assert "budget file not found" in result.stderr
+
+
+def test_scenario_matrix_rejects_missing_plan_file(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["scenario", "matrix", str(tmp_path / "plan.json")])
+    assert result.exit_code == 2
+    assert "plan file not found" in result.stderr
+
+
+def test_doctor_json_stdout_is_machine_readable() -> None:
+    result = runner.invoke(app, ["doctor", "--json", "-"])
+    assert result.exit_code == 0
+    doc = json.loads(result.stdout)
+    assert doc["schema"].startswith("7dtd.apm.doctor")
+
+
 def test_alloc_sites_rank_by_bytes_skip_noise(tmp_path: Path) -> None:
     # bpftrace prints maps ASCENDING, so the heaviest stack is last; the site is
     # the first game frame under GC_malloc, past BCL/profiler/hex noise.

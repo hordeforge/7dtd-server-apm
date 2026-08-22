@@ -306,6 +306,17 @@ def wanted(spec: CollectorSpec, only: str) -> bool:
     return bool("all" in requested or explicit)
 
 
+def unknown_only_tokens(only: str) -> list[str]:
+    """--only tokens that match no collector name, layer, or alias (typos would
+    otherwise silently resolve to an empty plan)."""
+    known = {"all"}
+    for spec in SPECS:
+        known |= {spec.name, spec.layer} | set(spec.aliases)
+    return [
+        token.strip() for token in only.split(",") if token.strip() and token.strip() not in known
+    ]
+
+
 def find_server_pid() -> int | None:
     import psutil
 
@@ -951,6 +962,7 @@ __all__ = [
     "find_server_pid",
     "plan",
     "run_capture",
+    "unknown_only_tokens",
     "wanted",
     "write_plan_text",
 ]
