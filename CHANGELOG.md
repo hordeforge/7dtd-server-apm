@@ -19,6 +19,15 @@ major version.
 
 ### Host CLI
 
+- Privacy: event timelines no longer embed raw telnet console text in spike
+  messages; only the extracted `gmUpdateDuration` is kept. The console stream
+  can carry player names, IPs, and Steam IDs.
+- Privacy: export bundles scrub the host home prefix from `.jsonl`, bpftrace
+  `.out`, and flamegraph `.svg` artifacts (previously copied verbatim), apply
+  the `cmdline`/`exe` redaction to JSONL lines, and still exclude raw
+  `bridge.jsonl` entirely.
+- Privacy: the app scrape discards the telnet banner and post-logon reply and
+  persists only the requested `apm` command responses.
 - Fixed: folded/speedscope/flamegraph loaders crashed on non-finite sample
   weights (`int(inf)`); inf/nan samples are skipped now.
 - Changed: `--only` layer aliases resolve through one shared table across

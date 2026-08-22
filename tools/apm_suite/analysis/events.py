@@ -171,13 +171,24 @@ def parse_app_scrape(sink: EventSink, path: Path) -> None:
         text = str(record.get("text") or "")
         t = record.get("t")
         if "spike" in text.lower():
+            # The telnet drain interleaves server log lines (player names, IPs,
+            # Steam IDs) with bridge output; embed only the extracted duration,
+            # never the raw console text. bridge.jsonl stays the owner-only
+            # evidence store and is excluded from export bundles.
+            match = re.search(r"gmUpdateDuration=([\d.]+)ms", text)
+            duration = f"{float(match.group(1)):.1f}ms" if match else None
             sink.add(
                 {
                     "t": t,
                     "kind": "managed_bridge_spike",
                     "severity": "error",
-                    "message": text.replace("\n", " ")[:240],
+                    "message": (
+                        f"managed bridge spike gmUpdateDuration={duration}"
+                        if duration
+                        else "managed bridge spike (raw console text withheld; see app/bridge.jsonl)"
+                    ),
                     "source": "bridge.jsonl",
+                    **({"value": float(match.group(1))} if match else {}),
                 }
             )
         match = re.search(r"avg=([\d.]+)ms", text)

@@ -170,6 +170,18 @@ def _scrub(obj: object) -> object:
     return obj
 
 
+def _scrub_jsonl(text: str, home: str) -> str:
+    """Apply the JSON scrub per line; a malformed trailing line keeps its content
+    but still loses the host home prefix."""
+    out: list[str] = []
+    for line in text.splitlines():
+        try:
+            out.append(json.dumps(_scrub(json.loads(line))).replace(home, "~"))
+        except json.JSONDecodeError:
+            out.append(line.replace(home, "~"))
+    return "".join(line + "\n" for line in out)
+
+
 @app.command("export")
 def export_session(session: Path, output: Annotated[Path, typer.Option("--output", "-o")]) -> None:
     """Create a sanitized support bundle without raw command lines or telnet text."""
@@ -188,11 +200,12 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
             zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as archive,
         ):
             temp = Path(tmp)
-            # perf.script / report txt / stacks.folded / flame.html embed dso paths
-            # like /home/<user>/... - replace the home prefix so bundles do not leak
-            # the host username. Applied to known-text artifacts only.
+            # perf.script / report txt / stacks.folded / flame.html / bpftrace
+            # *.out / flame.svg embed dso or file paths like /home/<user>/... -
+            # replace the home prefix so bundles do not leak the host username.
+            # Applied to known-text artifacts only.
             home = str(Path.home())
-            text_suffixes = {".txt", ".folded", ".html", ".script", ".md", ".log"}
+            text_suffixes = {".txt", ".folded", ".html", ".script", ".md", ".log", ".out", ".svg"}
             for source in session.rglob("*"):
                 if not source.is_file() or source.name in excluded or source.suffix == ".err":
                     continue
@@ -207,6 +220,16 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
                     sanitized.write_text(
                         json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n"
                     )
+                    archive.write(sanitized, relative)
+                elif source.suffix == ".jsonl":
+                    try:
+                        text = source.read_text(errors="replace")
+                    except OSError:
+                        archive.write(source, relative)
+                        continue
+                    sanitized = temp / relative
+                    sanitized.parent.mkdir(parents=True, exist_ok=True)
+                    sanitized.write_text(_scrub_jsonl(text, home))
                     archive.write(sanitized, relative)
                 elif source.suffix in text_suffixes:
                     try:

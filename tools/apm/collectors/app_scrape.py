@@ -38,10 +38,15 @@ def session(host: str, port: int, password: str, cmds: list[str], timeout: float
             sock.settimeout(timeout)
             return b"".join(parts).decode("utf-8", errors="replace")
 
-        chunks.append(recv())
+        # The greeting and the post-logon reply are drained only to keep the
+        # protocol in step; they are discarded so the persisted scrape holds
+        # just the requested command responses. Everything the server streams
+        # around logon (banner text, echoed input, unrelated chat/log lines)
+        # is server-controlled and must not reach the session store.
+        recv()
         if password:
             sock.sendall((password + "\n").encode())
-            chunks.append(recv())
+            recv()
         for c in cmds:
             sock.sendall((c + "\n").encode())
             time.sleep(0.1)

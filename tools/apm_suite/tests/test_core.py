@@ -181,6 +181,40 @@ def test_export_scrub_redacts_nested_cmdline_exe() -> None:
     }  # nested redaction; non-sensitive fields preserved
 
 
+def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> None:
+    import zipfile
+
+    home = str(Path.home())
+    session = tmp_path / "session_export"
+    (session / "io").mkdir(parents=True)
+    (session / "cpu/perf").mkdir(parents=True)
+    (session / "app").mkdir()
+    atomic_json(session / "meta.json", _meta())
+    (session / "events.jsonl").write_text(
+        json.dumps({"t": 1.0, "cmdline": "-quiet", "message": f"open {home}/save"}) + "\n"
+        f"truncated-line {home}/more\n"
+    )
+    (session / "io/vfs.bt.out").write_text(f"openat {home}/steamapps/common\n")
+    (session / "cpu/perf/flame.svg").write_text(f"<title>frame {home}/libgame.so</title>\n")
+    # bridge.jsonl is raw telnet evidence and must stay out of bundles entirely.
+    (session / "app/bridge.jsonl").write_text("Player 'Alice' joined from 203.0.113.7\n")
+
+    bundle = tmp_path / "bundle.zip"
+    result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert result.exit_code == 0, result.output
+    with zipfile.ZipFile(bundle) as archive:
+        names = set(archive.namelist())
+        events_line = archive.read("events.jsonl").decode()
+        vfs = archive.read("io/vfs.bt.out").decode()
+        svg = archive.read("cpu/perf/flame.svg").decode()
+    assert home not in events_line + vfs + svg
+    assert '"cmdline": "<redacted>"' in events_line
+    assert "~/save" in events_line and "truncated-line ~/more" in events_line
+    assert f"openat {home}" not in vfs and "openat ~/steamapps/common" in vfs
+    assert "~/libgame.so" in svg
+    assert "app/bridge.jsonl" not in names
+
+
 def test_models_emit_v2_schema() -> None:
     model = ManifestV2(
         session_id="session_test",
@@ -413,6 +447,37 @@ def test_bridge_spikes_become_timeline_events(tmp_path: Path) -> None:
     assert len(spikes) == 1
     assert spikes[0].severity == "error"
     assert "entities=500" in spikes[0].message
+
+
+def test_app_scrape_events_withhold_raw_console_text(tmp_path: Path) -> None:
+    from apm_suite.analysis.events import build_events
+
+    session = tmp_path / "session_scrape"
+    (session / "app").mkdir(parents=True)
+    # The telnet drain interleaves bridge output with server log lines that
+    # carry player names, IPs, and Steam IDs; events must not echo them.
+    pii = "Player 'Alice' joined [203.0.113.7:26900] steamid=76561198000000001"
+    records = [
+        {"t": 1.0, "ok": True, "text": f"[7dtd-apm] SPIKE gmUpdateDuration=250.00ms\n{pii}\n"},
+        {"t": 2.0, "ok": True, "text": f"spike counter bumped\n{pii}\n"},
+    ]
+    (session / "app/bridge.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records)
+    )
+    doc = build_events(session)
+    spikes = [e for e in doc.events if e.kind == "managed_bridge_spike"]
+    assert len(spikes) == 2
+    first, second = spikes
+    assert first.message == "managed bridge spike gmUpdateDuration=250.0ms"
+    assert first.model_dump(mode="json")["value"] == pytest.approx(250.0)
+    assert "raw console text withheld" in second.message
+    for event in spikes:
+        blob = json.dumps(event.model_dump(mode="json"))
+        assert "Alice" not in blob and "203.0.113.7" not in blob
+        assert "76561198000000001" not in blob and "joined" not in blob
+    # The persisted events files are the export surface; pin them clean too.
+    persisted = (session / "events.jsonl").read_text()
+    assert "Alice" not in persisted and "203.0.113.7" not in persisted
 
 
 def test_attribute_document_matches_attribute_snapshot(tmp_path: Path) -> None:
@@ -1128,6 +1193,60 @@ def test_annotate_stacks_leaves_non_finite_count_lines_untouched() -> None:
     spec.loader.exec_module(module)
     line = "GameManager.gmUpdate inf"
     assert module.annotate_folded_line(line) == line
+
+
+def test_app_scrape_session_persists_only_command_responses() -> None:
+    """The telnet drain must keep protocol replies but discard the pre-auth
+    banner, the post-logon reply, and any player-identifying stream content."""
+    import importlib.util
+    import socket
+    import threading
+
+    spec = importlib.util.spec_from_file_location(
+        "app_scrape", REPO / "tools/apm/collectors/app_scrape.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    received: list[bytes] = []
+
+    def server(listener: socket.socket) -> None:
+        ready.set()
+        conn, _ = listener.accept()
+        try:
+            with conn:
+                conn.sendall(b"greeting Player 'Alice' from 203.0.113.7\n")
+                received.append(conn.recv(1024))  # password line
+                conn.sendall(b"Logon successful.\n")
+                received.append(conn.recv(1024))  # apm status
+                conn.sendall(b"frameAvg=41.2ms spikes=3\n")
+                received.append(conn.recv(1024))  # apm dump
+                conn.sendall(b"GmUpdate=5.0ms(x100,max=9.0)\n")
+        except OSError:
+            pass
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    ready = threading.Event()
+    thread = threading.Thread(target=server, args=(listener,), daemon=True)
+    thread.start()
+    try:
+        text = module.session(
+            "127.0.0.1", port, "secret-pass", ["apm status", "apm dump"], timeout=2.0
+        )
+    finally:
+        thread.join(timeout=5)
+        listener.close()
+
+    assert received[0].strip() == b"secret-pass"  # logon still happens
+    assert b"apm status" in received[1] and b"apm dump" in received[2]
+    assert ">>> apm status" in text and "frameAvg=41.2ms" in text
+    assert "GmUpdate=5.0ms" in text
+    for leaked in ("greeting", "Alice", "203.0.113.7", "Logon successful"):
+        assert leaked not in text
 
 
 def test_flamegraph_svg_survives_non_finite_counts(

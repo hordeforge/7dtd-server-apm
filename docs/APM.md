@@ -96,8 +96,17 @@ in `summary.json` metadata, surfaced on the dashboard. Causes include
 ## Security and retention
 
 Use `SEVENDTD_TELNET_PASSWORD`. Sanitized exports omit raw telnet responses,
-perf data, stderr, command lines, and executable paths. Inspect a bundle before
-sharing because game-derived artifacts may still contain player or world data.
+perf data, stderr, command lines, and executable paths, and scrub the host home
+prefix from JSON, JSONL, bpftrace output, flamegraph SVG, and other text
+artifacts. Event timelines carry only extracted bridge metrics, never raw
+console text (the telnet stream can contain player names, IPs, and Steam IDs).
+Inspect a bundle before sharing because game-derived artifacts may still
+contain player or world data.
+
+Raw sessions keep the full telnet drain in `app/bridge.jsonl` as owner-only
+evidence (sessions are chmod 0700); it never enters export bundles. The scrape
+itself discards the telnet banner and post-logon reply and persists only the
+requested `apm` command responses.
 
 ```bash
 uv run 7dtd-apm export SESSION -o support.zip
