@@ -913,6 +913,85 @@ def test_budget_absent_gross_is_skipped_not_passed(tmp_path: Path) -> None:
     assert any("skip max_gross_alloc_mb_per_second (no data)" in ln for ln in lines)
 
 
+def _budget_session(root: Path, name: str, layers: tuple[tuple[str, float], ...]) -> Path:
+    session = root / name
+    session.mkdir()
+    atomic_json(
+        session / "summary.json",
+        {
+            "schema": "7dtd.apm.summary.v2",
+            "session_id": name,
+            "layers": [
+                {"layer": layer, "score": score, "state": "collected"} for layer, score in layers
+            ],
+        },
+    )
+    return session
+
+
+def test_budget_regression_gate_fails_and_flags_coverage_mismatch(tmp_path: Path) -> None:
+    from apm_suite.analysis.budget import check
+
+    base = _budget_session(tmp_path, "budget_base", (("cpu", 50.0), ("runtime_gc", 20.0)))
+    candidate = _budget_session(tmp_path, "budget_cand", (("cpu", 70.0), ("runtime_gc", 20.0)))
+    ok, lines = check(candidate, {}, base, 15.0)
+    assert ok is False
+    # +20 on cpu busts the 15% allowance; the unchanged layer stays an ok line.
+    assert any("FAIL regression cpu: baseline=50.0 now=70.0" in ln for ln in lines)
+    assert any("ok   regression runtime_gc" in ln for ln in lines)
+
+    wider = _budget_session(tmp_path, "budget_cand_wide", (("cpu", 50.0), ("io", 5.0)))
+    ok_mismatch, lines_mismatch = check(wider, {}, base, 15.0)
+    # Different coverage between baseline and candidate is UNKNOWN, not a pass.
+    assert ok_mismatch is False
+    assert any("UNKNOWN regression: baseline and candidate" in ln for ln in lines_mismatch)
+
+
+def test_budget_late_tick_share_and_section_heat_gates(tmp_path: Path) -> None:
+    from apm_suite.analysis.budget import check
+
+    late = tmp_path / "session_late"
+    late.mkdir()
+    atomic_json(
+        late / "summary.json",
+        {
+            "schema": "7dtd.apm.summary.v2",
+            "session_id": late.name,
+            "layers": [],
+            "metadata": {"frame": {"lateTicks": 2, "windowUpdates": 10}},
+        },
+    )
+    atomic_json(
+        late / "csharp_bridge.json",
+        {
+            "schema": "7dtd.apm.bridge.v2",
+            "top_managed_sections": [{"name": "World.TickEntities", "avgMs": 25.0}],
+        },
+    )
+    budget = {"max_late_tick_share": 0.05, "max_section_heat": {"World.TickEntities": 20}}
+    ok, lines = check(late, budget, None, 15.0)
+    assert ok is False
+    assert any("FAIL late_ticks 2/10 = 0.200 > budget 0.05" in ln for ln in lines)
+    assert any("FAIL section World.TickEntities=25.0 > budget 20" in ln for ln in lines)
+
+    # No bridge frame data at all: skipped with a reason, not scored as 0.
+    bare = tmp_path / "session_late_bare"
+    bare.mkdir()
+    atomic_json(
+        bare / "summary.json",
+        {"schema": "7dtd.apm.summary.v2", "session_id": bare.name, "layers": []},
+    )
+    ok_bare, lines_bare = check(
+        bare,
+        {"max_late_tick_share": 0.05, "max_section_heat": {"World.TickEntities": 20}},
+        None,
+        15.0,
+    )
+    assert ok_bare is True  # nothing failed; the gap is reported instead
+    assert any("skip late_ticks (no bridge frame data)" in ln for ln in lines_bare)
+    assert any("skip section World.TickEntities (no heat data)" in ln for ln in lines_bare)
+
+
 def test_layer_requested_shared_alias_table() -> None:
     # One table feeds capture planning, summary scoring, and the audit; these
     # cases pin tokens that previously worked in only some of the three.
@@ -1091,7 +1170,89 @@ def test_compare_rejects_different_layer_coverage(tmp_path: Path) -> None:
         },
     )
     result = runner.invoke(app, ["compare", str(before), str(after)])
-    assert result.exit_code != 0
+    assert result.exit_code == 1  # ValueError from compare_sessions -> exit 1
+    assert "incompatible layer coverage" in result.stderr
+
+
+def _cmp_session(
+    root: Path,
+    name: str,
+    *,
+    seconds: float = 30.0,
+    version: str = "2.1.0",
+    layers: tuple[tuple[str, float], ...] = (("cpu", 40.0),),
+    workload: dict[str, object] | None = None,
+) -> Path:
+    session = root / name
+    session.mkdir()
+    atomic_json(
+        session / "summary.json",
+        {
+            "schema": "7dtd.apm.summary.v2",
+            "session_id": name,
+            "layers": [
+                {"layer": layer, "score": score, "state": "collected"} for layer, score in layers
+            ],
+            "meta": {"analyzer_version": version, "only": "all", "seconds": seconds},
+        },
+    )
+    if workload is not None:
+        atomic_json(session / "workload.json", workload)
+    return session
+
+
+@pytest.mark.parametrize(
+    "kwargs_a,kwargs_b,message",
+    [
+        ({"version": "2.1.0"}, {"version": "2.2.0"}, "analyzer versions differ"),
+        ({"seconds": 4}, {"seconds": 4}, "capture too short"),
+        ({"seconds": 10}, {"seconds": 30}, "differ by more than 10%"),
+        (
+            {"workload": {"mode": "clients"}},
+            {},
+            "only one session has a workload manifest",
+        ),
+        (
+            {"workload": {"mode": "clients", "target": "standard"}},
+            {"workload": {"mode": "clients", "target": "deep"}},
+            "workload manifests are not equivalent",
+        ),
+    ],
+)
+def test_compare_rejects_mismatched_session_pairs(
+    tmp_path: Path, kwargs_a: dict[str, object], kwargs_b: dict[str, object], message: str
+) -> None:
+    from apm_suite.analysis.compare import compare_sessions
+
+    a = _cmp_session(tmp_path, "cmp_guard_a", **kwargs_a)  # type: ignore[arg-type]
+    b = _cmp_session(tmp_path, "cmp_guard_b", **kwargs_b)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=message):
+        compare_sessions(a, b)
+
+
+def test_compare_marks_one_sided_section_not_comparable(tmp_path: Path) -> None:
+    from apm_suite.analysis.compare import compare_sessions
+
+    a = _cmp_session(tmp_path, "cmp_sec_a")
+    b = _cmp_session(tmp_path, "cmp_sec_b")
+    # The section exists only in B: the other side never exercised it, so the
+    # delta must be flagged, not ranked as an improvement over an implied 0.
+    atomic_json(
+        b / "csharp_bridge.json",
+        {
+            "schema": "7dtd.apm.bridge.v2",
+            "top_managed_sections": [{"name": "Solo.Section", "avgMs": 5.0}],
+        },
+    )
+    result = compare_sessions(a, b)
+    row = next(d for d in result["section_deltas"] if d["section"] == "Solo.Section")
+    assert row == {
+        "section": "Solo.Section",
+        "a_heat": 0.0,
+        "b_heat": 5.0,
+        "delta_b_minus_a": 5.0,
+        "better": "not_comparable",
+    }
 
 
 def test_partial_capture_withholds_health_grade(tmp_path: Path) -> None:
@@ -1113,6 +1274,77 @@ def test_partial_capture_withholds_health_grade(tmp_path: Path) -> None:
     assert health["health"] is None
     assert health["grade"] is None
     assert health["confidence"] == "insufficient"
+
+
+ALL_KNOWN_LAYERS = (
+    "sync_locks",
+    "runtime_gc",
+    "cpu",
+    "app_sim",
+    "io",
+    "memory_cache",
+    "scheduler",
+)
+
+
+@pytest.mark.parametrize(
+    "score,expected_grade",
+    [
+        (10, "A"),
+        (15, "A"),  # health 85: grade A boundary is inclusive
+        (16, "B"),
+        (30, "B"),  # health 70: grade B boundary is inclusive
+        (31, "C"),
+        (45, "C"),  # health 55: grade C boundary is inclusive
+        (46, "D"),
+        (60, "D"),  # health 40: grade D boundary is inclusive
+        (61, "F"),
+    ],
+)
+def test_compute_health_grades_full_coverage_by_pressure(score: float, expected_grade: str) -> None:
+    from apm_suite.analysis.health import compute_health
+
+    result = compute_health(dict.fromkeys(ALL_KNOWN_LAYERS, score))
+    # Uniform scores across all seven known layers -> health = 100 - score.
+    assert result.health == 100 - score
+    assert result.grade == expected_grade
+    assert result.confidence == "medium"
+    assert result.coverage == pytest.approx(1.0)
+
+
+def test_compute_health_withholds_grade_below_and_at_eighty_percent_coverage() -> None:
+    from apm_suite.analysis.health import DEFAULT_WEIGHT, WEIGHTS, compute_health
+
+    # sync_locks+runtime_gc+cpu+io+memory_cache = 0.72 weighted coverage.
+    partial = {name: 20.0 for name in ("sync_locks", "runtime_gc", "cpu", "io", "memory_cache")}
+    below = compute_health(partial)
+    assert below.health is None and below.grade is None
+    assert below.confidence == "insufficient"
+
+    # One unknown layer adds DEFAULT_WEIGHT; the same set lands on exactly 0.80,
+    # which must be graded, not withheld (< COVERAGE_MIN is strict).
+    at_threshold = {**partial, "custom_probe": 20.0}
+    weight_sum = sum(WEIGHTS.get(n, DEFAULT_WEIGHT) for n in at_threshold)
+    assert weight_sum == pytest.approx(0.80)
+    graded = compute_health(at_threshold)
+    assert graded.grade is not None
+    assert graded.coverage == pytest.approx(0.8)
+
+
+def test_compute_health_clamps_out_of_range_scores() -> None:
+    from apm_suite.analysis.health import compute_health
+
+    # Unvalidated hand-edited summary scores must not push health out of range.
+    pegged = dict.fromkeys(ALL_KNOWN_LAYERS, 0.0)
+    pegged["cpu"] = 250.0  # clamps to pressure 100 -> 0.15 * 100 weighted
+    hot = compute_health(pegged)
+    assert hot.pressure == pytest.approx(15.0)
+    assert hot.health == pytest.approx(85.0)
+
+    negative = dict.fromkeys(ALL_KNOWN_LAYERS, 50.0)
+    negative["cpu"] = -5.0  # clamps to pressure 0; the other six weigh 0.85 * 50
+    cold = compute_health(negative)
+    assert cold.pressure == pytest.approx(42.5)
 
 
 # --- bridge source structure -----------------------------------------------------
@@ -1452,6 +1684,53 @@ def test_compare_sessions_ranks_layer_improvement(tmp_path: Path) -> None:
     assert cpu["delta_b_minus_a"] == -20.0
     gc = next(d for d in result["layer_deltas"] if d["layer"] == "runtime_gc")
     assert gc["better"] == "tie"  # identical scores
+
+
+# --- session pruning --------------------------------------------------------------
+
+
+def _prune_store(root: Path, count: int, payload: int = 1) -> None:
+    for i in range(count):
+        session = root / f"session_{i}"
+        session.mkdir()
+        (session / "summary.json").write_text("x" * payload)
+        stamp = 1_700_000_000 + i * 100
+        os.utime(session, (stamp, stamp))  # deterministic age order
+
+
+def test_prune_dry_run_lists_and_real_prune_keeps_newest(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    _prune_store(root, 5)
+
+    dry = runner.invoke(app, ["prune", "--keep", "2", "--dry-run"])
+    assert dry.exit_code == 0
+    # Dry run deletes nothing and names exactly the three oldest.
+    assert sorted(p.name for p in root.glob("session_*")) == [f"session_{i}" for i in range(5)]
+    assert dry.stdout.count("would remove") == 3
+    assert "session_4" not in dry.stdout and "session_3" not in dry.stdout
+
+    real = runner.invoke(app, ["prune", "--keep", "2"])
+    assert real.exit_code == 0
+    assert sorted(p.name for p in root.glob("session_*")) == ["session_3", "session_4"]
+
+
+def test_prune_size_budget_removes_oldest_kept_first(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    _prune_store(root, 3, payload=1000)
+
+    # Three 1000-byte sessions total 3000 bytes; a 2500-byte budget must evict
+    # the OLDEST kept session first, stopping as soon as the total fits.
+    result = runner.invoke(app, ["prune", "--keep", "3", "--max-gb", str(2500 / 1024**3)])
+    assert result.exit_code == 0
+    assert sorted(p.name for p in root.glob("session_*")) == ["session_1", "session_2"]
 
 
 # --- live server (opt-in) ----------------------------------------------------------
