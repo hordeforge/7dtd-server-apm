@@ -98,16 +98,33 @@ def _cell(value: Any, blank: str = "") -> str:
 def html_index(rows: list[dict[str, Any]]) -> str:
     body = []
     for row in rows:
-        link = (
-            f"{row['dir']}/dashboard.html"
-            if row.get("has_dashboard")
-            else f"{row['dir']}/report.html"
-        )
-        safe_link = html.escape(link, quote=True)
+        name = _cell(row["dir"])
+        # Link the session name only when at least one rendered page exists;
+        # a bare directory listing (or a 404) is a dead end for the reader.
+        if row.get("has_dashboard") or row.get("has_report"):
+            link = (
+                f"{row['dir']}/dashboard.html"
+                if row.get("has_dashboard")
+                else f"{row['dir']}/report.html"
+            )
+            safe_link = html.escape(link, quote=True)
+            name = f'<a href="{safe_link}">{name}</a>'
         stw = row.get("stw_worst_ms")
+        flame_icon = ""
+        if row.get("has_flame"):
+            flame_icon = (
+                f'<a href="{html.escape(row["dir"], quote=True)}/cpu/perf/flame.html">'
+                '<span role="img" aria-label="flamegraph report available (open it)">\U0001f525</span></a>'
+            )
+        bridge_icon = ""
+        if row.get("has_bridge"):
+            bridge_icon = (
+                f'<a href="{html.escape(row["dir"], quote=True)}/csharp_bridge.md">'
+                '<span role="img" aria-label="bridge capture available (open it)">\U0001f309</span></a>'
+            )
         body.append(
             f"<tr>"
-            f'<td><a href="{safe_link}">{_cell(row["dir"])}</a></td>'
+            f"<td>{name}</td>"
             f"<td>{_cell(row.get('utc'))}</td>"
             f"<td>{_cell(row.get('pid'))}</td>"
             f"<td>{_cell(row.get('entities'))}/{_cell(row.get('players'))}</td>"
@@ -117,22 +134,29 @@ def html_index(rows: list[dict[str, Any]]) -> str:
             f"<td>{_cell(row.get('profile'))}</td>"
             f"<td>{_cell(row.get('gross_alloc_mb_s'))}"
             f"{(' / ' + _cell(stw) + 'ms STW') if stw else ''}</td>"
-            f"<td>{'🔥' if row.get('has_flame') else ''}"
-            f"{' 🌉' if row.get('has_bridge') else ''}</td>"
+            f"<td>{flame_icon}{bridge_icon}</td>"
             f"</tr>"
         )
+    if not rows:
+        body.append(
+            '<tr><td colspan="10">No sessions yet. Capture one with '
+            "<code>uv run 7dtd-apm capture --seconds 45 --only all</code>, "
+            "then reload this page.</td></tr>"
+        )
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"/><title>7dtd APM sessions</title>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>7dtd APM sessions</title>
 <style>
 body{{font-family:system-ui;background:#0f1115;color:#e8eaed;margin:24px}}
 a{{color:#8ab4f8}} table{{border-collapse:collapse;width:100%}}
 th,td{{border:1px solid #333;padding:8px;text-align:left}}
 th{{background:#1a1d24}}
+.sr-only{{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}}
 </style></head><body>
 <h1>APM session index</h1>
 <p>{len(rows)} sessions</p>
 <table>
-<tr><th>session</th><th>utc</th><th>pid</th><th>ent/ply</th><th>health</th><th>grade</th><th>lag diagnosis</th><th>profile</th><th>gross alloc / STW</th><th>artifacts</th></tr>
+<caption class="sr-only">APM sessions</caption>
+<tr><th scope="col">session</th><th scope="col">utc</th><th scope="col">pid</th><th scope="col">ent/ply</th><th scope="col">health</th><th scope="col">grade</th><th scope="col">lag diagnosis</th><th scope="col">profile</th><th scope="col">gross alloc / STW</th><th scope="col">artifacts</th></tr>
 {"".join(body)}
 </table>
 </body></html>

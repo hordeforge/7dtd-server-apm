@@ -52,6 +52,7 @@ HTML = r"""<!DOCTYPE html>
     box-shadow:0 4px 16px rgba(0,0,0,.4);
   }
   #tip b { color:var(--hi); }
+  .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; clip-path:inset(50%); overflow:hidden; white-space:nowrap; }
   footer { padding:8px 16px; font-size:12px; color:var(--muted); }
   footer a { color:var(--accent); }
 </style>
@@ -61,7 +62,7 @@ HTML = r"""<!DOCTYPE html>
   <h1>__TITLE__</h1>
   <span class="muted" id="meta"></span>
   <div id="controls">
-    <input type="search" id="q" placeholder="Search frames…" autocomplete="off"/>
+    <input type="search" id="q" placeholder="Search frames…" aria-label="Search frames" autocomplete="off"/>
     <button type="button" id="reset">Reset zoom</button>
     <button type="button" id="pct">Toggle % total / self</button>
   </div>
@@ -69,8 +70,9 @@ HTML = r"""<!DOCTYPE html>
 <div id="breadcrumb"></div>
 <div id="chart"></div>
 <div id="tip"></div>
+<span id="sr-status" role="status" class="sr-only"></span>
 <footer>
-  Click a frame to zoom. Esc resets. Search highlights matches.
+  Click a frame to zoom (or Tab to it and press Enter). Esc resets. Search highlights matches.
   Also open <code>__SPEEDSCOPE_NAME__</code> in
   <a href="https://www.speedscope.app/" target="_blank" rel="noopener">speedscope.app</a>
   or <code>npx speedscope __SPEEDSCOPE_NAME__</code>
@@ -147,7 +149,10 @@ function render() {
     const cls = "frame" + (n.dim ? " dim" : "") + (n.hit ? " hit" : "");
     const showText = n.w > 40;
     const text = showText ? escapeXml(n.label.slice(0, Math.floor(n.w / 7))) : "";
-    svg += `<g class="${cls}" data-i="${nodes.indexOf(n)}">`;
+    // Keyboard access: every visible frame is a focusable button-like node
+    // with a full accessible name (WCAG 2.1.1 / 4.1.2); Enter/Space zooms.
+    const kbd = ` tabindex="0" role="button" aria-label="${escapeXml(n.label)}"`;
+    svg += `<g class="${cls}" data-i="${nodes.indexOf(n)}"${kbd}>`;
     svg += `<rect x="${n.x0.toFixed(2)}" y="${n.y}" width="${Math.max(n.w - 0.5, 0.5).toFixed(2)}" height="${H - PAD}" fill="${color(n.node.name)}"/>`;
     if (text)
       svg += `<text x="${(n.x0 + 3).toFixed(2)}" y="${n.y + 12}">${text}</text>`;
@@ -159,18 +164,26 @@ function render() {
   chart.querySelectorAll(".frame").forEach(g => {
     const i = +g.getAttribute("data-i");
     const n = nodes[i];
-    g.addEventListener("click", () => {
-      focus = n.node;
-      render();
-      updateCrumb();
-    });
-    g.addEventListener("mousemove", ev => {
+    function activate(viaKeyboard) {
+      zoomTo(n.node, `${n.node.name} (${n.node.value} samples)`, viaKeyboard);
+    }
+    function showTipAt(x, y) {
       tip.style.display = "block";
-      tip.style.left = Math.min(ev.clientX + 12, window.innerWidth - 300) + "px";
-      tip.style.top = (ev.clientY + 12) + "px";
+      tip.style.left = Math.min(x + 12, window.innerWidth - 300) + "px";
+      tip.style.top = (y + 12) + "px";
       const ofRoot = (100 * n.node.value / ROOT.value).toFixed(2);
       tip.innerHTML = `<b>${escapeHtml(n.node.name)}</b><br/>samples: ${n.node.value}<br/>of zoom: ${n.pct}%<br/>of total: ${ofRoot}%`;
+    }
+    g.addEventListener("click", ev => activate(ev.detail === 0));
+    g.addEventListener("keydown", ev => {
+      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); activate(true); }
     });
+    g.addEventListener("mousemove", ev => showTipAt(ev.clientX, ev.clientY));
+    g.addEventListener("focus", () => {
+      const r = g.querySelector("rect").getBoundingClientRect();
+      showTipAt(Math.min(r.left + r.width / 2, window.innerWidth - 300), r.bottom);
+    });
+    g.addEventListener("blur", () => { tip.style.display = "none"; });
     g.addEventListener("mouseleave", () => { tip.style.display = "none"; });
   });
   updateCrumb();
@@ -178,8 +191,32 @@ function render() {
 
 function updateCrumb() {
   // simple path: only show current focus name chain is hard without parent links; show focus name
-  crumb.innerHTML = `<a data-root="1">all</a> / <span>${escapeHtml(focus.name)}</span> (${focus.value} samples)`;
-  crumb.querySelector("[data-root]").onclick = () => { focus = ROOT; render(); };
+  crumb.innerHTML = `<a href="#" data-root="1">all</a> / <span>${escapeHtml(focus.name)}</span> (${focus.value} samples)`;
+  crumb.querySelector("[data-root]").onclick = (ev) => { ev.preventDefault(); zoomTo(ROOT, "the whole profile"); };
+}
+
+// Re-render around a node and tell assistive tech what happened. `what` is an
+// optional screen-reader announcement; the visual state is the same either way.
+// Re-render around a node and tell assistive tech what happened. `what` is an
+// optional screen-reader announcement; the visual state is the same either way.
+function zoomTo(node, what, viaKeyboard) {
+  focus = node;
+  render();
+  updateCrumb();
+  if (what === undefined) return;
+  announce(`Zoomed to ${what}`);
+  // render() replaced the DOM, dropping keyboard focus; put it back on the new
+  // zoom root so keyboard users are not thrown back to the page top.
+  if (viaKeyboard) {
+    const first = chart.querySelector(".frame");
+    if (first) first.focus();
+  }
+}
+
+// Announce a message to screen readers via the role=status live region.
+// (Named announce, not status: window.status already exists.)
+function announce(msg) {
+  document.getElementById("sr-status").textContent = msg;
 }
 
 function escapeXml(s) {
@@ -189,14 +226,18 @@ function escapeHtml(s) {
   return escapeXml(s);
 }
 
-document.getElementById("reset").onclick = () => { focus = ROOT; search = ""; document.getElementById("q").value = ""; render(); };
-document.getElementById("pct").onclick = () => { showTotal = !showTotal; render(); };
+document.getElementById("reset").onclick = () => { focus = ROOT; search = ""; document.getElementById("q").value = ""; render(); announce("Reset zoom, showing the whole profile"); };
+document.getElementById("pct").onclick = () => { showTotal = !showTotal; render(); announce(showTotal ? "Showing percent of total" : "Showing self samples"); };
 document.getElementById("q").addEventListener("input", e => {
   search = (e.target.value || "").trim().toLowerCase();
   render();
+  if (!search) return;
+  let hits = 0;
+  (function count(n) { if (matches(n)) hits++; (n.children || []).forEach(count); })(ROOT);
+  announce(`${hits} frame${hits === 1 ? "" : "s"} match "${search}"`);
 });
 window.addEventListener("keydown", e => {
-  if (e.key === "Escape") { focus = ROOT; search = ""; document.getElementById("q").value = ""; render(); }
+  if (e.key === "Escape") { focus = ROOT; search = ""; document.getElementById("q").value = ""; render(); announce("Reset zoom"); }
 });
 window.addEventListener("resize", () => render());
 render();

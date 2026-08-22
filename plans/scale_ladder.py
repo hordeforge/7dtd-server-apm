@@ -12,7 +12,6 @@ import json
 import re
 import socket
 import subprocess
-import sys
 import time
 from pathlib import Path
 
@@ -105,22 +104,48 @@ def main() -> int:
         print(f"  alive={reached}; settling", flush=True)
         time.sleep(8)
         result = subprocess.run(
-            ["uv", "run", "7dtd-apm", "capture", "--seconds", "90",
-             "--only", "all", "--reset-bridge", "--telnet-password", PASSWORD],
+            [
+                "uv",
+                "run",
+                "7dtd-apm",
+                "capture",
+                "--seconds",
+                "90",
+                "--only",
+                "all",
+                "--reset-bridge",
+                "--telnet-password",
+                PASSWORD,
+            ],
             cwd=APM,
-            env={"UV_CACHE_DIR": str(APM / ".uv-cache"),
-                 "PATH": "/usr/bin:/bin:/usr/local/bin", "HOME": str(Path.home())},
+            env={
+                "UV_CACHE_DIR": str(APM / ".uv-cache"),
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                "HOME": str(Path.home()),
+            },
             check=False,
         )
         session = newest_session()
-        (session / "workload.json").write_text(json.dumps({
-            "schema": "7dtd.loadgen.run.v1", "label": f"ladder-{tier}", "mode": "ladder",
-            "target": {"host": HOST, "port": 26902},
-            "workload": {"clients": len(ids), "zombieTarget": tier,
-                         "zombieAliveAtStart": reached, "zombieAliveAtEnd": alive(),
-                         "botMode": "wander"},
-            "result": {"exitCode": result.returncode, "passed": True},
-        }, indent=2) + "\n")
+        (session / "workload.json").write_text(
+            json.dumps(
+                {
+                    "schema": "7dtd.loadgen.run.v1",
+                    "label": f"ladder-{tier}",
+                    "mode": "ladder",
+                    "target": {"host": HOST, "port": 26902},
+                    "workload": {
+                        "clients": len(ids),
+                        "zombieTarget": tier,
+                        "zombieAliveAtStart": reached,
+                        "zombieAliveAtEnd": alive(),
+                        "botMode": "wander",
+                    },
+                    "result": {"exitCode": result.returncode, "passed": True},
+                },
+                indent=2,
+            )
+            + "\n"
+        )
         print(f"  TIER {tier}: session={session.name} rc={result.returncode}", flush=True)
     print("LADDER COMPLETE", flush=True)
     return 0

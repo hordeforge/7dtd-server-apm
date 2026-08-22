@@ -11,6 +11,7 @@ same package version (the analyzer/session version derives from it).
 
 Run: python3 scripts/check_version.py   (wired into `make test`)
 """
+
 from __future__ import annotations
 
 import re
@@ -47,7 +48,9 @@ def main() -> int:
     if pp is None:
         fails.append("pyproject.toml: no version")
 
-    ai = re.search(r'^__version__\s*=\s*"(\d+(?:\.\d+)+)"', APM_INIT.read_text(encoding="utf-8"), re.M)
+    ai = re.search(
+        r'^__version__\s*=\s*"(\d+(?:\.\d+)+)"', APM_INIT.read_text(encoding="utf-8"), re.M
+    )
     if ai is None:
         fails.append("tools/apm_suite/__init__.py: no __version__")
 

@@ -17,12 +17,8 @@ for session in sorted(root.glob("session_*")):
     attribution = bridge.get("attribution") or {}
     summary = json.loads((session / "summary.json").read_text())
     frame = (summary.get("metadata") or {}).get("frame") or {}
-    scheduler = next(
-        (L for L in summary.get("layers", []) if L.get("layer") == "scheduler"), {}
-    )
-    subsystems = {
-        s["subsystem"]: s["scaled_total_ms"] for s in attribution.get("subsystems") or []
-    }
+    scheduler = next((L for L in summary.get("layers", []) if L.get("layer") == "scheduler"), {})
+    subsystems = {s["subsystem"]: s["scaled_total_ms"] for s in attribution.get("subsystems") or []}
     entities = attribution.get("entities") or 0
     ticks = attribution.get("window_updates") or 0
     entity_ms = subsystems.get("entity_tick", 0.0)
@@ -50,20 +46,26 @@ for session in sorted(root.glob("session_*")):
             ],
             "measured_ms": attribution.get("measured_ms"),
             "path": {
-                k: v
-                for k, v in (attribution.get("path_pipeline") or {}).items()
-                if k != "note"
+                k: v for k, v in (attribution.get("path_pipeline") or {}).items() if k != "note"
             },
         }
     )
 
 for row in sorted(rows, key=lambda r: r["label"]):
-    print(f"\n=== {row['label']}  zombies start={row['start']} end={row['end']} "
-          f"snapshot_entities={row['entities_snapshot']}")
-    print(f"    tick avg {row['tick_avg_ms']} ms | gmUpdate avg {row['gm_avg_ms']} ms | "
-          f"late ticks {row['late_ticks']} | main-thread stall {row['stall_ms']} ms")
-    print(f"    entity_tick {row['entity_tick_ms']} ms over {row['ticks']} ticks "
-          f"-> {row['entity_ms_per_entity_tick']} ms/entity/tick")
-    print(f"    tick_stall_total {row['tick_stall_ms']} ms | disk_block {row['disk_block_ms']} ms "
-          f"| gc-caused spikes {row['gc_spikes']}")
+    print(
+        f"\n=== {row['label']}  zombies start={row['start']} end={row['end']} "
+        f"snapshot_entities={row['entities_snapshot']}"
+    )
+    print(
+        f"    tick avg {row['tick_avg_ms']} ms | gmUpdate avg {row['gm_avg_ms']} ms | "
+        f"late ticks {row['late_ticks']} | main-thread stall {row['stall_ms']} ms"
+    )
+    print(
+        f"    entity_tick {row['entity_tick_ms']} ms over {row['ticks']} ticks "
+        f"-> {row['entity_ms_per_entity_tick']} ms/entity/tick"
+    )
+    print(
+        f"    tick_stall_total {row['tick_stall_ms']} ms | disk_block {row['disk_block_ms']} ms "
+        f"| gc-caused spikes {row['gc_spikes']}"
+    )
     print(f"    instrumented total {row['measured_ms']} ms | path {row['path']}")

@@ -32,10 +32,10 @@ def build_html(a: Path, b: Path, rows: list[dict]) -> str:
             f"<tr><td><code>{_esc(r['frame'][:90])}</code></td>"
             f"<td>{r['a']}</td><td>{r['b']}</td>"
             f"<td style='color:{color}'>{r['delta']:+}</td>"
-            f"<td><div style='background:{color};height:12px;width:{w:.1f}%'></div></td></tr>"
+            f"<td><div aria-hidden='true' style='background:{color};height:12px;width:{w:.1f}%'></div></td></tr>"
         )
     return f"""<!DOCTYPE html>
-<html><head><meta charset="utf-8"/><title>Flame delta</title>
+<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Flame delta</title>
 <style>
 body{{font-family:system-ui;background:#0f1115;color:#e8eaed;margin:24px}}
 code{{font-size:12px}} table{{border-collapse:collapse;width:100%}}
@@ -45,8 +45,9 @@ th,td{{border:1px solid #333;padding:6px;text-align:left}} th{{background:#1a1d2
 <h1>Speedscope / folded frame delta</h1>
 <p class="muted">A={_esc(str(a))}<br/>B={_esc(str(b))}<br/>
 Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
+<p><a href="dashboard.html">Dashboard</a> · <a href="../index.html">All sessions</a></p>
 <table>
-<tr><th>frame</th><th>A</th><th>B</th><th>Δ</th><th></th></tr>
+<tr><th scope="col">Frame</th><th scope="col">A</th><th scope="col">B</th><th scope="col">Δ</th><th scope="col">Relative Δ magnitude</th></tr>
 {"".join(tr)}
 </table>
 </body></html>

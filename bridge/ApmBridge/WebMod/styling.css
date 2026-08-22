@@ -3,8 +3,16 @@
 .apm-head h2 { margin: 0; }
 .apm-window { opacity: .6; font-size: .8rem; margin-left: auto; }
 .apm-pill { font-size: .75rem; font-weight: 700; letter-spacing: .04em; padding: .2rem .55rem; border-radius: 999px; }
-.apm-btn { font-size: .78rem; padding: .2rem .55rem; border-radius: 5px; border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
+.apm-btn { font-size: .78rem; padding: .32rem .6rem; min-height: 24px; border-radius: 5px; border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
 .apm-btn:hover { background: rgba(127,127,127,.25); }
+
+/* Keyboard focus is always visible (WCAG 2.4.7); the dashboard theme may
+   reset outlines, so re-declare on our interactive elements only. */
+.apm-btn:focus-visible, .apm-filter:focus-visible, .apm-sort-btn:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 1px; }
+
+/* Screen-reader-only text: carries state that the theme paints in color
+   (severity rows, staged ring) or that would otherwise be unnamed. */
+.apm-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
 
 .apm-tick-budget { display: flex; align-items: center; gap: .6rem; margin: .75rem 0; }
 .apm-budget-val { font-variant-numeric: tabular-nums; opacity: .8; min-width: 4.5rem; }
@@ -25,7 +33,11 @@
 .apm-table { width: 100%; border-collapse: collapse; margin-bottom: .5rem; }
 .apm-table th,.apm-table td { padding: .4rem; border-bottom: 1px solid rgba(127,127,127,.25); text-align: right; }
 .apm-table th:first-child,.apm-table td:first-child { text-align: left; }
-.apm-sortable { cursor: pointer; user-select: none; }
+.apm-sortable { user-select: none; }
+.apm-sortable:hover { color: #8ab4f8; }
+/* Reset the button chrome so the sortable header keeps its table look; the
+   click target is a real <button> for keyboard operability. */
+.apm-sort-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; min-height: 24px; }
 .apm-sortable:hover { color: #8ab4f8; }
 .apm-budget-cell { display: flex; align-items: center; gap: .4rem; }
 .apm-budget-cell .apm-bar { width: 70px; flex: none; }
@@ -117,3 +129,9 @@ a[data-for="tooltip-Efficiency"]::before {
 
 .apm-staged { box-shadow: 0 0 0 2px rgba(230, 189, 58, .55); }
 .apm-primary { border-color: rgba(87, 217, 119, .55); color: #57d977; }
+
+/* The armed-apply blink is attention-grabbing, not essential information
+   (the label change carries it); honor the OS reduce-motion preference. */
+@media (prefers-reduced-motion: reduce) {
+  .apm-armed { animation: none; }
+}

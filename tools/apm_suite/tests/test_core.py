@@ -709,6 +709,45 @@ def test_build_summary_marks_only_requested_layers_collected(tmp_path: Path) -> 
     assert by_layer["cpu"].score is None
 
 
+# --- session index page --------------------------------------------------------
+
+
+def test_index_html_navigation_and_empty_state(tmp_path: Path) -> None:
+    from apm_suite.analysis.index import html_index
+
+    # Empty store: the page must tell the user how to produce a session
+    # instead of showing an empty table with no guidance.
+    empty = html_index([])
+    assert "No sessions yet" in empty
+    assert "7dtd-apm capture" in empty
+
+    # A session without rendered pages must not link to a nonexistent file.
+    bare_dir = tmp_path / "session_bare"
+    bare_dir.mkdir()
+    (bare_dir / "summary.json").write_text("{}")
+    rows = [
+        {"dir": "session_bare", "path": str(bare_dir), "has_dashboard": False, "has_report": False}
+    ]
+    html_out = html_index(rows)
+    assert ">session_bare</a>" not in html_out  # no link to a nonexistent page
+
+    # Artifact glyphs are links to the artifacts they advertise.
+    rows = [
+        {
+            "dir": "session_full",
+            "path": str(tmp_path / "session_full"),
+            "has_dashboard": True,
+            "has_report": False,
+            "has_flame": True,
+            "has_bridge": True,
+        }
+    ]
+    html_out = html_index(rows)
+    assert 'href="session_full/dashboard.html">session_full</a>' in html_out
+    assert 'href="session_full/cpu/perf/flame.html"' in html_out
+    assert 'href="session_full/csharp_bridge.md"' in html_out
+
+
 # --- golden report -------------------------------------------------------------
 
 

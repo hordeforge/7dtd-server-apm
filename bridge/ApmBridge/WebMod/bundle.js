@@ -88,11 +88,13 @@
         const lastPoint = (_a = pts.split(" ").pop()) !== null && _a !== void 0 ? _a : "";
         const [lastX, lastY] = lastPoint.split(",");
         const gradId = `apm-grad-${color.slice(1)}`;
-        return React.createElement("svg", { className: "apm-spark", width: w, height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none" }, React.createElement("defs", null, React.createElement("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 }, React.createElement("stop", { offset: "0%", stopColor: color, stopOpacity: 0.35 }), React.createElement("stop", { offset: "100%", stopColor: color, stopOpacity: 0.02 }))), React.createElement("polygon", { points: `0,${h} ${pts} ${w},${h}`, fill: `url(#${gradId})` }), React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 1.5 }), React.createElement("circle", { cx: lastX, cy: lastY, r: 2, fill: color }));
+        // Decorative: the enclosing trend cell prints the current value as text.
+        return React.createElement("svg", { className: "apm-spark", width: w, height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", "aria-hidden": true }, React.createElement("defs", null, React.createElement("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 }, React.createElement("stop", { offset: "0%", stopColor: color, stopOpacity: 0.35 }), React.createElement("stop", { offset: "100%", stopColor: color, stopOpacity: 0.02 }))), React.createElement("polygon", { points: `0,${h} ${pts} ${w},${h}`, fill: `url(#${gradId})` }), React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 1.5 }), React.createElement("circle", { cx: lastX, cy: lastY, r: 2, fill: color }));
     }
     function budgetBar(React, frac, cls) {
         const pct = Math.max(0, Math.min(1, frac)) * 100;
-        return React.createElement("div", { className: "apm-bar" }, React.createElement("div", { className: `apm-bar-fill ${cls}`, style: { width: `${pct.toFixed(1)}%` } }));
+        // Decorative: the adjacent .apm-budget-pct span prints the percentage.
+        return React.createElement("div", { className: "apm-bar", "aria-hidden": true }, React.createElement("div", { className: `apm-bar-fill ${cls}`, style: { width: `${pct.toFixed(1)}%` } }));
     }
     // The dashboard HTTP wrapper may hand us the axios response, the {data: ...}
     // envelope, or the bare payload; accept all three.
@@ -146,19 +148,45 @@
     }
     function renderAuthError(h, title, status, authMessage, unavailablePrefix) {
         const msg = status === 403 ? authMessage : `${unavailablePrefix} (HTTP ${status !== null && status !== void 0 ? status : "error"}).`;
-        return h("div", { className: "seven-dtd-apm" }, h("h2", null, title), h("span", { className: "apm-pill apm-bad" }, "AUTH REQUIRED"), h("p", null, msg), h("button", { className: "apm-btn", onClick: () => { location.href = "/"; } }, "Log in"));
+        // The pill must match the message: a network error or 500 is not an auth
+        // problem, and telling the user to log in would send them in circles.
+        const pill = status === 403 ? "AUTH REQUIRED" : "UNAVAILABLE";
+        return h("div", { className: "seven-dtd-apm" }, h("h2", null, title), h("span", { className: "apm-pill apm-bad" }, pill), h("p", null, msg), h("button", { type: "button", className: "apm-btn", onClick: () => { location.href = "/"; } }, "Log in"));
     }
     function renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update) {
-        return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), h("button", { className: "apm-btn", onClick: toggleFreeze }, frozen ? "▶ Resume" : "⏸ Freeze"), h("button", { className: "apm-btn", onClick: copyJson }, "⧉ Copy JSON"), h("span", { className: "apm-window" }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
+        return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), 
+        // The leading glyphs are decorative; the accessible name is the word only.
+        h("button", { type: "button", className: "apm-btn", onClick: toggleFreeze }, h("span", { "aria-hidden": true }, frozen ? "▶ " : "⏸ "), frozen ? "Resume" : "Freeze"), h("button", { type: "button", className: "apm-btn", onClick: copyJson }, h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"), h("span", { className: "apm-window" }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
     }
-    function perfToggleLabel(perfBusy, perfEnabled) {
+    // Two-step confirm for disruptive buttons (same pattern as the Efficiency
+    // panel's Apply): the first click arms the button, the second fires it, and
+    // arming expires so a stale armed state cannot surprise anyone later.
+    const ARMED_WINDOW_MS = 4000;
+    function perfToggleLabel(perfBusy, perfEnabled, perfArmed = false) {
         if (perfBusy) {
             return "restarting server…";
         }
+        if (perfArmed) {
+            return `Confirm ${perfEnabled ? "disable" : "enable"}?`;
+        }
         return perfEnabled ? "Disable (restarts server)" : "Enable (restarts server)";
     }
-    function renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, togglePerf) {
-        return h("div", { className: "apm-perf" }, h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"), h("span", { className: `apm-pill ${perfEnabled ? "apm-ok" : "apm-warn"}` }, perfEnabled ? "ENABLED" : "DISABLED"), h("button", { className: "apm-btn", disabled: perfBusy || !perfAvailable, onClick: togglePerf }, perfToggleLabel(perfBusy, perfEnabled)), h("span", { className: "apm-window" }, "flips the config, restarts the server (~1-2 min)"));
+    function armToggle(armed, setArmed, fire) {
+        if (armed) {
+            setArmed(false);
+            fire();
+            return;
+        }
+        setArmed(true);
+        setTimeout(() => setArmed(false), ARMED_WINDOW_MS);
+    }
+    function renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf) {
+        return h("div", { className: "apm-perf" }, h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"), h("span", { className: `apm-pill ${perfEnabled ? "apm-ok" : "apm-warn"}` }, perfEnabled ? "ENABLED" : "DISABLED"), h("button", {
+            type: "button", className: "apm-btn", disabled: perfBusy || !perfAvailable, onClick: togglePerf,
+            "aria-label": perfArmed && !perfBusy
+                ? `Confirm ${perfEnabled ? "disable" : "enable"} now and restart the server`
+                : undefined
+        }, perfToggleLabel(perfBusy, perfEnabled, perfArmed)), h("span", { className: "apm-window" }, "flips the config, restarts the server (~1-2 min)"));
     }
     function trendSeriesOf(H) {
         return [
@@ -242,7 +270,7 @@
     function trendLegend(h, series, hoverIdx, secondsPerSample) {
         const idx = hoverIdx >= 0 ? hoverIdx : series[0].values.length - 1;
         const ago = Math.round((series[0].values.length - 1 - idx) * secondsPerSample);
-        return h("div", { className: "apm-legend" }, series.map((s) => h("span", { key: s.key, className: "apm-legend-chip" }, h("span", { className: "apm-legend-swatch", style: { background: s.color } }), h("span", null, `${s.label} `), h("strong", { className: "apm-legend-value" }, s.format(s.values[idx])))), h("span", { className: "apm-axis-label" }, hoverIdx >= 0 ? `${ago}s ago` : "live"));
+        return h("div", { className: "apm-legend" }, series.map((s) => h("span", { key: s.key, className: "apm-legend-chip" }, h("span", { className: "apm-legend-swatch", style: { background: s.color }, "aria-hidden": true }), h("span", null, `${s.label} `), h("strong", { className: "apm-legend-value" }, s.format(s.values[idx])))), h("span", { className: "apm-axis-label" }, hoverIdx >= 0 ? `${ago}s ago` : "live"));
     }
     function renderTrendsChart(h, React, H) {
         const [hoverIdx, setHoverIdx] = React.useState(-1);
@@ -268,7 +296,14 @@
             const idx = Math.round((e.clientX - rect.left - padLeft) / step);
             setHoverIdx(Math.max(0, Math.min(n - 1, idx)));
         };
-        return h("div", { className: "apm-chart apm-trends" }, h("svg", { width, height, viewBox: `0 0 ${width} ${height}`, onMouseMove: onMove, onMouseLeave: () => setHoverIdx(-1) }, trendGrid(h, width, padLeft, padTop, innerH, max, yOf), h("g", null, series.map((s) => trendSeriesSvg(h, s, innerW, innerH, max, yOf, hoverIdx))), crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null, h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * 2)}s ago`), h("text", { className: "apm-axis-label", x: width - 4, y: height - 4, textAnchor: "end" }, "now")), trendLegend(h, series, hoverIdx, 2));
+        return h("div", { className: "apm-chart apm-trends" }, h("svg", {
+            width, height, viewBox: `0 0 ${width} ${height}`, onMouseMove: onMove,
+            onMouseLeave: () => setHoverIdx(-1),
+            role: "img",
+            // The hover crosshair is pointer-driven; keyboard and screen-reader
+            // users get the series values from the text legend below the chart.
+            "aria-label": `Line chart: TPS and gmUpdate ms over the last ${Math.round(n * 2)} seconds; latest values are listed in the legend below.`
+        }, trendGrid(h, width, padLeft, padTop, innerH, max, yOf), h("g", null, series.map((s) => trendSeriesSvg(h, s, innerW, innerH, max, yOf, hoverIdx))), crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null, h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * 2)}s ago`), h("text", { className: "apm-axis-label", x: width - 4, y: height - 4, textAnchor: "end" }, "now")), trendLegend(h, series, hoverIdx, 2));
     }
     function renderBudgetGauge(h, update) {
         const width = 230;
@@ -278,7 +313,10 @@
         const r = 92;
         const avg = num(update.serverTickIntervalAvgMs);
         const frac = Math.min(1, avg / TICK_BUDGET_MS);
-        return h("div", { className: "apm-chart apm-gauge" }, h("div", { className: "apm-gauge-title" }, "Tick vs budget"), h("svg", { width, height, viewBox: `0 0 ${width} ${height}` }, h("path", { d: arcPath(cx, cy, r, Math.PI, 0), fill: "none", stroke: "#1d2631", strokeWidth: 14, strokeLinecap: "round" }), frac > 0
+        return h("div", { className: "apm-chart apm-gauge" }, h("div", { className: "apm-gauge-title" }, "Tick vs budget"), h("svg", {
+            width, height, viewBox: `0 0 ${width} ${height}`, role: "img",
+            "aria-label": `Average tick ${fx(avg, 1)} ms of the ${TICK_BUDGET_MS} ms budget (${Math.round(frac * 100)}% used).`
+        }, h("path", { d: arcPath(cx, cy, r, Math.PI, 0), fill: "none", stroke: "#1d2631", strokeWidth: 14, strokeLinecap: "round" }), frac > 0
             ? h("path", { d: arcPath(cx, cy, r, Math.PI, Math.PI - frac * Math.PI), fill: "none", stroke: gaugeColor(frac), strokeWidth: 14, strokeLinecap: "round" })
             : null, h("text", { x: cx, y: cy - 30, textAnchor: "middle", className: "apm-gauge-value" }, `${fx(avg, 1)} ms`), h("text", { x: cx, y: cy - 12, textAnchor: "middle", className: "apm-gauge-label" }, `of ${TICK_BUDGET_MS} ms budget`)));
     }
@@ -291,7 +329,10 @@
         return h("div", { className: "apm-chart apm-topbars" }, h("h3", null, "Top sections by P95"), top.map((s) => {
             const p95 = num(s.p95Ms);
             const frac = p95 / maxP95;
-            return h("div", { key: s.name, className: "apm-topbar-row" }, h("span", { className: "apm-topbar-name" }, s.name), h("div", { className: "apm-topbar-track" }, h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { width: `${Math.round(frac * 100)}%` } })), h("span", { className: "apm-topbar-val" }, `${fx(p95, 2)} ms`));
+            const note = severityNote(p95);
+            return h("div", { key: s.name, className: "apm-topbar-row" }, h("span", { className: "apm-topbar-name" }, s.name), 
+            // Decorative bar; the ms value beside it carries the data.
+            h("div", { className: "apm-topbar-track", "aria-hidden": true }, h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { width: `${Math.round(frac * 100)}%` } })), h("span", { className: "apm-topbar-val" }, `${fx(p95, 2)} ms`, note === null ? null : sr(h, note)));
         }));
     }
     function renderGrid(h, React, g, H, update, gc, world, health) {
@@ -336,28 +377,52 @@
         }
         return "";
     }
+    // Screen-reader-only text (see .apm-visually-hidden in styling.css). Used to
+    // put non-visual words on state that the theme otherwise paints (severity
+    // colors, staged-change ring).
+    function sr(h, text) {
+        return h("span", { className: "apm-visually-hidden" }, text);
+    }
+    // Same thresholds as sectionRowClass/topBarClass; gives the color-coded
+    // severity a text equivalent so it does not ride on color alone.
+    function severityNote(p95Ms) {
+        const p95 = num(p95Ms);
+        if (p95 > 16) {
+            return " (well above tick budget)";
+        }
+        if (p95 > 5) {
+            return " (above tick budget)";
+        }
+        return null;
+    }
     function renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter) {
         const shown = [...sections]
             .filter((s) => filter.length === 0 || strOrEmpty(s.name).toLowerCase().includes(filter.toLowerCase()))
             .sort(bySortKey(sort));
         const th = (label, key) => {
             let marker = "";
+            let sortDir;
             if (sort.key === key) {
                 marker = sort.dir < 0 ? " ▼" : " ▲";
+                sortDir = sort.dir < 0 ? "descending" : "ascending";
             }
-            return h("th", { key: label, className: "apm-sortable", onClick: () => setSortKey(key) }, `${label}${marker}`);
+            // Sort affordance is a real button (keyboard operable); the column state
+            // is exposed to AT via aria-sort on the header cell (WCAG 2.1.1 / 4.1.2).
+            return h("th", { key: label, className: "apm-sortable", scope: "col", "aria-sort": sortDir }, h("button", { type: "button", className: "apm-sort-btn", onClick: () => setSortKey(key) }, `${label}${marker}`));
         };
         return [
             h("div", { className: "apm-sec-head" }, h("h3", null, "Managed sections"), h("input", {
-                className: "apm-filter", type: "text", placeholder: "filter…",
+                className: "apm-filter", type: "search", placeholder: "filter…",
+                "aria-label": "Filter sections by name",
                 value: filter, onChange: (e) => {
                     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the dashboard event target is the filter input the handler is bound to
                     setFilter(e.target.value);
                 }
             })),
-            h("table", { className: "apm-table" }, h("thead", null, h("tr", null, th("Section", "name"), th("Calls", "calls"), th("Avg", "avgMs"), th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"), h("th", { key: "budget" }, "% of 50ms"))), h("tbody", null, shown.map((s) => {
+            h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Managed sections timing"), h("thead", null, h("tr", null, th("Section", "name"), th("Calls", "calls"), th("Avg", "avgMs"), th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"), h("th", { key: "budget", scope: "col" }, "% of 50ms"))), h("tbody", null, shown.map((s) => {
                 const frac = num(s.avgMs) / TICK_BUDGET_MS;
-                return h("tr", { key: s.name, className: sectionRowClass(s) }, h("td", null, `${s.name}${s.deep === true ? " ·deep" : ""}`), h("td", null, num(s.calls)), h("td", null, fx(s.avgMs, 3)), h("td", null, fx(s.p95Ms, 3)), h("td", null, fx(s.p99Ms, 3)), h("td", null, fx(s.maxMs, 3)), h("td", { className: "apm-budget-cell" }, budgetBar(React, frac, budgetBarClass(frac)), h("span", { className: "apm-budget-pct" }, `${fx(frac * 100, 1)}%`)));
+                const note = severityNote(num(s.p95Ms));
+                return h("tr", { key: s.name, className: sectionRowClass(s) }, h("td", null, `${s.name}${s.deep === true ? " ·deep" : ""}`, note === null ? null : sr(h, note)), h("td", null, num(s.calls)), h("td", null, fx(s.avgMs, 3)), h("td", null, fx(s.p95Ms, 3)), h("td", null, fx(s.p99Ms, 3)), h("td", null, fx(s.maxMs, 3)), h("td", { className: "apm-budget-cell" }, budgetBar(React, frac, budgetBarClass(frac)), h("span", { className: "apm-budget-pct" }, `${fx(frac * 100, 1)}%`)));
             }))),
         ];
     }
@@ -368,14 +433,14 @@
         const headers = ["When (UTC)", "gmUpdate ms", "Tick ms", "Players", "Entities"];
         return [
             h("h3", null, "Recent spikes"),
-            h("table", { className: "apm-table" }, h("thead", null, h("tr", null, headers.map((x) => h("th", { key: x }, x)))), h("tbody", null, [...spikes].reverse().slice(0, 12).map((s, i) => h("tr", { key: i }, h("td", null, formatUtc(s.utc)), h("td", null, fx(s.gmUpdateDurationMs, 1)), h("td", null, fx(s.serverTickIntervalMs, 1)), h("td", null, num(objOrEmpty(s.world).players)), h("td", null, num(objOrEmpty(s.world).entities)))))),
+            h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"), h("thead", null, h("tr", null, headers.map((x) => h("th", { key: x, scope: "col" }, x)))), h("tbody", null, [...spikes].reverse().slice(0, 12).map((s, i) => h("tr", { key: i }, h("td", null, formatUtc(s.utc)), h("td", null, fx(s.gmUpdateDurationMs, 1)), h("td", null, fx(s.serverTickIntervalMs, 1)), h("td", null, num(objOrEmpty(s.world).players)), h("td", null, num(objOrEmpty(s.world).entities)))))),
         ];
     }
     function renderTransfersSection(h, transfers) {
         const headers = ["Package", "Count", "MiB", "Last bytes", "Max bytes"];
         return [
             h("h3", null, "Map and chunk transfers"),
-            h("table", { className: "apm-table" }, h("thead", null, h("tr", null, headers.map((x) => h("th", { key: x }, x)))), h("tbody", null, transfers.map((t) => h("tr", { key: t.name }, h("td", null, t.name), h("td", null, num(t.packages)), h("td", null, fx(t.mebibytes, 2)), h("td", null, num(t.lastBytes)), h("td", null, num(t.maxBytes)))))),
+            h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Map and chunk transfers"), h("thead", null, h("tr", null, headers.map((x) => h("th", { key: x, scope: "col" }, x)))), h("tbody", null, transfers.map((t) => h("tr", { key: t.name }, h("td", null, t.name), h("td", null, num(t.packages)), h("td", null, fx(t.mebibytes, 2)), h("td", null, num(t.lastBytes)), h("td", null, num(t.maxBytes)))))),
         ];
     }
     function freezeHandler(opts) {
@@ -393,12 +458,16 @@
             opts.setPerfBusy(false);
         });
     }
-    function copySnapshot(snapshot) {
+    function copySnapshot(snapshot, setCopyStatus) {
         const txt = JSON.stringify(snapshot, null, 2);
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: clipboard requires a secure context; the dashboard may be served over plain http
-        if (navigator.clipboard !== undefined) {
-            void navigator.clipboard.writeText(txt);
+        // Clipboard requires a secure context; the dashboard may be served over
+        // plain http. Either way, say what happened (role=status announces it).
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: clipboard is typed as always-present, but browsers omit it outside secure contexts
+        if (navigator.clipboard === undefined) {
+            setCopyStatus("Copy failed: clipboard is unavailable over plain HTTP.");
+            return;
         }
+        void navigator.clipboard.writeText(txt).then(() => setCopyStatus("Snapshot JSON copied to clipboard."), () => setCopyStatus("Copy failed: the clipboard write was rejected."));
     }
     // Feature-group row for the Efficiency panel. Toggles are staged locally
     // (pending), not applied per click; the Apply button commits them all with a
@@ -406,7 +475,14 @@
     // marker, the description, and the safe/experimental status.
     function renderPerfGroupRow(h, g, on, staged, busy, toggle) {
         const status = strOr(g.status, "safe");
-        return h("div", { key: String(g.name), className: "apm-group" }, h("div", { className: "apm-group-info" }, h("span", { className: "apm-label" }, String(g.name)), h("span", { className: "apm-group-desc" }, strOrEmpty(g.description))), h("div", { className: "apm-group-controls" }, h("span", { className: `apm-status ${status === "experimental" ? "apm-status-exp" : "apm-status-safe"}` }, status), h("span", { className: `apm-pill ${on ? "apm-ok" : "apm-off"}${staged ? " apm-staged" : ""}` }, on ? "ON" : "OFF"), h("button", { className: "apm-btn", disabled: busy, onClick: toggle }, on ? "Turn off" : "Turn on")));
+        const name = String(g.name);
+        return h("div", { key: name, className: "apm-group" }, h("div", { className: "apm-group-info" }, h("span", { className: "apm-label" }, name), h("span", { className: "apm-group-desc" }, strOrEmpty(g.description))), h("div", { className: "apm-group-controls" }, h("span", { className: `apm-status ${status === "experimental" ? "apm-status-exp" : "apm-status-safe"}` }, status), h("span", { className: `apm-pill ${on ? "apm-ok" : "apm-off"}${staged ? " apm-staged" : ""}` }, on ? "ON" : "OFF", staged ? sr(h, " (change staged)") : null), 
+        // The row repeats one visible label per group; include the group name so
+        // the accessible name is unique and self-describing out of context.
+        h("button", {
+            type: "button", className: "apm-btn", disabled: busy, onClick: toggle,
+            "aria-label": `${on ? "Turn off" : "Turn on"} ${name}`
+        }, on ? "Turn off" : "Turn on")));
     }
     function ApmPanel({ React, HTTP, useQuery }) {
         var _a, _b;
@@ -424,11 +500,14 @@
         }, [query.isError]);
         const perfQ = useQuery("apm-perf", () => HTTP.get("/api/perf"), { refetchInterval: 30000, enabled: !authBlocked, retry: false });
         const [perfBusy, setPerfBusy] = React.useState(false);
+        const [perfArmed, setPerfArmed] = React.useState(false);
         const hist = React.useRef({ last: null, tps: [], alloc: [], gm: [], gen2: [], heap: [] });
         const [frozen, setFrozen] = React.useState(false);
         const frozenSnap = React.useRef(null);
         const [filter, setFilter] = React.useState("");
         const [sort, setSort] = React.useState({ key: "p95Ms", dir: -1 });
+        // Copy/freeze feedback for assistive tech (role=status announces changes).
+        const [copyStatus, setCopyStatus] = React.useState("");
         // All hooks above; a failed fetch (e.g. logged-out session or logged-in
         // non-admin) renders a clear state instead of the NO DATA pills, and the
         // queries are paused (authBlocked) so nothing polls into an error storm.
@@ -453,9 +532,13 @@
         const perfEnabled = perf.enabled === true;
         const perfAvailable = perf.available === true;
         const toggleFreeze = () => freezeHandler({ frozen, setFrozen, live, frozenSnap });
-        const togglePerf = () => togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled });
+        // Restarting the server kicks every player for a couple of minutes, so the
+        // toggle needs one explicit confirm click before it fires.
+        const togglePerf = () => armToggle(perfArmed, setPerfArmed, () => {
+            togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled });
+        });
         const setSortKey = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
-        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot), gc, update), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, togglePerf), renderTrendsChart(h, React, hist.current), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
+        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf), renderTrendsChart(h, React, hist.current), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
     }
     // Staged-apply helpers for the Efficiency panel: feature-group toggles are
     // staged locally (pending), not applied per click; the Apply button commits
@@ -499,6 +582,16 @@
             opts.setBusy(false);
         });
     }
+    // Feature-group list for the Efficiency panel: heading, staging hint, any
+    // apply error, then one row per group.
+    function renderFeatureGroups(h, groups, pending, busy, perfError, onStage) {
+        return [
+            h("h3", null, "Feature groups"),
+            h("p", { className: "apm-window" }, `${groups.length} toggles · staged here, applied with one restart`),
+            perfError === "" ? null : h("p", { className: "apm-error", role: "alert" }, perfError),
+            h("div", { className: "apm-groups" }, groups.map((g) => renderPerfGroupRow(h, g, effectiveOn(pending, g), hasPending(pending, String(g.name)), busy, () => onStage(g)))),
+        ];
+    }
     // Focused panel for the EfficientServer perf mod toggle (its own top-level
     // menu entry alongside APM). Same /api/perf admin endpoint.
     function EfficiencyPanel({ React, HTTP, useQuery }) {
@@ -522,23 +615,27 @@
         const perf = unwrapSnap(perfQ.data);
         const enabled = perf.enabled === true;
         const groups = listOrEmpty(perf.groups);
-        const toggle = () => togglePerfHandler({ HTTP, perfBusy: busy, perfAvailable: true, setPerfBusy: setBusy, perfEnabled: enabled });
+        // Same two-step confirm as the APM panel: flipping the whole mod restarts
+        // the server, so a single stray click must not do it.
+        const [toggleArmed, setToggleArmed] = React.useState(false);
+        const toggle = () => armToggle(toggleArmed, setToggleArmed, () => {
+            togglePerfHandler({ HTTP, perfBusy: busy, perfAvailable: true, setPerfBusy: setBusy, perfEnabled: enabled });
+        });
         const pendingCount = Object.keys(pending).length;
         const apply = () => applyPerfGroups({ HTTP, busy, pending, pendingCount, setArmedApply, setPending, setBusy, setPerfError });
-        return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, h("h2", null, "Efficiency"), h("span", { className: `apm-pill ${enabled ? "apm-ok" : "apm-warn"}` }, enabled ? "ENABLED" : "DISABLED")), h("div", { className: "apm-perf" }, h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"), h("button", { className: "apm-btn", disabled: busy, onClick: toggle }, perfToggleLabel(busy, enabled)), h("span", { className: "apm-window" }, "flips the whole mod, restarts the server (~1-2 min)")), h("h3", null, "Feature groups"), h("p", { className: "apm-window" }, `${groups.length} toggles · staged here, applied with one restart`), perfError === "" ? null : h("p", { className: "apm-error" }, perfError), h("div", { className: "apm-groups" }, groups.map((g) => renderPerfGroupRow(h, g, effectiveOn(pending, g), hasPending(pending, String(g.name)), busy, () => stageToggle({ pending, setPending, setPerfError, group: g })))), h("div", { className: "apm-perf" }, h("button", {
+        return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, h("h2", null, "Efficiency"), h("span", { className: `apm-pill ${enabled ? "apm-ok" : "apm-warn"}` }, enabled ? "ENABLED" : "DISABLED")), h("div", { className: "apm-perf" }, h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"), h("button", {
+            type: "button", className: "apm-btn", disabled: busy, onClick: toggle,
+            "aria-label": toggleArmed && !busy
+                ? `Confirm ${enabled ? "disable" : "enable"} now and restart the server`
+                : undefined
+        }, perfToggleLabel(busy, enabled, toggleArmed)), h("span", { className: "apm-window" }, "flips the whole mod, restarts the server (~1-2 min)")), ...renderFeatureGroups(h, groups, pending, busy, perfError, (g) => stageToggle({ pending, setPending, setPerfError, group: g })), h("div", { className: "apm-perf" }, h("button", {
+            type: "button",
             className: `apm-btn apm-primary${armedApply ? " apm-armed" : ""}`,
             disabled: busy || pendingCount === 0,
-            onClick: () => {
-                if (armedApply) {
-                    apply();
-                }
-                else {
-                    setArmedApply(true);
-                    setTimeout(() => setArmedApply(false), 4000);
-                }
-            }
+            "aria-label": armedApply ? `Confirm apply of ${pendingCount} change${pendingCount === 1 ? "" : "s"} and restart now` : undefined,
+            onClick: () => armToggle(armedApply, setArmedApply, apply)
         }, armedApply ? "Confirm apply?" : `Apply ${pendingCount} change${pendingCount === 1 ? "" : "s"} & restart`), pendingCount > 0
-            ? h("button", { className: "apm-btn", disabled: busy, onClick: () => setPending({}) }, "Discard")
+            ? h("button", { type: "button", className: "apm-btn", disabled: busy, onClick: () => setPending({}) }, "Discard")
             : null, h("span", { className: "apm-window" }, "stages changes · one restart applies them all")));
     }
     // The stock dashboard renders every webmod `routes` entry as a direct sidebar
