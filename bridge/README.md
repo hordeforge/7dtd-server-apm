@@ -20,7 +20,9 @@ server (container restart policy reloads it). The edited path defaults to
 `/mods/EfficientServer/Config/efficientserver.json` (bridge config
 `PerfModConfigPath`); the server mounts `mods/` rw so the toggle can write it.
 The panel JS is TypeScript (`WebMod/bundle.ts`), compiled to `bundle.js` by
-`tsc` inside `make bridge-build`; do not hand-edit the generated bundle.
+the version-pinned `npx` TypeScript path inside `make bridge-build`; do not
+hand-edit the generated bundle. Node.js/npm is required, but no global `tsc`
+installation is needed.
 
 Map delivery telemetry separates `ChunkManager.SendChunksToClients`, chunk and
 map serialization, initial world-folder transfer, connection serialization, and
