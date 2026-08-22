@@ -14,6 +14,10 @@ namespace DtdApmBridge
         public bool LogSpikes = true;
         public int MaxSpikeRecords = 128;
         public int DeepSampleRate = 16;
+        // EfficientServer config the /api/perf toggle edits (ops switch for the
+        // sibling perf mod; the path is the bind-mounted host copy, which the
+        // server entrypoint re-syncs into the game Mods on every start).
+        public string PerfModConfigPath = "/mods/EfficientServer/Config/efficientserver.json";
 
         public static BridgeConfig Load(string path)
         {

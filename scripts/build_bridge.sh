@@ -26,6 +26,10 @@ mkdir -p "$OUT/Config"
 mkdir -p "$OUT/WebMod"
 dotnet build "$ROOT/bridge/ApmBridge/ApmBridge.csproj" -c Release \
   -p:GameManagedDir="$MANAGED" -p:HarmonyPath="$HARMONY" -p:BridgeOutput="$OUT/"
+# WebMod: compile the TypeScript source (WebMod/bundle.ts) to bundle.js, the
+# exact path the dashboard loads (/webmods/7dtd-apm-bridge/bundle.js).
+command -v tsc >/dev/null 2>&1 || { echo "ERROR: tsc (TypeScript) not found; cannot build WebMod" >&2; exit 1; }
+tsc -p "$ROOT/bridge/ApmBridge/WebMod/tsconfig.json"
 cp "$ROOT/bridge/ApmBridge/ModInfo.xml" "$OUT/ModInfo.xml"
 cp "$ROOT/bridge/ApmBridge/apmbridge.json" "$OUT/Config/apmbridge.json"
 cp "$ROOT/bridge/ApmBridge/WebMod/bundle.js" "$OUT/WebMod/bundle.js"

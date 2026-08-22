@@ -1,0 +1,3 @@
+# vnu (Nu HTML Checker) message filters for scripts/lint-html.sh, one regex per
+# line (full-match semantics). Deliberate non-standard constructs get a
+# documented filter here; everything else is an error and fails the gate.

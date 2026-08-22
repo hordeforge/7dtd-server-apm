@@ -40,3 +40,6 @@
 .apm-cell.apm-bad strong { color: #ff7070; }
 .apm-warn-row td:first-child { box-shadow: inset 3px 0 0 #e6bd3a; }
 .apm-bad-row td:first-child { box-shadow: inset 3px 0 0 #ff7070; }
+
+.apm-perf { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; margin: .75rem 0; padding: .6rem .8rem; border: 1px solid rgba(127,127,127,.3); border-radius: 6px; background: rgba(127,127,127,.08); }
+.apm-perf .apm-btn:disabled { opacity: .5; cursor: default; }

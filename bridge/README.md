@@ -5,12 +5,22 @@ capture remains supported without it. The bridge adds managed subsystem timings,
 world/runtime gauges, spike records, capability reporting, periodic atomic JSON,
 and the `apm` console/telnet command.
 
-It is also a native V3 WebDashboard plugin. `WebMod/` adds a **7DTD APM**
-settings panel and authenticated `GET /api/apm` exposes the same bounded
+It is also a native V3 WebDashboard plugin. `WebMod/` adds a direct **7DTD APM**
+sidebar entry (a module route, not a Settings tab) and authenticated
+`GET /api/apm` exposes the same bounded
 snapshot used by console capture. The endpoint defaults to administrator
-permission level 0. Enable `WebDashboardEnabled`, browse to its configured port
-(8080 in the loadgen profile), and sign in normally; the mod opens no separate
-web listener.
+permission level 0. Enable `WebDashboardEnabled`, browse to its configured port(8080 in the loadgen profile), and sign in normally; the mod opens no separate
+web listener. The menu entry is registered only when the web session cookie is
+present (the dashboard reloads after login/logout), so it is hidden while
+logged out; a logged-in non-admin sees the entry and an "admin access
+required" state from the panel, since the endpoint stays at permission 0.
+The panel also hosts an admin switch for the sibling EfficientServer perf mod:
+`GET/POST /api/perf` reads/flips its config `Enabled` flag and restarts the
+server (container restart policy reloads it). The edited path defaults to
+`/mods/EfficientServer/Config/efficientserver.json` (bridge config
+`PerfModConfigPath`); the server mounts `mods/` rw so the toggle can write it.
+The panel JS is TypeScript (`WebMod/bundle.ts`), compiled to `bundle.js` by
+`tsc` inside `make bridge-build`; do not hand-edit the generated bundle.
 
 Map delivery telemetry separates `ChunkManager.SendChunksToClients`, chunk and
 map serialization, initial world-folder transfer, connection serialization, and

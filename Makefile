@@ -2,13 +2,15 @@ ROOT := $(CURDIR)
 DS ?= $(HOME)/.local/share/Steam/steamapps/common/7 Days to Die Dedicated Server
 UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --project $(ROOT)
 
-.PHONY: test lint lint-shell check-bt format format-check typecheck check clean bridge-build bridge-install bridge-uninstall
+.PHONY: test lint lint-shell check-bt format format-check typecheck check lint-html clean bridge-build bridge-install bridge-uninstall
 test:
 	$(UV) pytest
 lint:
 	$(UV) ruff check tools
 lint-shell:
 	shellcheck scripts/*.sh tools/apm/*.sh tools/apm/collectors/*.sh tools/host_profiler/*.sh
+lint-html:
+	./scripts/lint-html.sh
 check-bt:
 	./scripts/check_bt.sh
 format:
@@ -17,7 +19,7 @@ format-check:
 	$(UV) ruff format --check tools
 typecheck:
 	$(UV) mypy
-check: lint lint-shell format-check typecheck test check-bt
+check: lint lint-shell lint-html format-check typecheck test check-bt
 # CI variant: GitHub Actions runners cannot validate bpftrace probes (no host
 # kernel access), so check-bt stays a local gate.
 check-ci: lint lint-shell format-check typecheck test
