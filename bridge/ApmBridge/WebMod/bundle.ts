@@ -74,14 +74,14 @@ function objOrEmpty(candidate: unknown): Record<string, unknown> {
   if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
     return {};
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; the guard above proves the runtime value is a plain object
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: the guard above proves the runtime value is a plain object
   return candidate as Record<string, unknown>;
 }
 function listOrEmpty<T>(candidate: unknown): Array<T> {
   if (!Array.isArray(candidate)) {
     return [];
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; Array.isArray is the runtime proof for the element cast
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: Array.isArray is the runtime proof for the element cast
   return candidate as Array<T>;
 }
 function strOrEmpty(candidate: unknown): string {
@@ -90,6 +90,10 @@ function strOrEmpty(candidate: unknown): string {
   }
   // oxlint-disable-next-line typescript/no-base-to-string -- deliberate: payload values are JSON primitives (numbers, strings); String() renders them into labels
   return String(candidate);
+}
+function strOr(candidate: unknown, fallback: string): string {
+  const s = strOrEmpty(candidate);
+  return s === "" ? fallback : s;
 }
 
 type Grade = {
@@ -167,17 +171,17 @@ function unwrapSnap(o: unknown): Record<string, unknown> {
   if (typeof o !== "object" || o === null) {
     return {};
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
   const record = o as Record<string, unknown>;
   const { data } = record;
   if (typeof data !== "object" || data === null) {
     return record;
   }
-  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
   const innerRecord = data as Record<string, unknown>;
   const inner = innerRecord.data;
   if (typeof inner === "object" && inner !== null) {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
     return inner as Record<string, unknown>;
   }
   if (innerRecord.schema !== undefined || innerRecord.update !== undefined || innerRecord.enabled !== undefined) {
@@ -398,7 +402,7 @@ function renderTrendsChart(h: CreateElement, React: PanelProps["React"], H: Spar
   const yOf = (v: number): number => padTop + innerH - (v / max) * innerH;
   const crossX = hoverIdx >= 0 ? padLeft + hoverIdx * step : -1;
   const onMove = (e: MouseEvent): void => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: the chart svg is the handler target
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the chart svg is the handler target
     const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
     const idx = Math.round((e.clientX - rect.left - padLeft) / step);
     setHoverIdx(Math.max(0, Math.min(n - 1, idx)));
@@ -477,7 +481,9 @@ function renderGrid(h: CreateElement, React: PanelProps["React"], g: Grade, H: S
 type SortState = { key: string; dir: number };
 function bySortKey(sort: SortState): (a: SectionStat, b: SectionStat) => number {
   return (a, b): number => {
+    // SAFETY: section rows come from the untyped JSON payload; sort.key is a known column of the same rows (bySortKey only keys on section columns)
     const av = sort.key === "name" ? a.name : num((a as Record<string, unknown>)[sort.key]);
+    // SAFETY: same keyed access as av, on the other row
     const bv = sort.key === "name" ? b.name : num((b as Record<string, unknown>)[sort.key]);
     let cmp = 0;
     if (av < bv) {
@@ -535,7 +541,7 @@ function renderSectionsSection(
       h("input", {
         className: "apm-filter", type: "text", placeholder: "filter…",
         value: filter, onChange: (e: Event): void => {
-          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: the dashboard event target is the filter input the handler is bound to
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the dashboard event target is the filter input the handler is bound to
           setFilter((e.target as HTMLInputElement).value);
         }
       })),
@@ -631,6 +637,22 @@ function copySnapshot(snapshot: Record<string, unknown>): void {
   }
 }
 
+// Feature-group row for the Efficiency panel. Toggles are staged locally
+// (pending), not applied per click; the Apply button commits them all with a
+// single restart. The row shows the effective (staged) state, a changed
+// marker, the description, and the safe/experimental status.
+function renderPerfGroupRow(h: CreateElement, g: Record<string, unknown>, on: boolean, staged: boolean, busy: boolean, toggle: () => void): unknown {
+  const status = strOr(g.status, "safe");
+  return h("div", { key: String(g.name), className: "apm-group" },
+    h("div", { className: "apm-group-info" },
+      h("span", { className: "apm-label" }, String(g.name)),
+      h("span", { className: "apm-group-desc" }, strOrEmpty(g.description))),
+    h("div", { className: "apm-group-controls" },
+      h("span", { className: `apm-status ${status === "experimental" ? "apm-status-exp" : "apm-status-safe"}` }, status),
+      h("span", { className: `apm-pill ${on ? "apm-ok" : "apm-off"}${staged ? " apm-staged" : ""}` }, on ? "ON" : "OFF"),
+      h("button", { className: "apm-btn", disabled: busy, onClick: toggle }, on ? "Turn off" : "Turn on")));
+}
+
 function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const h = React.createElement;
 
@@ -699,18 +721,80 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
     renderTransfersSection(h, transfers));
 }
 
+// Staged-apply helpers for the Efficiency panel: feature-group toggles are
+// staged locally (pending), not applied per click; the Apply button commits
+// them all with a single restart.
+function hasPending(pending: Record<string, boolean>, name: string): boolean {
+  return name in pending;
+}
+
+function effectiveOn(pending: Record<string, boolean>, g: Record<string, unknown>): boolean {
+  const name = String(g.name);
+  return hasPending(pending, name) ? pending[name] : g.enabled === true;
+}
+
+function stageToggle(opts: {
+  pending: Record<string, boolean>;
+  setPending: (v: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => void;
+  setPerfError: (v: string) => void;
+  group: Record<string, unknown>;
+}): void {
+  const name = String(opts.group.name);
+  const current = opts.group.enabled === true;
+  const next = !effectiveOn(opts.pending, opts.group);
+  opts.setPerfError("");
+  opts.setPending((p): Record<string, boolean> => {
+    const n = { ...p };
+    if (next === current) {
+      delete n[name];
+    } else {
+      n[name] = next;
+    }
+    return n;
+  });
+}
+
+function applyPerfGroups(opts: {
+  HTTP: PanelProps["HTTP"];
+  busy: boolean;
+  pending: Record<string, boolean>;
+  pendingCount: number;
+  setArmedApply: (v: boolean) => void;
+  setPending: (v: Record<string, boolean>) => void;
+  setBusy: (v: boolean) => void;
+  setPerfError: (v: string) => void;
+}): void {
+  if (opts.busy || opts.pendingCount === 0) {
+    return;
+  }
+  opts.setArmedApply(false);
+  opts.setBusy(true);
+  void opts.HTTP.post("/api/perf", { groups: opts.pending })
+    .then((): void => {
+      opts.setPending({});
+      opts.setBusy(false);
+    })
+    .catch((error: unknown): void => {
+      opts.setPerfError(error instanceof Error ? error.message : String(error));
+      opts.setBusy(false);
+    });
+}
+
 // Focused panel for the EfficientServer perf mod toggle (its own top-level
 // menu entry alongside APM). Same /api/perf admin endpoint.
 function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const h = React.createElement;
   const [blocked, setBlocked] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [pending, setPending] = React.useState<Record<string, boolean>>({});
+  const [armedApply, setArmedApply] = React.useState(false);
+  const [perfError, setPerfError] = React.useState("");
   const perfQ = useQuery("apm-perf-efficiency", () => HTTP.get("/api/perf"), { refetchInterval: 30_000, enabled: !blocked, retry: false });
   React.useEffect((): void => {
     if (perfQ.isError === true) {
       setBlocked(true);
     }
   }, [perfQ.isError]);
-  const [busy, setBusy] = React.useState(false);
 
   if (perfQ.isError === true) {
     const status = perfQ.error?.response?.status;
@@ -721,7 +805,10 @@ function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): unknown {
 
   const perf = unwrapSnap(perfQ.data);
   const enabled = perf.enabled === true;
+  const groups = listOrEmpty<Record<string, unknown>>(perf.groups);
   const toggle = (): void => togglePerfHandler({ HTTP, perfBusy: busy, perfAvailable: true, setPerfBusy: setBusy, perfEnabled: enabled });
+  const pendingCount = Object.keys(pending).length;
+  const apply = (): void => applyPerfGroups({ HTTP, busy, pending, pendingCount, setArmedApply, setPending, setBusy, setPerfError });
 
   return h("div", { className: "seven-dtd-apm" },
     h("div", { className: "apm-head" },
@@ -731,7 +818,31 @@ function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): unknown {
       h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"),
       h("button", { className: "apm-btn", disabled: busy, onClick: toggle },
         perfToggleLabel(busy, enabled)),
-      h("span", { className: "apm-window" }, "flips the config, restarts the server (~1-2 min)")));
+      h("span", { className: "apm-window" }, "flips the whole mod, restarts the server (~1-2 min)")),
+
+    h("h3", null, "Feature groups"),
+    h("p", { className: "apm-window" }, `${groups.length} toggles · staged here, applied with one restart`),
+    perfError === "" ? null : h("p", { className: "apm-error" }, perfError),
+    h("div", { className: "apm-groups" },
+      groups.map((g: Record<string, unknown>): unknown =>
+        renderPerfGroupRow(h, g, effectiveOn(pending, g), hasPending(pending, String(g.name)), busy, (): void => stageToggle({ pending, setPending, setPerfError, group: g })))),
+    h("div", { className: "apm-perf" },
+      h("button", {
+        className: `apm-btn apm-primary${armedApply ? " apm-armed" : ""}`,
+        disabled: busy || pendingCount === 0,
+        onClick: (): void => {
+          if (armedApply) {
+            apply();
+          } else {
+            setArmedApply(true);
+            setTimeout((): void => setArmedApply(false), 4000);
+          }
+        }
+      }, armedApply ? "Confirm apply?" : `Apply ${pendingCount} change${pendingCount === 1 ? "" : "s"} & restart`),
+      pendingCount > 0
+        ? h("button", { className: "apm-btn", disabled: busy, onClick: (): void => setPending({}) }, "Discard")
+        : null,
+      h("span", { className: "apm-window" }, "stages changes · one restart applies them all")));
 }
 
 // The stock dashboard renders every webmod `routes` entry as a direct sidebar

@@ -23,6 +23,8 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 oxlint_version="${OXLINT_VERSION:-1.79.0}"
 oxlint_standards_version="${OXLINT_STANDARDS_VERSION:-0.8.1}"
 oxlint_tsgolint_version="${OXLINT_TSGOLINT_VERSION:-7.0.2001}"
+oxlint_plugins_version="${OXLINT_PLUGINS_VERSION:-1.78.0}"
+anti_slop_sha="${ANTI_SLOP_SHA:-6d538555cb151d4121ed51a27db81890eacf8ae9}"
 tsc_version="${TSC_VERSION:-5.9.3}"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-apm/oxlint-standards"
 webmod_dir="$root/bridge/ApmBridge/WebMod"
@@ -30,18 +32,27 @@ webmod_dir="$root/bridge/ApmBridge/WebMod"
 # 1. Type check (per WebMod/tsconfig.json, strict).
 npx --yes -p "typescript@$tsc_version" tsc -p "$webmod_dir/tsconfig.json" --noEmit
 
-# 2. Lint the source with oxlint. The @rikalabs plugin and oxlint-tsgolint
-#    (the type-aware backend, see options.typeAware in .oxlintrc.jsonc) are
-#    fetched into the cache (no-op when the pinned versions are already
-#    present) and oxlint runs next to them because jsPlugins resolve relative
-#    to the config file's directory; a copy of the config is placed there each
-#    run. Both packages are installed in one npm invocation: a later separate
-#    --no-save install would prune the other.
+# 2. Lint the source with oxlint. The @rikalabs plugin, the vendored
+#    dmmulroy/anti-slop plugin source (pinned by ANTI_SLOP_SHA; the project is
+#    vendored source, not an npm package), and oxlint-tsgolint (the type-aware
+#    backend, see options.typeAware in .oxlintrc.jsonc) are fetched into the
+#    cache (no-op when the pinned versions are already present) and oxlint runs
+#    next to them because jsPlugins resolve relative to the config file's
+#    directory; a copy of the config is placed there each run. All npm packages
+#    are installed in one invocation: a later separate --no-save install would
+#    prune the others. @oxlint/plugins is the plugin API the anti-slop source
+#    imports; without it the plugin cannot load.
 mkdir -p "$cache_dir"
+if [ ! -d "$cache_dir/anti-slop-src" ]; then
+  curl -fsSL "https://github.com/dmmulroy/anti-slop/archive/$anti_slop_sha.tar.gz" -o "$cache_dir/anti-slop.tar.gz"
+  mkdir -p "$cache_dir/anti-slop-src"
+  tar xzf "$cache_dir/anti-slop.tar.gz" -C "$cache_dir/anti-slop-src" --strip-components=2 "anti-slop-$anti_slop_sha/src"
+fi
 npm install --prefix "$cache_dir" --no-audit --no-fund --no-save --no-package-lock \
   "@rikalabs/oxlint-standards@$oxlint_standards_version" \
-  "oxlint-tsgolint@$oxlint_tsgolint_version" >/dev/null 2>&1 || {
-  echo "7dtd-apm: lint-webui: could not install @rikalabs/oxlint-standards@$oxlint_standards_version + oxlint-tsgolint@$oxlint_tsgolint_version into $cache_dir (offline?)" >&2
+  "oxlint-tsgolint@$oxlint_tsgolint_version" \
+  "@oxlint/plugins@$oxlint_plugins_version" >/dev/null 2>&1 || {
+  echo "7dtd-apm: lint-webui: could not install @rikalabs/oxlint-standards@$oxlint_standards_version + oxlint-tsgolint@$oxlint_tsgolint_version + @oxlint/plugins@$oxlint_plugins_version into $cache_dir (offline?)" >&2
   exit 1
 }
 cp "$root/.oxlintrc.jsonc" "$cache_dir/oxlintrc.jsonc"

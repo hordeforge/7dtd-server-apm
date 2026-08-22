@@ -13,8 +13,11 @@
   // extended 2026-08-22 with the typescript/unicorn rules the source passes
   // (array-type, consistent-type-definitions, explicit-function-return-type,
   // prefer-number-properties, prefer-global-this, prefer-spread,
-  // explicit-length-check, numeric-separators-style, ...). Warnings and errors
-  // are both enforced because scripts/lint-webui.sh runs with --deny-warnings.
+  // explicit-length-check, numeric-separators-style, ...), plus the
+  // dmmulroy/anti-slop plugin rules (vendored source at pinned SHA, fetched by
+  // scripts/lint-webui.sh; the 2026-08-22 anti-slop additions). Warnings and
+  // errors are both enforced because scripts/lint-webui.sh runs with
+  // --deny-warnings.
   //
   // Thresholds match the strict preset: max-lines-per-function 60 (ApmPanel
   // and the render helpers are split to fit), max-classes-per-file 1,
@@ -53,7 +56,10 @@
     "suspicious": "error"
   },
   "plugins": ["typescript", "unicorn"],
-  "jsPlugins": ["@rikalabs/oxlint-standards/plugin"],
+  "jsPlugins": [
+    "@rikalabs/oxlint-standards/plugin",
+    { "name": "anti-slop", "specifier": "./anti-slop-src/index.ts" }
+  ],
   "rules": {
     // ---- dead / debug code ----
     "no-debugger": "error",
@@ -161,6 +167,12 @@
     "@rikalabs/no-disable-without-rationale": "error",
     "@rikalabs/no-todo-without-issue": "error",
     "@rikalabs/no-low-signal-variable-names": "error",
+    "@rikalabs/no-low-signal-public-names": "error",
+    "@rikalabs/no-generic-module-names": "error",
+    "@rikalabs/no-copy-paste-exports": "error",
+    "@rikalabs/no-debug-residue-filenames": "error",
+    "@rikalabs/no-standalone-classes": "error",
+    "@rikalabs/no-as-never": "error",
     "@rikalabs/no-vague-verbs": "error",
     "@rikalabs/no-bare-wrapper-functions": "error",
     "@rikalabs/no-silent-catch-fallback": "error",
@@ -174,6 +186,28 @@
     "@rikalabs/no-redundant-const-assertion": "error",
     "@rikalabs/no-hardcoded-secrets": "error",
     "@rikalabs/no-sql-string-concat": "error",
+    // ---- dmmulroy/anti-slop plugin rules (vendored at pinned SHA; the
+    //      syntax/type-discipline rules the bundle passes). Boundary-typing
+    //      rules (no-unknown-*, no-unsafe-dictionary-type, no-runtime-typeof,
+    //      no-known-value-widening) are off: the payload is untyped runtime
+    //      JSON and React comes from the dashboard, so the shape guards at the
+    //      edge and the injected-API `unknown` are the deliberate contract,
+    //      not widening slop (see the per-entry notes below) ----
+    "anti-slop/no-chained-type-assertions": "error",
+    "anti-slop/no-conditional-empty-object-spread": "error",
+    "anti-slop/no-module-mocking": "error",
+    "anti-slop/no-object-parameters": "error",
+    "anti-slop/no-reflect-apply": "error",
+    "anti-slop/no-reflect-get": "error",
+    "anti-slop/no-shape-in-symbol-names": "error",
+    "anti-slop/no-unknown-type-aliases": "error",
+    "anti-slop/no-widen-then-assert": "error",
+    "anti-slop/require-safety-comment-for-type-assertion": "error",
+    "anti-slop/no-known-value-widening": "off", // render helpers are annotated `: unknown` because the injected React.createElement shim returns unknown and explicit-function-return-type forces the annotation; there is no non-widening spelling
+    "anti-slop/no-runtime-typeof": "off", // typeof guards (unwrapSnap, objOrEmpty, num) are the untyped JSON boundary parse itself; extracting predicate helpers would fight @rikalabs/no-trivial-runtime-guard-helpers
+    "anti-slop/no-unknown-parameters": "off", // untyped JSON payload boundary: the shape-guard functions take candidate/o/v by design and parse at the edge
+    "anti-slop/no-unknown-returns": "off", // same boundary plus the injected React shim: CreateElement returns unknown by contract
+    "anti-slop/no-unsafe-dictionary-type": "off", // Record<string, unknown> is the untyped JSON payload contract; typing the full snapshot schema is a refactor, not a lint fix
     // ---- off, with reason (see header) ----
     "no-array-sort": "off",
     "no-array-reverse": "off",

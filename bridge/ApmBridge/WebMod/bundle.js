@@ -23,14 +23,14 @@
         if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
             return {};
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; the guard above proves the runtime value is a plain object
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: the guard above proves the runtime value is a plain object
         return candidate;
     }
     function listOrEmpty(candidate) {
         if (!Array.isArray(candidate)) {
             return [];
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; Array.isArray is the runtime proof for the element cast
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: Array.isArray is the runtime proof for the element cast
         return candidate;
     }
     function strOrEmpty(candidate) {
@@ -39,6 +39,10 @@
         }
         // oxlint-disable-next-line typescript/no-base-to-string -- deliberate: payload values are JSON primitives (numbers, strings); String() renders them into labels
         return String(candidate);
+    }
+    function strOr(candidate, fallback) {
+        const s = strOrEmpty(candidate);
+        return s === "" ? fallback : s;
     }
     function grade(update) {
         const avg = num(update.serverTickIntervalAvgMs);
@@ -96,17 +100,17 @@
         if (typeof o !== "object" || o === null) {
             return {};
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
         const record = o;
         const { data } = record;
         if (typeof data !== "object" || data === null) {
             return record;
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
         const innerRecord = data;
         const inner = innerRecord.data;
         if (typeof inner === "object" && inner !== null) {
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
             return inner;
         }
         if (innerRecord.schema !== undefined || innerRecord.update !== undefined || innerRecord.enabled !== undefined) {
@@ -259,7 +263,7 @@
         const yOf = (v) => padTop + innerH - (v / max) * innerH;
         const crossX = hoverIdx >= 0 ? padLeft + hoverIdx * step : -1;
         const onMove = (e) => {
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: the chart svg is the handler target
+            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the chart svg is the handler target
             const rect = e.currentTarget.getBoundingClientRect();
             const idx = Math.round((e.clientX - rect.left - padLeft) / step);
             setHoverIdx(Math.max(0, Math.min(n - 1, idx)));
@@ -299,7 +303,9 @@
     }
     function bySortKey(sort) {
         return (a, b) => {
+            // SAFETY: section rows come from the untyped JSON payload; sort.key is a known column of the same rows (bySortKey only keys on section columns)
             const av = sort.key === "name" ? a.name : num(a[sort.key]);
+            // SAFETY: same keyed access as av, on the other row
             const bv = sort.key === "name" ? b.name : num(b[sort.key]);
             let cmp = 0;
             if (av < bv) {
@@ -345,7 +351,7 @@
             h("div", { className: "apm-sec-head" }, h("h3", null, "Managed sections"), h("input", {
                 className: "apm-filter", type: "text", placeholder: "filter…",
                 value: filter, onChange: (e) => {
-                    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: the dashboard event target is the filter input the handler is bound to
+                    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the dashboard event target is the filter input the handler is bound to
                     setFilter(e.target.value);
                 }
             })),
@@ -393,6 +399,14 @@
         if (navigator.clipboard !== undefined) {
             void navigator.clipboard.writeText(txt);
         }
+    }
+    // Feature-group row for the Efficiency panel. Toggles are staged locally
+    // (pending), not applied per click; the Apply button commits them all with a
+    // single restart. The row shows the effective (staged) state, a changed
+    // marker, the description, and the safe/experimental status.
+    function renderPerfGroupRow(h, g, on, staged, busy, toggle) {
+        const status = strOr(g.status, "safe");
+        return h("div", { key: String(g.name), className: "apm-group" }, h("div", { className: "apm-group-info" }, h("span", { className: "apm-label" }, String(g.name)), h("span", { className: "apm-group-desc" }, strOrEmpty(g.description))), h("div", { className: "apm-group-controls" }, h("span", { className: `apm-status ${status === "experimental" ? "apm-status-exp" : "apm-status-safe"}` }, status), h("span", { className: `apm-pill ${on ? "apm-ok" : "apm-off"}${staged ? " apm-staged" : ""}` }, on ? "ON" : "OFF"), h("button", { className: "apm-btn", disabled: busy, onClick: toggle }, on ? "Turn off" : "Turn on")));
     }
     function ApmPanel({ React, HTTP, useQuery }) {
         var _a, _b;
@@ -443,27 +457,89 @@
         const setSortKey = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
         return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot), gc, update), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, togglePerf), renderTrendsChart(h, React, hist.current), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
     }
+    // Staged-apply helpers for the Efficiency panel: feature-group toggles are
+    // staged locally (pending), not applied per click; the Apply button commits
+    // them all with a single restart.
+    function hasPending(pending, name) {
+        return name in pending;
+    }
+    function effectiveOn(pending, g) {
+        const name = String(g.name);
+        return hasPending(pending, name) ? pending[name] : g.enabled === true;
+    }
+    function stageToggle(opts) {
+        const name = String(opts.group.name);
+        const current = opts.group.enabled === true;
+        const next = !effectiveOn(opts.pending, opts.group);
+        opts.setPerfError("");
+        opts.setPending((p) => {
+            const n = Object.assign({}, p);
+            if (next === current) {
+                delete n[name];
+            }
+            else {
+                n[name] = next;
+            }
+            return n;
+        });
+    }
+    function applyPerfGroups(opts) {
+        if (opts.busy || opts.pendingCount === 0) {
+            return;
+        }
+        opts.setArmedApply(false);
+        opts.setBusy(true);
+        void opts.HTTP.post("/api/perf", { groups: opts.pending })
+            .then(() => {
+            opts.setPending({});
+            opts.setBusy(false);
+        })
+            .catch((error) => {
+            opts.setPerfError(error instanceof Error ? error.message : String(error));
+            opts.setBusy(false);
+        });
+    }
     // Focused panel for the EfficientServer perf mod toggle (its own top-level
     // menu entry alongside APM). Same /api/perf admin endpoint.
     function EfficiencyPanel({ React, HTTP, useQuery }) {
         var _a, _b;
         const h = React.createElement;
         const [blocked, setBlocked] = React.useState(false);
+        const [busy, setBusy] = React.useState(false);
+        const [pending, setPending] = React.useState({});
+        const [armedApply, setArmedApply] = React.useState(false);
+        const [perfError, setPerfError] = React.useState("");
         const perfQ = useQuery("apm-perf-efficiency", () => HTTP.get("/api/perf"), { refetchInterval: 30000, enabled: !blocked, retry: false });
         React.useEffect(() => {
             if (perfQ.isError === true) {
                 setBlocked(true);
             }
         }, [perfQ.isError]);
-        const [busy, setBusy] = React.useState(false);
         if (perfQ.isError === true) {
             const status = (_b = (_a = perfQ.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
             return renderAuthError(h, "Efficiency", status, "Authentication required: log in to the dashboard as an admin (permission level 0) to control the perf mod.", "Perf API unavailable");
         }
         const perf = unwrapSnap(perfQ.data);
         const enabled = perf.enabled === true;
+        const groups = listOrEmpty(perf.groups);
         const toggle = () => togglePerfHandler({ HTTP, perfBusy: busy, perfAvailable: true, setPerfBusy: setBusy, perfEnabled: enabled });
-        return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, h("h2", null, "Efficiency"), h("span", { className: `apm-pill ${enabled ? "apm-ok" : "apm-warn"}` }, enabled ? "ENABLED" : "DISABLED")), h("div", { className: "apm-perf" }, h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"), h("button", { className: "apm-btn", disabled: busy, onClick: toggle }, perfToggleLabel(busy, enabled)), h("span", { className: "apm-window" }, "flips the config, restarts the server (~1-2 min)")));
+        const pendingCount = Object.keys(pending).length;
+        const apply = () => applyPerfGroups({ HTTP, busy, pending, pendingCount, setArmedApply, setPending, setBusy, setPerfError });
+        return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, h("h2", null, "Efficiency"), h("span", { className: `apm-pill ${enabled ? "apm-ok" : "apm-warn"}` }, enabled ? "ENABLED" : "DISABLED")), h("div", { className: "apm-perf" }, h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"), h("button", { className: "apm-btn", disabled: busy, onClick: toggle }, perfToggleLabel(busy, enabled)), h("span", { className: "apm-window" }, "flips the whole mod, restarts the server (~1-2 min)")), h("h3", null, "Feature groups"), h("p", { className: "apm-window" }, `${groups.length} toggles · staged here, applied with one restart`), perfError === "" ? null : h("p", { className: "apm-error" }, perfError), h("div", { className: "apm-groups" }, groups.map((g) => renderPerfGroupRow(h, g, effectiveOn(pending, g), hasPending(pending, String(g.name)), busy, () => stageToggle({ pending, setPending, setPerfError, group: g })))), h("div", { className: "apm-perf" }, h("button", {
+            className: `apm-btn apm-primary${armedApply ? " apm-armed" : ""}`,
+            disabled: busy || pendingCount === 0,
+            onClick: () => {
+                if (armedApply) {
+                    apply();
+                }
+                else {
+                    setArmedApply(true);
+                    setTimeout(() => setArmedApply(false), 4000);
+                }
+            }
+        }, armedApply ? "Confirm apply?" : `Apply ${pendingCount} change${pendingCount === 1 ? "" : "s"} & restart`), pendingCount > 0
+            ? h("button", { className: "apm-btn", disabled: busy, onClick: () => setPending({}) }, "Discard")
+            : null, h("span", { className: "apm-window" }, "stages changes · one restart applies them all")));
     }
     // The stock dashboard renders every webmod `routes` entry as a direct sidebar
     // item and every `settings` entry as a tab under Settings, unconditionally.

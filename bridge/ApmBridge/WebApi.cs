@@ -42,35 +42,104 @@ namespace DtdApmBridge
 
         static string ConfigPath => BridgeMod.Config.PerfModConfigPath;
 
-        static bool? ReadEnabled()
+        // Feature groups with an Enabled flag the web UI can toggle. The
+        // SkipOnDedicated subsystems are individual booleans (handled below).
+        static readonly string[] GroupKeys =
+            { "AiLod", "DynamicMesh", "Gc", "Governor", "TickGuard", "AnimatorLod", "CrowdCollisionLod" };
+
+        // Short human descriptions for the web UI toggle list.
+        static readonly Dictionary<string, string> GroupDescriptions = new Dictionary<string, string>
         {
-            try
-            {
-                if (!File.Exists(ConfigPath)) return null;
-                return (bool?)JObject.Parse(File.ReadAllText(ConfigPath))["Enabled"];
-            }
-            catch (Exception ex) { BridgeMod.Log("perf state read failed: " + ex.Message); return null; }
+            ["AiLod"] = "Scale AI simulation cost by distance from players (full near, cheap far away)",
+            ["DynamicMesh"] = "Generate chunk meshes only near players and land claims",
+            ["Gc"] = "GC tuning: skip forced collections, safety collect above a RAM threshold",
+            ["Governor"] = "TPS governor: shed background work when ticks run over budget",
+            ["TickGuard"] = "Emergency tick shedding at sustained overload",
+            ["AnimatorLod"] = "Lower animator update rate for distant entities",
+            ["CrowdCollisionLod"] = "Throttle crowd collision resolution",
+            ["SkipOnDedicated.DynamicMusicSystem"] = "Skip dynamic music playback (no audio sink on a host)",
+            ["SkipOnDedicated.WaterSplashParticles"] = "Skip water splash particles (nothing renders them)",
+            ["SkipOnDedicated.EnvironmentAudioUpdates"] = "Skip environment audio updates",
+            ["SkipOnDedicated.ClothAndJiggleBoneSimulation"] = "Skip cloth and jiggle-bone simulation",
+            ["SkipOnDedicated.ExplosionParticles"] = "Skip explosion particle effects",
+            ["SkipOnDedicated.AmbientLightSpectrumUpdates"] = "Skip ambient light spectrum updates",
+        };
+
+        // Groups the mod ships disabled: not validated as a default, so flipping
+        // them on is experimental. Everything else is the reviewed, safe set.
+        static readonly HashSet<string> ExperimentalGroups =
+            new HashSet<string> { "TickGuard", "AnimatorLod", "CrowdCollisionLod" };
+
+        static string StatusFor(string name) => ExperimentalGroups.Contains(name) ? "experimental" : "safe";
+
+        static JObject ReadRoot()
+        {
+            if (!File.Exists(ConfigPath)) return null;
+            try { return JObject.Parse(File.ReadAllText(ConfigPath)); }
+            catch (Exception ex) { BridgeMod.Log("perf config read failed: " + ex.Message); return null; }
         }
 
-        static bool WriteEnabled(bool enabled)
+        static bool WriteRoot(JObject root)
         {
             try
             {
-                JObject root = JObject.Parse(File.ReadAllText(ConfigPath));
-                root["Enabled"] = enabled;
                 File.WriteAllText(ConfigPath, root.ToString(Newtonsoft.Json.Formatting.Indented));
-                BridgeMod.Log("perf mod -> " + (enabled ? "on" : "off") + " (" + ConfigPath + ")");
                 return true;
             }
-            catch (Exception ex) { BridgeMod.Log("perf state write failed: " + ex.Message); return false; }
+            catch (Exception ex) { BridgeMod.Log("perf config write failed: " + ex.Message); return false; }
+        }
+
+        static List<object> BuildGroups(JObject root)
+        {
+            var groups = new List<object>();
+            if (root == null) return groups;
+            string desc(string name)
+            {
+                string d;
+                return GroupDescriptions.TryGetValue(name, out d) ? d : "";
+            }
+            foreach (var g in GroupKeys)
+                if (root[g] is JObject jo)
+                    groups.Add(new { name = g, enabled = (bool?)jo["Enabled"] ?? false, description = desc(g), status = StatusFor(g) });
+            if (root["SkipOnDedicated"] is JObject sk)
+                foreach (var kv in sk)
+                    if (kv.Value is JValue jv && jv.Type == JTokenType.Boolean)
+                        groups.Add(new { name = "SkipOnDedicated." + kv.Key, enabled = (bool)jv, description = desc("SkipOnDedicated." + kv.Key), status = "safe" });
+            return groups;
+        }
+
+        static bool SetGroup(JObject root, string group, bool enabled)
+        {
+            string[] parts = group.Split('.');
+            if (parts.Length == 2 && parts[0] == "SkipOnDedicated")
+            {
+                if (root["SkipOnDedicated"] is JObject sk && sk[parts[1]] != null)
+                {
+                    sk[parts[1]] = enabled;
+                    return true;
+                }
+                return false;
+            }
+            if (parts.Length == 1 && Array.IndexOf(GroupKeys, parts[0]) >= 0 && root[parts[0]] is JObject jo)
+            {
+                jo["Enabled"] = enabled;
+                return true;
+            }
+            return false;
         }
 
         public override void HandleRestGet(RequestContext context)
         {
             PrepareEnvelopedResult(out JsonWriter writer);
-            bool? enabled = ReadEnabled();
+            JObject root = ReadRoot();
             var payload = Encoding.UTF8.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(
-                new { enabled = enabled ?? false, available = enabled.HasValue, path = ConfigPath }));
+                new
+                {
+                    enabled = root != null ? ((bool?)root["Enabled"] ?? false) : false,
+                    available = root != null,
+                    path = ConfigPath,
+                    groups = BuildGroups(root)
+                }));
             writer.WriteRaw(payload);
             SendEnvelopedResult(context, ref writer, HttpStatusCode.OK, null, null, null);
         }
@@ -78,19 +147,74 @@ namespace DtdApmBridge
         public override void HandleRestPost(RequestContext context, IDictionary<string, object> _jsonInput, byte[] _jsonInputData)
         {
             PrepareEnvelopedResult(out JsonWriter writer);
-            bool target;
-            if (_jsonInput == null || !TryGetBool(_jsonInput, "enabled", out target))
+            // Parse the raw body so nested objects (the batch groups dict) are
+            // read reliably regardless of how the base handler typed them.
+            JObject body = null;
+            try
+            {
+                if (_jsonInputData != null && _jsonInputData.Length > 0)
+                    body = JObject.Parse(Encoding.UTF8.GetString(_jsonInputData));
+            }
+            catch { }
+            if (body == null)
             {
                 SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_BODY", null);
                 return;
             }
-            if (!WriteEnabled(target))
+            JObject root = ReadRoot();
+            if (root == null)
             {
                 SendEmptyResponse(context, HttpStatusCode.InternalServerError, null, "WRITE_FAILED", null);
                 return;
             }
+            int changed = 0;
+            // Single top-level toggle: {"enabled": bool}
+            if (body["enabled"] is JValue top && top.Type == JTokenType.Boolean)
+            {
+                root["Enabled"] = (bool)top;
+                changed++;
+            }
+            // Single group toggle: {"group": "...", "enabled": bool}
+            if (body["group"] is JValue gv && body["enabled"] is JValue ev && ev.Type == JTokenType.Boolean)
+            {
+                if (!SetGroup(root, Convert.ToString(gv), (bool)ev))
+                {
+                    SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_GROUP", null);
+                    return;
+                }
+                changed++;
+            }
+            // Batch: {"groups": {"AiLod": false, "SkipOnDedicated.WaterSplashParticles": true, ...}}
+            if (body["groups"] is JObject batch)
+            {
+                foreach (var kv in batch)
+                {
+                    if (!(kv.Value is JValue bv) || bv.Type != JTokenType.Boolean)
+                    {
+                        SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_BODY", null);
+                        return;
+                    }
+                    if (!SetGroup(root, kv.Key, (bool)bv))
+                    {
+                        SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_GROUP", null);
+                        return;
+                    }
+                    changed++;
+                }
+            }
+            if (changed == 0)
+            {
+                SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_BODY", null);
+                return;
+            }
+            if (!WriteRoot(root))
+            {
+                SendEmptyResponse(context, HttpStatusCode.InternalServerError, null, "WRITE_FAILED", null);
+                return;
+            }
+            BridgeMod.Log("perf config applied " + changed + " change(s)");
             var payload = Encoding.UTF8.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(
-                new { enabled = target, restarting = true, note = "server restarts in a moment" }));
+                new { changed = changed, restarting = true, note = "server restarts in a moment" }));
             writer.WriteRaw(payload);
             SendEnvelopedResult(context, ref writer, HttpStatusCode.OK, null, null, null);
             // Flush the response, then shut down; the container restart policy
