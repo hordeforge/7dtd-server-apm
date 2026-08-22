@@ -2,8 +2,11 @@
   "compilerOptions": {
     "target": "ES2017",
     "module": "es2020",
-    "strict": false,
-    "noImplicitAny": false,
+    // strict: the WebMod is fully typed (no any) and the oxlint type-aware
+    // rules (no-unnecessary-condition, prefer-nullish-coalescing,
+    // strict-boolean-expressions, no-useless-default-assignment) refuse to
+    // run without strictNullChecks.
+    "strict": true,
     "outDir": ".",
     "rootDir": ".",
     "sourceMap": false,

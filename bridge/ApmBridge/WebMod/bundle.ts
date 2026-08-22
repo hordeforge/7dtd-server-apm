@@ -5,10 +5,9 @@
 // (hidden until the sid session cookie is present), settings as Settings tabs.
 // Do not hand-edit bundle.js; regenerate from this file.
 
-// oxlint-disable-next-line typescript/no-explicit-any -- deliberate: the WebMod receives an untyped dashboard-injected payload; the schema types below describe the shape we read, and this alias is the documented escape hatch for the rest
-type Any = any;
-
-// Snapshot schema as served by GET /api/apm (7dtd.apm.app.v3).
+// Snapshot schema as served by GET /api/apm (7dtd.apm.app.v3). The payload is
+// untyped runtime JSON, so sections are read through the shape guards below;
+// these types describe the shape the dashboard reads.
 type SectionStat = {
   name: string;
   deep?: boolean;
@@ -31,49 +30,10 @@ type TransferStat = {
   lastBytes: number;
   maxBytes: number;
 };
-type Snapshot = {
-  schema?: string;
-  utc?: string;
-  update?: {
-    serverTickIntervalAvgMs?: number;
-    serverTickIntervalMaxMs?: number;
-    gmUpdateDurationAvgMs?: number;
-    gmUpdateDurationMaxMs?: number;
-    lateTicks?: number;
-    tickStallMsTotal?: number;
-    totalSpikes?: number;
-    windowUpdates?: number;
-    windowSeconds?: number;
-    deep?: boolean;
-  };
-  gc?: {
-    gen0PerSecond?: number;
-    gen2PerSecond?: number;
-    heapBytes?: number;
-    grossAllocBytesPerSecond?: number;
-    windowSeconds?: number;
-  };
-  world?: {
-    players?: number;
-    clients?: number;
-    entities?: number;
-    entityAlives?: number;
-    workingSetBytes?: number;
-    threadCount?: number;
-  };
-  health?: { droppedExports?: number; lastExportError?: string };
-  sections?: Array<SectionStat>;
-  spikes?: Array<SpikeRecord>;
-  mapTransfers?: Array<TransferStat>;
-};
-type PerfState = {
-  enabled?: boolean;
-  available?: boolean;
-  path?: string;
-};
 
 // Dashboard-injected props (kl wrapper passes the stock React, an axios-ish
 // HTTP client, and the react-query useQuery hook).
+type CreateElement = (...args: Array<unknown>) => unknown;
 type QueryResult = {
   data?: unknown;
   isError?: boolean;
@@ -81,13 +41,13 @@ type QueryResult = {
 };
 type PanelProps = {
   React: {
-    createElement: (...args: Array<Any>) => Any;
+    createElement: CreateElement;
     useRef: <T>(init: T) => { current: T };
     useState: <T>(init: T) => [T, (v: T | ((prev: T) => T)) => void];
-    useEffect: (fn: () => Any, deps?: Array<Any>) => Any;
+    useEffect: (fn: () => unknown, deps?: Array<unknown>) => unknown;
   };
-  HTTP: { get: (url: string) => Promise<Any>; post: (url: string, body?: Any) => Promise<Any> };
-  useQuery: (key: string, fn: () => Promise<Any>, opts?: {
+  HTTP: { get: (url: string) => Promise<unknown>; post: (url: string, body?: unknown) => Promise<unknown> };
+  useQuery: (key: string, fn: () => Promise<unknown>, opts?: {
     refetchInterval?: number;
     enabled?: boolean;
     retry?: boolean;
@@ -98,21 +58,33 @@ const modId = "7dtd-apm-bridge";
 const HIST = 60; // rolling samples kept for sparklines (~2 min at 2s)
 const TICK_BUDGET_MS = 50; // 20 TPS
 
-const num = (v: Any): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
-const fx = (v: Any, n: number): string => num(v).toFixed(n);
-const mib = (bytes: Any): number => num(bytes) / 1_048_576;
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+const fx = (v: unknown, n: number): string => num(v).toFixed(n);
+const mib = (bytes: unknown): number => num(bytes) / 1_048_576;
 
 // Snapshot shape guards: the API payload may omit sections (partial writes,
 // older bridge schema). Coerce once here instead of fallback-defaulting every
 // property access in the render path.
-function objOrEmpty(candidate: Any): Any {
-  return candidate !== undefined && candidate !== null && typeof candidate === "object" ? candidate : {};
+function objOrEmpty(candidate: unknown): Record<string, unknown> {
+  if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+    return {};
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; the guard above proves the runtime value is a plain object
+  return candidate as Record<string, unknown>;
 }
-function listOrEmpty<T>(candidate: Any): Array<T> {
-  return Array.isArray(candidate) ? (candidate as Array<T>) : [];
+function listOrEmpty<T>(candidate: unknown): Array<T> {
+  if (!Array.isArray(candidate)) {
+    return [];
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; Array.isArray is the runtime proof for the element cast
+  return candidate as Array<T>;
 }
-function strOrEmpty(candidate: Any): string {
-  return candidate === undefined || candidate === null ? "" : String(candidate);
+function strOrEmpty(candidate: unknown): string {
+  if (candidate === undefined || candidate === null) {
+    return "";
+  }
+  // oxlint-disable-next-line typescript/no-base-to-string -- deliberate: payload values are JSON primitives (numbers, strings); String() renders them into labels
+  return String(candidate);
 }
 
 type Grade = {
@@ -120,7 +92,7 @@ type Grade = {
   cls: string;
   label: string;
 };
-function grade(update: Any): Grade {
+function grade(update: Record<string, unknown>): Grade {
   const avg = num(update.serverTickIntervalAvgMs);
   const tps = avg > 0 ? 1000 / avg : 0;
   const windowUpdates = num(update.windowUpdates);
@@ -151,7 +123,7 @@ function rising(series: Array<number>): boolean {
   return headAvg > 0 && tailAvg > headAvg * 1.2;
 }
 
-function spark(React: Any, values: Array<number>, color: string, w: number, h: number): Any {
+function spark(React: PanelProps["React"], values: Array<number>, color: string, w: number, h: number): unknown {
   if (values.length < 2) {
     return null;
   }
@@ -169,7 +141,7 @@ function spark(React: Any, values: Array<number>, color: string, w: number, h: n
   );
 }
 
-function budgetBar(React: Any, frac: number, cls: string): Any {
+function budgetBar(React: PanelProps["React"], frac: number, cls: string): unknown {
   const pct = Math.max(0, Math.min(1, frac)) * 100;
   return React.createElement("div", { className: "apm-bar" },
     React.createElement("div", { className: `apm-bar-fill ${cls}`, style: { width: `${pct.toFixed(1)}%` } }));
@@ -177,22 +149,27 @@ function budgetBar(React: Any, frac: number, cls: string): Any {
 
 // The dashboard HTTP wrapper may hand us the axios response, the {data: ...}
 // envelope, or the bare payload; accept all three.
-function unwrapSnap(o: Any): Any {
+function unwrapSnap(o: unknown): Record<string, unknown> {
   if (typeof o !== "object" || o === null) {
     return {};
   }
-  const { data } = o as Any;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+  const record = o as Record<string, unknown>;
+  const { data } = record;
   if (typeof data !== "object" || data === null) {
-    return o;
+    return record;
   }
-  const inner = (data as Any).data;
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+  const innerRecord = data as Record<string, unknown>;
+  const inner = innerRecord.data;
   if (typeof inner === "object" && inner !== null) {
-    return inner;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+    return inner as Record<string, unknown>;
   }
-  if (data.schema || data.update || data.enabled) {
-    return data;
+  if (innerRecord.schema !== undefined || innerRecord.update !== undefined || innerRecord.enabled !== undefined) {
+    return innerRecord;
   }
-  return o;
+  return record;
 }
 
 type SparkHistory = {
@@ -203,7 +180,7 @@ type SparkHistory = {
   gen2: Array<number>;
   heap: Array<number>;
 };
-function pushHistory(hist: SparkHistory, utc: string, live: Any): void {
+function pushHistory(hist: SparkHistory, utc: string, live: Record<string, unknown>): void {
   hist.last = utc;
   const lu = objOrEmpty(live.update);
   const lgc = objOrEmpty(live.gc);
@@ -215,31 +192,31 @@ function pushHistory(hist: SparkHistory, utc: string, live: Any): void {
     }
   };
   push(hist.tps, avg > 0 ? 1000 / avg : 0);
-  push(hist.alloc, lgc.grossAllocBytesPerSecond >= 0 ? mib(lgc.grossAllocBytesPerSecond) : 0);
+  push(hist.alloc, num(lgc.grossAllocBytesPerSecond) >= 0 ? mib(lgc.grossAllocBytesPerSecond) : 0);
   push(hist.gm, num(lu.gmUpdateDurationAvgMs));
   push(hist.gen2, num(lgc.gen2PerSecond));
   push(hist.heap, mib(lgc.heapBytes));
 }
 
-function cell(h: Any, label: string, valueText: Any, cls: string | null): Any {
-  return h("div", { className: `apm-cell${cls ? ` ${cls}` : ""}` },
+function cell(h: CreateElement, label: string, valueText: unknown, cls: string | null): unknown {
+  return h("div", { className: `apm-cell${cls !== null && cls !== "" ? ` ${cls}` : ""}` },
     h("span", { className: "apm-label" }, label),
-    h("strong", null, valueText === null || valueText === undefined ? "—" : valueText));
+    h("strong", null, valueText ?? "—"));
 }
 
-function trend(h: Any, React: Any, label: string, series: Array<number>, cur: string, color: string): Any {
+function trend(h: CreateElement, React: PanelProps["React"], label: string, series: Array<number>, cur: string, color: string): unknown {
   return h("div", { className: "apm-cell apm-trend" },
     h("span", { className: "apm-label" }, label),
     h("strong", null, cur),
     spark(React, series, color, 130, 30));
 }
 
-function formatUtc(utc: Any): string {
+function formatUtc(utc: unknown): string {
   return strOrEmpty(utc).replace("T", " ").replace(/\..*$/u, "");
 }
 
-function renderAuthError(h: Any, title: string, status: number, authMessage: string, unavailablePrefix: string): Any {
-  const msg = status === 403 ? authMessage : `${unavailablePrefix} (HTTP ${status || "error"}).`;
+function renderAuthError(h: CreateElement, title: string, status: number | undefined, authMessage: string, unavailablePrefix: string): unknown {
+  const msg = status === 403 ? authMessage : `${unavailablePrefix} (HTTP ${status ?? "error"}).`;
   return h("div", { className: "seven-dtd-apm" },
     h("h2", null, title),
     h("span", { className: "apm-pill apm-bad" }, "AUTH REQUIRED"),
@@ -247,14 +224,14 @@ function renderAuthError(h: Any, title: string, status: number, authMessage: str
     h("button", { className: "apm-btn", onClick: (): void => { location.href = "/"; } }, "Log in"));
 }
 
-function renderHead(h: Any, g: Grade, frozen: boolean, toggleFreeze: () => void, copyJson: () => void, gc: Any, update: Any): Any {
+function renderHead(h: CreateElement, g: Grade, frozen: boolean, toggleFreeze: () => void, copyJson: () => void, gc: Record<string, unknown>, update: Record<string, unknown>): unknown {
   return h("div", { className: "apm-head" },
     h("h2", null, "7DTD APM"),
     h("span", { className: `apm-pill ${g.cls}` }, g.label),
     h("button", { className: "apm-btn", onClick: toggleFreeze }, frozen ? "▶ Resume" : "⏸ Freeze"),
     h("button", { className: "apm-btn", onClick: copyJson }, "⧉ Copy JSON"),
     h("span", { className: "apm-window" },
-      `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
+      `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
 }
 
 function perfToggleLabel(perfBusy: boolean, perfEnabled: boolean): string {
@@ -264,7 +241,7 @@ function perfToggleLabel(perfBusy: boolean, perfEnabled: boolean): string {
   return perfEnabled ? "Disable (restarts server)" : "Enable (restarts server)";
 }
 
-function renderPerfRow(h: Any, perfEnabled: boolean, perfAvailable: boolean, perfBusy: boolean, togglePerf: () => void): Any {
+function renderPerfRow(h: CreateElement, perfEnabled: boolean, perfAvailable: boolean, perfBusy: boolean, togglePerf: () => void): unknown {
   return h("div", { className: "apm-perf" },
     h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"),
     h("span", { className: `apm-pill ${perfEnabled ? "apm-ok" : "apm-warn"}` }, perfEnabled ? "ENABLED" : "DISABLED"),
@@ -273,7 +250,7 @@ function renderPerfRow(h: Any, perfEnabled: boolean, perfAvailable: boolean, per
     h("span", { className: "apm-window" }, "flips the config, restarts the server (~1-2 min)"));
 }
 
-function renderTickBudget(h: Any, React: Any, update: Any, g: Grade): Any {
+function renderTickBudget(h: CreateElement, React: PanelProps["React"], update: Record<string, unknown>, g: Grade): unknown {
   const healthy = g.cls === "apm-ok";
   const frac = num(update.serverTickIntervalAvgMs) / (TICK_BUDGET_MS * 2);
   return h("div", { className: "apm-tick-budget" },
@@ -282,11 +259,13 @@ function renderTickBudget(h: Any, React: Any, update: Any, g: Grade): Any {
     h("span", { className: "apm-budget-val" }, `${fx(update.serverTickIntervalAvgMs, 1)} ms`));
 }
 
-function renderGrid(h: Any, React: Any, g: Grade, H: SparkHistory, update: Any, gc: Any, world: Any, health: Any): Any {
+function renderGrid(h: CreateElement, React: PanelProps["React"], g: Grade, H: SparkHistory, update: Record<string, unknown>, gc: Record<string, unknown>, world: Record<string, unknown>, health: Record<string, unknown>): unknown {
+  // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined before the first sample
   const lastAlloc = H.alloc[H.alloc.length - 1];
   return h("div", { className: "apm-grid" },
     trend(h, React, "TPS", H.tps, fx(g.tps, 1), "#57d977"),
-    trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc === undefined ? 0 : lastAlloc, 1), "#e6bd3a"),
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined at runtime before the first sample
+    trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc ?? 0, 1), "#e6bd3a"),
     trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"),
     cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null),
     cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null),
@@ -302,10 +281,11 @@ function renderGrid(h: Any, React: Any, g: Grade, H: SparkHistory, update: Any, 
     cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null));
 }
 
-function bySortKey(sort: { key: string; dir: number }): (a: SectionStat, b: SectionStat) => number {
+type SortState = { key: string; dir: number };
+function bySortKey(sort: SortState): (a: SectionStat, b: SectionStat) => number {
   return (a, b): number => {
-    const av = sort.key === "name" ? String(a.name) : num((a as Any)[sort.key]);
-    const bv = sort.key === "name" ? String(b.name) : num((b as Any)[sort.key]);
+    const av = sort.key === "name" ? a.name : num((a as Record<string, unknown>)[sort.key]);
+    const bv = sort.key === "name" ? b.name : num((b as Record<string, unknown>)[sort.key]);
     let cmp = 0;
     if (av < bv) {
       cmp = -1;
@@ -338,18 +318,18 @@ function budgetBarClass(frac: number): string {
 }
 
 function renderSectionsSection(
-  h: Any,
-  React: Any,
+  h: CreateElement,
+  React: PanelProps["React"],
   sections: Array<SectionStat>,
-  sort: { key: string; dir: number },
+  sort: SortState,
   setSortKey: (key: string) => void,
   filter: string,
   setFilter: (v: string) => void
-): Array<Any> {
+): Array<unknown> {
   const shown = [...sections]
-    .filter((s): boolean => !filter || strOrEmpty(s.name).toLowerCase().includes(filter.toLowerCase()))
+    .filter((s): boolean => filter.length === 0 || strOrEmpty(s.name).toLowerCase().includes(filter.toLowerCase()))
     .sort(bySortKey(sort));
-  const th = (label: string, key: string): Any => {
+  const th = (label: string, key: string): unknown => {
     let marker = "";
     if (sort.key === key) {
       marker = sort.dir < 0 ? " ▼" : " ▲";
@@ -361,17 +341,20 @@ function renderSectionsSection(
       h("h3", null, "Managed sections"),
       h("input", {
         className: "apm-filter", type: "text", placeholder: "filter…",
-        value: filter, onChange: (e: Any): void => setFilter(e.target.value)
+        value: filter, onChange: (e: Event): void => {
+          // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: the dashboard event target is the filter input the handler is bound to
+          setFilter((e.target as HTMLInputElement).value);
+        }
       })),
     h("table", { className: "apm-table" },
       h("thead", null, h("tr", null,
         th("Section", "name"), th("Calls", "calls"), th("Avg", "avgMs"),
         th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"),
         h("th", { key: "budget" }, "% of 50ms"))),
-      h("tbody", null, shown.map((s): Any => {
+      h("tbody", null, shown.map((s): unknown => {
         const frac = num(s.avgMs) / TICK_BUDGET_MS;
         return h("tr", { key: s.name, className: sectionRowClass(s) },
-          h("td", null, `${s.name}${s.deep ? " ·deep" : ""}`),
+          h("td", null, `${s.name}${s.deep === true ? " ·deep" : ""}`),
           h("td", null, num(s.calls)),
           h("td", null, fx(s.avgMs, 3)),
           h("td", null, fx(s.p95Ms, 3)),
@@ -384,7 +367,7 @@ function renderSectionsSection(
   ];
 }
 
-function renderSpikesSection(h: Any, spikes: Array<SpikeRecord>): Array<Any> | null {
+function renderSpikesSection(h: CreateElement, spikes: Array<SpikeRecord>): Array<unknown> | null {
   if (spikes.length === 0) {
     return null;
   }
@@ -392,8 +375,8 @@ function renderSpikesSection(h: Any, spikes: Array<SpikeRecord>): Array<Any> | n
   return [
     h("h3", null, "Recent spikes"),
     h("table", { className: "apm-table" },
-      h("thead", null, h("tr", null, headers.map((x): Any => h("th", { key: x }, x)))),
-      h("tbody", null, [...spikes].reverse().slice(0, 12).map((s, i): Any =>
+      h("thead", null, h("tr", null, headers.map((x): unknown => h("th", { key: x }, x)))),
+      h("tbody", null, [...spikes].reverse().slice(0, 12).map((s, i): unknown =>
         h("tr", { key: i },
           h("td", null, formatUtc(s.utc)),
           h("td", null, fx(s.gmUpdateDurationMs, 1)),
@@ -403,13 +386,13 @@ function renderSpikesSection(h: Any, spikes: Array<SpikeRecord>): Array<Any> | n
   ];
 }
 
-function renderTransfersSection(h: Any, transfers: Array<TransferStat>): Array<Any> {
+function renderTransfersSection(h: CreateElement, transfers: Array<TransferStat>): Array<unknown> {
   const headers = ["Package", "Count", "MiB", "Last bytes", "Max bytes"];
   return [
     h("h3", null, "Map and chunk transfers"),
     h("table", { className: "apm-table" },
-      h("thead", null, h("tr", null, headers.map((x): Any => h("th", { key: x }, x)))),
-      h("tbody", null, transfers.map((t): Any =>
+      h("thead", null, h("tr", null, headers.map((x): unknown => h("th", { key: x }, x)))),
+      h("tbody", null, transfers.map((t): unknown =>
         h("tr", { key: t.name },
           h("td", null, t.name),
           h("td", null, num(t.packages)),
@@ -430,19 +413,20 @@ function togglePerfHandler(opts: {
     return;
   }
   opts.setPerfBusy(true);
-  opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled }).catch(() => {
+  void opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled }).catch(() => {
     opts.setPerfBusy(false);
   });
 }
 
-function copySnapshot(snapshot: Any): void {
+function copySnapshot(snapshot: Record<string, unknown>): void {
   const txt = JSON.stringify(snapshot, null, 2);
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(txt);
+  // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: clipboard requires a secure context; the dashboard may be served over plain http
+  if (navigator.clipboard !== undefined) {
+    void navigator.clipboard.writeText(txt);
   }
 }
 
-function ApmPanel({ React, HTTP, useQuery }: PanelProps): Any {
+function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const h = React.createElement;
 
   // Authentication gate: an unauthenticated or non-admin session gets a 403
@@ -452,7 +436,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): Any {
   const [authBlocked, setAuthBlocked] = React.useState(false);
   const query = useQuery("seven-dtd-apm", () => HTTP.get("/api/apm"), { refetchInterval: 2000, enabled: !authBlocked, retry: false });
   React.useEffect((): void => {
-    if (query.isError) {
+    if (query.isError === true) {
       setAuthBlocked(true);
     }
   }, [query.isError]);
@@ -461,23 +445,23 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): Any {
 
   const hist = React.useRef<SparkHistory>({ last: null, tps: [], alloc: [], gm: [], gen2: [], heap: [] });
   const [frozen, setFrozen] = React.useState(false);
-  const frozenSnap = React.useRef<Any>(null);
+  const frozenSnap = React.useRef<Record<string, unknown> | null>(null);
   const [filter, setFilter] = React.useState("");
   const [sort, setSort] = React.useState({ key: "p95Ms", dir: -1 });
 
   // All hooks above; a failed fetch (e.g. logged-out session or logged-in
   // non-admin) renders a clear state instead of the NO DATA pills, and the
   // queries are paused (authBlocked) so nothing polls into an error storm.
-  if (query.isError) {
-    const status = (query.error && query.error.response && query.error.response.status) || 0;
+  if (query.isError === true) {
+    const status = query.error?.response?.status;
     return renderAuthError(h, "7DTD APM", status,
       "Authentication required: log in to the dashboard as an admin (permission level 0) to view server telemetry.",
       "Telemetry unavailable");
   }
 
-  const live: Snapshot = unwrapSnap(query.data);
-  const snapshot = frozen && frozenSnap.current ? frozenSnap.current : live;
-  if (!frozen && live.utc && live.utc !== hist.current.last) {
+  const live = unwrapSnap(query.data);
+  const snapshot = frozen && frozenSnap.current !== null ? frozenSnap.current : live;
+  if (!frozen && typeof live.utc === "string" && live.utc !== hist.current.last) {
     pushHistory(hist.current, live.utc, live);
   }
   const update = objOrEmpty(snapshot.update);
@@ -488,7 +472,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): Any {
   const transfers = listOrEmpty<TransferStat>(snapshot.mapTransfers);
   const spikes = listOrEmpty<SpikeRecord>(snapshot.spikes);
   const g = grade(update);
-  const perf: PerfState = unwrapSnap(perfQ.data);
+  const perf = unwrapSnap(perfQ.data);
   const perfEnabled = perf.enabled === true;
   const perfAvailable = perf.available === true;
 
@@ -507,7 +491,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): Any {
     renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, togglePerf),
     renderTickBudget(h, React, update, g),
     renderGrid(h, React, g, hist.current, update, gc, world, health),
-    health.lastExportError ? h("pre", { className: "apm-error" }, health.lastExportError) : null,
+    strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error" }, health.lastExportError),
     renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter),
     renderSpikesSection(h, spikes),
     renderTransfersSection(h, transfers));
@@ -515,19 +499,19 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): Any {
 
 // Focused panel for the EfficientServer perf mod toggle (its own top-level
 // menu entry alongside APM). Same /api/perf admin endpoint.
-function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): Any {
+function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const h = React.createElement;
   const [blocked, setBlocked] = React.useState(false);
   const perfQ = useQuery("apm-perf-efficiency", () => HTTP.get("/api/perf"), { refetchInterval: 30_000, enabled: !blocked, retry: false });
   React.useEffect((): void => {
-    if (perfQ.isError) {
+    if (perfQ.isError === true) {
       setBlocked(true);
     }
   }, [perfQ.isError]);
   const [busy, setBusy] = React.useState(false);
 
-  if (perfQ.isError) {
-    const status = (perfQ.error && perfQ.error.response && perfQ.error.response.status) || 0;
+  if (perfQ.isError === true) {
+    const status = perfQ.error?.response?.status;
     return renderAuthError(h, "Efficiency", status,
       "Authentication required: log in to the dashboard as an admin (permission level 0) to control the perf mod.",
       "Perf API unavailable");
@@ -553,11 +537,11 @@ function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): Any {
 // Gate the entry on the session cookie so it is hidden while logged out; the
 // dashboard reloads the page after login/logout, so this re-evaluates.
 const loggedIn = document.cookie.split(";").some((c) => c.trim().startsWith("sid="));
-const webMod: Any = {
+const webMod = {
   about: "Live, low-overhead managed telemetry from 7dtd-apm-bridge.",
   routes: loggedIn ? { "APM": ApmPanel, "Efficiency": EfficiencyPanel } : {},
   settings: {},
   mapComponents: []
 };
-globalThis[modId] = webMod;
+Object.assign(globalThis, { [modId]: webMod });
 globalThis.dispatchEvent(new Event(`mod:${modId}:ready`));

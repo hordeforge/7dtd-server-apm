@@ -34,16 +34,20 @@
   //     imports by design.
   //   vitest/*, jsdoc/*, strict-runtime node/*: not applicable (no tests, no
   //     node runtime).
+  //   eslint/no-void: typescript/no-floating-promises (enforced below) requires
+  //     the void operator to mark fire-and-forget promises; no-void would ban it.
   //
-  // Type-aware: options.typeAware (the strict preset's typescript/* rules that
-  // need real type info) is intentionally OFF here. The source types the
-  // snapshot shape through the Any alias (see the no-explicit-any disable
-  // comment in bundle.ts) because the dashboard payload is injected and
-  // untyped; a type-aware pass would flag ~150 no-unsafe-* findings. Enabling
-  // it requires re-typing the payload accessors against Snapshot and is a
-  // follow-up, not part of this gate.
+  // Type-aware: options.typeAware runs the strict preset's typescript/* rules
+  // that need real type info (no-unsafe-*, strict-boolean-expressions,
+  // no-floating-promises, prefer-nullish-coalescing, ...). lint-webui.sh
+  // installs the separate oxlint-tsgolint binary and puts it on PATH. The
+  // tsconfig is strict (strictNullChecks): several of these rules refuse to
+  // run without it. The payload is untyped runtime JSON, so the boundary casts
+  // in the shape guards carry documented disable comments instead of an any
+  // alias.
   "$schema": "https://raw.githubusercontent.com/oxc-project/oxc/main/npm/oxlint/configuration_schema.json",
   "env": { "browser": true, "es2024": true },
+  "options": { "typeAware": true },
   "categories": {
     "correctness": "error",
     "suspicious": "error"
@@ -113,11 +117,28 @@
     "prefer-promise-reject-errors": "error",
     "array-callback-return": "error",
     // ---- typescript/* the source passes (2026-08-22) ----
-    "typescript/no-explicit-any": "error", // bundle.ts alias line carries a documented disable
+    "typescript/no-explicit-any": "error",
     "typescript/consistent-type-definitions": ["error", "type"],
     "typescript/array-type": ["error", { "default": "generic" }],
     "typescript/explicit-function-return-type": "error",
     "typescript/consistent-type-assertions": ["error", { "assertionStyle": "as" }],
+    // ---- type-aware typescript/* (options.typeAware + oxlint-tsgolint; the
+    //      shape-guard boundary casts carry documented disables in bundle.ts) ----
+    "typescript/no-unsafe-member-access": "error",
+    "typescript/no-unsafe-call": "error",
+    "typescript/no-unsafe-assignment": "error",
+    "typescript/no-unsafe-return": "error",
+    "typescript/no-unsafe-argument": "error",
+    "typescript/no-unsafe-type-assertion": "error",
+    "typescript/strict-boolean-expressions": "error",
+    "typescript/no-unnecessary-condition": "error",
+    "typescript/prefer-nullish-coalescing": "error",
+    "typescript/prefer-optional-chain": "error",
+    "typescript/no-floating-promises": "error",
+    "typescript/no-useless-default-assignment": "error",
+    "typescript/no-unnecessary-type-conversion": "error",
+    "typescript/no-unnecessary-type-assertion": "error",
+    "typescript/no-base-to-string": "error",
     // ---- unicorn rules the source passes (2026-08-22) ----
     "unicorn/catch-error-name": "error",
     "unicorn/prefer-number-properties": "error",
@@ -154,6 +175,7 @@
     "no-array-sort": "off",
     "no-array-reverse": "off",
     "unicorn/prefer-at": "off",
+    "no-void": "off",
     "@rikalabs/no-single-use-trivial-helpers": "off",
     "@rikalabs/no-trivial-runtime-guard-helpers": "off"
   }

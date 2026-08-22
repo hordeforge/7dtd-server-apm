@@ -15,13 +15,25 @@ const mib = (bytes) => num(bytes) / 1048576;
 // older bridge schema). Coerce once here instead of fallback-defaulting every
 // property access in the render path.
 function objOrEmpty(candidate) {
-    return candidate !== undefined && candidate !== null && typeof candidate === "object" ? candidate : {};
+    if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
+        return {};
+    }
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; the guard above proves the runtime value is a plain object
+    return candidate;
 }
 function listOrEmpty(candidate) {
-    return Array.isArray(candidate) ? candidate : [];
+    if (!Array.isArray(candidate)) {
+        return [];
+    }
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; Array.isArray is the runtime proof for the element cast
+    return candidate;
 }
 function strOrEmpty(candidate) {
-    return candidate === undefined || candidate === null ? "" : String(candidate);
+    if (candidate === undefined || candidate === null) {
+        return "";
+    }
+    // oxlint-disable-next-line typescript/no-base-to-string -- deliberate: payload values are JSON primitives (numbers, strings); String() renders them into labels
+    return String(candidate);
 }
 function grade(update) {
     const avg = num(update.serverTickIntervalAvgMs);
@@ -75,18 +87,23 @@ function unwrapSnap(o) {
     if (typeof o !== "object" || o === null) {
         return {};
     }
-    const { data } = o;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+    const record = o;
+    const { data } = record;
     if (typeof data !== "object" || data === null) {
-        return o;
+        return record;
     }
-    const inner = data.data;
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
+    const innerRecord = data;
+    const inner = innerRecord.data;
     if (typeof inner === "object" && inner !== null) {
+        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; typeof above proves the runtime value is an object
         return inner;
     }
-    if (data.schema || data.update || data.enabled) {
-        return data;
+    if (innerRecord.schema !== undefined || innerRecord.update !== undefined || innerRecord.enabled !== undefined) {
+        return innerRecord;
     }
-    return o;
+    return record;
 }
 function pushHistory(hist, utc, live) {
     hist.last = utc;
@@ -100,13 +117,13 @@ function pushHistory(hist, utc, live) {
         }
     };
     push(hist.tps, avg > 0 ? 1000 / avg : 0);
-    push(hist.alloc, lgc.grossAllocBytesPerSecond >= 0 ? mib(lgc.grossAllocBytesPerSecond) : 0);
+    push(hist.alloc, num(lgc.grossAllocBytesPerSecond) >= 0 ? mib(lgc.grossAllocBytesPerSecond) : 0);
     push(hist.gm, num(lu.gmUpdateDurationAvgMs));
     push(hist.gen2, num(lgc.gen2PerSecond));
     push(hist.heap, mib(lgc.heapBytes));
 }
 function cell(h, label, valueText, cls) {
-    return h("div", { className: `apm-cell${cls ? ` ${cls}` : ""}` }, h("span", { className: "apm-label" }, label), h("strong", null, valueText === null || valueText === undefined ? "—" : valueText));
+    return h("div", { className: `apm-cell${cls !== null && cls !== "" ? ` ${cls}` : ""}` }, h("span", { className: "apm-label" }, label), h("strong", null, valueText !== null && valueText !== void 0 ? valueText : "—"));
 }
 function trend(h, React, label, series, cur, color) {
     return h("div", { className: "apm-cell apm-trend" }, h("span", { className: "apm-label" }, label), h("strong", null, cur), spark(React, series, color, 130, 30));
@@ -115,11 +132,11 @@ function formatUtc(utc) {
     return strOrEmpty(utc).replace("T", " ").replace(/\..*$/u, "");
 }
 function renderAuthError(h, title, status, authMessage, unavailablePrefix) {
-    const msg = status === 403 ? authMessage : `${unavailablePrefix} (HTTP ${status || "error"}).`;
+    const msg = status === 403 ? authMessage : `${unavailablePrefix} (HTTP ${status !== null && status !== void 0 ? status : "error"}).`;
     return h("div", { className: "seven-dtd-apm" }, h("h2", null, title), h("span", { className: "apm-pill apm-bad" }, "AUTH REQUIRED"), h("p", null, msg), h("button", { className: "apm-btn", onClick: () => { location.href = "/"; } }, "Log in"));
 }
 function renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update) {
-    return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), h("button", { className: "apm-btn", onClick: toggleFreeze }, frozen ? "▶ Resume" : "⏸ Freeze"), h("button", { className: "apm-btn", onClick: copyJson }, "⧉ Copy JSON"), h("span", { className: "apm-window" }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
+    return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), h("button", { className: "apm-btn", onClick: toggleFreeze }, frozen ? "▶ Resume" : "⏸ Freeze"), h("button", { className: "apm-btn", onClick: copyJson }, "⧉ Copy JSON"), h("span", { className: "apm-window" }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
 }
 function perfToggleLabel(perfBusy, perfEnabled) {
     if (perfBusy) {
@@ -136,13 +153,16 @@ function renderTickBudget(h, React, update, g) {
     return h("div", { className: "apm-tick-budget" }, h("span", { className: "apm-label" }, "Tick vs 50 ms budget"), budgetBar(React, frac, healthy ? "" : g.cls), h("span", { className: "apm-budget-val" }, `${fx(update.serverTickIntervalAvgMs, 1)} ms`));
 }
 function renderGrid(h, React, g, H, update, gc, world, health) {
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined before the first sample
     const lastAlloc = H.alloc[H.alloc.length - 1];
-    return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "#57d977"), trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc === undefined ? 0 : lastAlloc, 1), "#e6bd3a"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null));
+    return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "#57d977"), 
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined at runtime before the first sample
+    trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "#e6bd3a"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null));
 }
 function bySortKey(sort) {
     return (a, b) => {
-        const av = sort.key === "name" ? String(a.name) : num(a[sort.key]);
-        const bv = sort.key === "name" ? String(b.name) : num(b[sort.key]);
+        const av = sort.key === "name" ? a.name : num(a[sort.key]);
+        const bv = sort.key === "name" ? b.name : num(b[sort.key]);
         let cmp = 0;
         if (av < bv) {
             cmp = -1;
@@ -174,7 +194,7 @@ function budgetBarClass(frac) {
 }
 function renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter) {
     const shown = [...sections]
-        .filter((s) => !filter || strOrEmpty(s.name).toLowerCase().includes(filter.toLowerCase()))
+        .filter((s) => filter.length === 0 || strOrEmpty(s.name).toLowerCase().includes(filter.toLowerCase()))
         .sort(bySortKey(sort));
     const th = (label, key) => {
         let marker = "";
@@ -186,11 +206,14 @@ function renderSectionsSection(h, React, sections, sort, setSortKey, filter, set
     return [
         h("div", { className: "apm-sec-head" }, h("h3", null, "Managed sections"), h("input", {
             className: "apm-filter", type: "text", placeholder: "filter…",
-            value: filter, onChange: (e) => setFilter(e.target.value)
+            value: filter, onChange: (e) => {
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: the dashboard event target is the filter input the handler is bound to
+                setFilter(e.target.value);
+            }
         })),
         h("table", { className: "apm-table" }, h("thead", null, h("tr", null, th("Section", "name"), th("Calls", "calls"), th("Avg", "avgMs"), th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"), h("th", { key: "budget" }, "% of 50ms"))), h("tbody", null, shown.map((s) => {
             const frac = num(s.avgMs) / TICK_BUDGET_MS;
-            return h("tr", { key: s.name, className: sectionRowClass(s) }, h("td", null, `${s.name}${s.deep ? " ·deep" : ""}`), h("td", null, num(s.calls)), h("td", null, fx(s.avgMs, 3)), h("td", null, fx(s.p95Ms, 3)), h("td", null, fx(s.p99Ms, 3)), h("td", null, fx(s.maxMs, 3)), h("td", { className: "apm-budget-cell" }, budgetBar(React, frac, budgetBarClass(frac)), h("span", { className: "apm-budget-pct" }, `${fx(frac * 100, 1)}%`)));
+            return h("tr", { key: s.name, className: sectionRowClass(s) }, h("td", null, `${s.name}${s.deep === true ? " ·deep" : ""}`), h("td", null, num(s.calls)), h("td", null, fx(s.avgMs, 3)), h("td", null, fx(s.p95Ms, 3)), h("td", null, fx(s.p99Ms, 3)), h("td", null, fx(s.maxMs, 3)), h("td", { className: "apm-budget-cell" }, budgetBar(React, frac, budgetBarClass(frac)), h("span", { className: "apm-budget-pct" }, `${fx(frac * 100, 1)}%`)));
         }))),
     ];
 }
@@ -216,17 +239,19 @@ function togglePerfHandler(opts) {
         return;
     }
     opts.setPerfBusy(true);
-    opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled }).catch(() => {
+    void opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled }).catch(() => {
         opts.setPerfBusy(false);
     });
 }
 function copySnapshot(snapshot) {
     const txt = JSON.stringify(snapshot, null, 2);
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(txt);
+    // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: clipboard requires a secure context; the dashboard may be served over plain http
+    if (navigator.clipboard !== undefined) {
+        void navigator.clipboard.writeText(txt);
     }
 }
 function ApmPanel({ React, HTTP, useQuery }) {
+    var _a, _b;
     const h = React.createElement;
     // Authentication gate: an unauthenticated or non-admin session gets a 403
     // from /api/apm. Stop after the first failure instead of polling every 2 s
@@ -235,7 +260,7 @@ function ApmPanel({ React, HTTP, useQuery }) {
     const [authBlocked, setAuthBlocked] = React.useState(false);
     const query = useQuery("seven-dtd-apm", () => HTTP.get("/api/apm"), { refetchInterval: 2000, enabled: !authBlocked, retry: false });
     React.useEffect(() => {
-        if (query.isError) {
+        if (query.isError === true) {
             setAuthBlocked(true);
         }
     }, [query.isError]);
@@ -249,13 +274,13 @@ function ApmPanel({ React, HTTP, useQuery }) {
     // All hooks above; a failed fetch (e.g. logged-out session or logged-in
     // non-admin) renders a clear state instead of the NO DATA pills, and the
     // queries are paused (authBlocked) so nothing polls into an error storm.
-    if (query.isError) {
-        const status = (query.error && query.error.response && query.error.response.status) || 0;
+    if (query.isError === true) {
+        const status = (_b = (_a = query.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
         return renderAuthError(h, "7DTD APM", status, "Authentication required: log in to the dashboard as an admin (permission level 0) to view server telemetry.", "Telemetry unavailable");
     }
     const live = unwrapSnap(query.data);
-    const snapshot = frozen && frozenSnap.current ? frozenSnap.current : live;
-    if (!frozen && live.utc && live.utc !== hist.current.last) {
+    const snapshot = frozen && frozenSnap.current !== null ? frozenSnap.current : live;
+    if (!frozen && typeof live.utc === "string" && live.utc !== hist.current.last) {
         pushHistory(hist.current, live.utc, live);
     }
     const update = objOrEmpty(snapshot.update);
@@ -278,22 +303,23 @@ function ApmPanel({ React, HTTP, useQuery }) {
     const togglePerf = () => togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled });
     const copyJson = () => copySnapshot(snapshot);
     const setSortKey = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
-    return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, togglePerf), renderTickBudget(h, React, update, g), renderGrid(h, React, g, hist.current, update, gc, world, health), health.lastExportError ? h("pre", { className: "apm-error" }, health.lastExportError) : null, renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
+    return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, togglePerf), renderTickBudget(h, React, update, g), renderGrid(h, React, g, hist.current, update, gc, world, health), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
 }
 // Focused panel for the EfficientServer perf mod toggle (its own top-level
 // menu entry alongside APM). Same /api/perf admin endpoint.
 function EfficiencyPanel({ React, HTTP, useQuery }) {
+    var _a, _b;
     const h = React.createElement;
     const [blocked, setBlocked] = React.useState(false);
     const perfQ = useQuery("apm-perf-efficiency", () => HTTP.get("/api/perf"), { refetchInterval: 30000, enabled: !blocked, retry: false });
     React.useEffect(() => {
-        if (perfQ.isError) {
+        if (perfQ.isError === true) {
             setBlocked(true);
         }
     }, [perfQ.isError]);
     const [busy, setBusy] = React.useState(false);
-    if (perfQ.isError) {
-        const status = (perfQ.error && perfQ.error.response && perfQ.error.response.status) || 0;
+    if (perfQ.isError === true) {
+        const status = (_b = (_a = perfQ.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
         return renderAuthError(h, "Efficiency", status, "Authentication required: log in to the dashboard as an admin (permission level 0) to control the perf mod.", "Perf API unavailable");
     }
     const perf = unwrapSnap(perfQ.data);
@@ -312,5 +338,5 @@ const webMod = {
     settings: {},
     mapComponents: []
 };
-globalThis[modId] = webMod;
+Object.assign(globalThis, { [modId]: webMod });
 globalThis.dispatchEvent(new Event(`mod:${modId}:ready`));
