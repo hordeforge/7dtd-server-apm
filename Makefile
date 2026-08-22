@@ -2,9 +2,10 @@ ROOT := $(CURDIR)
 DS ?= $(HOME)/.local/share/Steam/steamapps/common/7 Days to Die Dedicated Server
 UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --project $(ROOT)
 
-.PHONY: test lint lint-shell check-bt format format-check typecheck check lint-html lint-webui clean bridge-build bridge-install bridge-uninstall
+.PHONY: test lint lint-shell check-bt format format-check typecheck check lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package
 test:
 	$(UV) pytest
+	$(UV) python scripts/check_version.py
 lint:
 	$(UV) ruff check tools
 lint-shell:
@@ -33,6 +34,9 @@ bridge-install:
 	SEVENDTD_DS_DIR="$(DS)" ./scripts/install_bridge.sh
 bridge-uninstall:
 	rm -rf "$(DS)/Mods/7dtd-apm-bridge"
+package:
+	chmod +x scripts/build_bridge.sh scripts/package.sh
+	./scripts/package.sh
 clean:
 	rm -rf .mypy_cache .pytest_cache .ruff_cache .uv-cache .venv dist
 	find tools -type d -name __pycache__ -prune -exec rm -rf {} +
