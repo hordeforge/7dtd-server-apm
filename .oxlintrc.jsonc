@@ -148,7 +148,10 @@
     "unicorn/explicit-length-check": "error",
     "unicorn/numeric-separators-style": "error",
     "unicorn/no-nested-ternary": "error",
-    "unicorn/consistent-function-scoping": "error",
+    // unicorn/consistent-function-scoping off: the whole bundle is one IIFE
+    // (plain-script global collision guard, see the bundle.ts header), so
+    // module-level helpers cannot hoist past the wrapper.
+    "unicorn/consistent-function-scoping": "off",
     // ---- oxlint-standards custom plugin (@rikalabs/*): anti-slop heuristics ----
     "@rikalabs/no-commented-out-code": "error",
     "@rikalabs/no-identical-branches": "error",

@@ -4,6 +4,11 @@
 // and reads window["7dtd-apm-bridge"]: routes render as direct sidebar entries
 // (hidden until the sid session cookie is present), settings as Settings tabs.
 // Do not hand-edit bundle.js; regenerate from this file.
+//
+// The whole body is an IIFE on purpose: webmod bundles are plain <script> tags
+// sharing the global scope, and a bare top-level const (e.g. modId) collides
+// across mods (SyntaxError kills the later bundle's registration).
+((): void => {
 
 // Snapshot schema as served by GET /api/apm (7dtd.apm.app.v3). The payload is
 // untyped runtime JSON, so sections are read through the shape guards below;
@@ -134,10 +139,19 @@ function spark(React: PanelProps["React"], values: Array<number>, color: string,
   const pts = values
     .map((v, i): string => `${(i / (n - 1)) * w},${h - ((v - min) / span) * h}`)
     .join(" ");
+  const lastPoint = pts.split(" ").pop() ?? "";
+  const [lastX, lastY] = lastPoint.split(",");
+  const gradId = `apm-grad-${color.slice(1)}`;
   return React.createElement(
     "svg",
     { className: "apm-spark", width: w, height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none" },
-    React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 1.5 })
+    React.createElement("defs", null,
+      React.createElement("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 },
+        React.createElement("stop", { offset: "0%", stopColor: color, stopOpacity: 0.35 }),
+        React.createElement("stop", { offset: "100%", stopColor: color, stopOpacity: 0.02 }))),
+    React.createElement("polygon", { points: `0,${h} ${pts} ${w},${h}`, fill: `url(#${gradId})` }),
+    React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 1.5 }),
+    React.createElement("circle", { cx: lastX, cy: lastY, r: 2, fill: color })
   );
 }
 
@@ -250,14 +264,193 @@ function renderPerfRow(h: CreateElement, perfEnabled: boolean, perfAvailable: bo
     h("span", { className: "apm-window" }, "flips the config, restarts the server (~1-2 min)"));
 }
 
-function renderTickBudget(h: CreateElement, React: PanelProps["React"], update: Record<string, unknown>, g: Grade): unknown {
-  const healthy = g.cls === "apm-ok";
-  const frac = num(update.serverTickIntervalAvgMs) / (TICK_BUDGET_MS * 2);
-  return h("div", { className: "apm-tick-budget" },
-    h("span", { className: "apm-label" }, "Tick vs 50 ms budget"),
-    budgetBar(React, frac, healthy ? "" : g.cls),
-    h("span", { className: "apm-budget-val" }, `${fx(update.serverTickIntervalAvgMs, 1)} ms`));
+// ---- charts: hand-built SVG (no chart library in the dashboard) ----
+
+type TrendSeries = {
+  key: string;
+  label: string;
+  values: Array<number>;
+  color: string;
+  format: (v: number) => string;
+};
+
+function trendSeriesOf(H: SparkHistory): Array<TrendSeries> {
+  return [
+    { key: "tps", label: "TPS", values: H.tps, color: "#57d977", format: (v: number): string => v.toFixed(1) },
+    { key: "gm", label: "gmUpdate ms", values: H.gm, color: "#8ab4f8", format: (v: number): string => v.toFixed(2) },
+  ];
 }
+
+function niceMax(value: number): number {
+  if (value <= 0) {
+    return 10;
+  }
+  const exp = Math.floor(Math.log10(value));
+  const base = Math.pow(10, exp);
+  const frac = value / base;
+  let nice = 10;
+  if (frac <= 1) {
+    nice = 1;
+  } else if (frac <= 2) {
+    nice = 2;
+  } else if (frac <= 5) {
+    nice = 5;
+  }
+  return nice * base;
+}
+
+function seriesPaths(values: Array<number>, width: number, height: number, max: number): { points: string; areaD: string } {
+  const span = max > 0 ? max : 1;
+  const n = values.length;
+  const step = n > 1 ? width / (n - 1) : 0;
+  const points = values
+    .map((v, i): string => {
+      const x = Math.round(i * step * 100) / 100;
+      const y = Math.round((height - (v / span) * height) * 100) / 100;
+      return `${x},${y}`;
+    })
+    .join(" ");
+  return { points, areaD: `M ${points} L ${width},${height} L 0,${height} Z` };
+}
+
+function arcPath(cx: number, cy: number, r: number, start: number, end: number): string {
+  const x1 = cx + r * Math.cos(start);
+  const y1 = cy - r * Math.sin(start);
+  const x2 = cx + r * Math.cos(end);
+  const y2 = cy - r * Math.sin(end);
+  const large = Math.abs(end - start) > Math.PI ? 1 : 0;
+  return `M ${x1} ${y1} A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`;
+}
+
+function gaugeColor(frac: number): string {
+  if (frac < 0.6) {
+    return "#57d977";
+  }
+  if (frac < 0.9) {
+    return "#e6bd3a";
+  }
+  return "#ff7070";
+}
+
+function topBarClass(p95: number): string {
+  if (p95 > 16) {
+    return "apm-bad";
+  }
+  if (p95 > 5) {
+    return "apm-warn";
+  }
+  return "apm-ok";
+}
+
+function trendGrid(h: CreateElement, width: number, padLeft: number, padTop: number, innerH: number, max: number, yOf: (v: number) => number): unknown {
+  const fracs = [0, 0.25, 0.5, 0.75, 1];
+  return h("g", null, fracs.map((f): unknown => {
+    const y = yOf(f * max);
+    return h("g", { key: f },
+      h("line", { className: "apm-gridline", x1: padLeft, y1: y, x2: width, y2: y }),
+      h("text", { className: "apm-axis-label", x: 4, y: y + 3, textAnchor: "start" }, `${Math.round(f * max)}`));
+  }));
+}
+
+function trendSeriesSvg(h: CreateElement, s: TrendSeries, innerW: number, innerH: number, max: number, yOf: (v: number) => number, hoverIdx: number): unknown {
+  const paths = seriesPaths(s.values, innerW, innerH, max);
+  const gradId = `apg-${s.key}`;
+  const hoverCircle = hoverIdx >= 0
+    ? h("circle", { cx: (hoverIdx * innerW) / (s.values.length - 1), cy: yOf(s.values[hoverIdx]), r: 3, fill: s.color })
+    : null;
+  return h("g", { key: s.key },
+    h("defs", null,
+      h("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 },
+        h("stop", { offset: "0%", stopColor: s.color, stopOpacity: 0.3 }),
+        h("stop", { offset: "100%", stopColor: s.color, stopOpacity: 0.02 }))),
+    h("polygon", { points: `0,${innerH} ${paths.points} ${innerW},${innerH}`, fill: `url(#${gradId})` }),
+    h("polyline", { points: paths.points, fill: "none", stroke: s.color, strokeWidth: 1.5 }),
+    hoverCircle);
+}
+
+function trendLegend(h: CreateElement, series: Array<TrendSeries>, hoverIdx: number, secondsPerSample: number): unknown {
+  const idx = hoverIdx >= 0 ? hoverIdx : series[0].values.length - 1;
+  const ago = Math.round((series[0].values.length - 1 - idx) * secondsPerSample);
+  return h("div", { className: "apm-legend" },
+    series.map((s): unknown => h("span", { key: s.key, className: "apm-legend-chip" },
+      h("span", { className: "apm-legend-swatch", style: { background: s.color } }),
+      h("span", null, `${s.label} `),
+      h("strong", { className: "apm-legend-value" }, s.format(s.values[idx])))),
+    h("span", { className: "apm-axis-label" }, hoverIdx >= 0 ? `${ago}s ago` : "live"));
+}
+
+function renderTrendsChart(h: CreateElement, React: PanelProps["React"], H: SparkHistory): unknown {
+  const [hoverIdx, setHoverIdx] = React.useState(-1);
+  const width = 600;
+  const height = 150;
+  const padLeft = 36;
+  const padTop = 10;
+  const padBottom = 20;
+  const innerW = width - padLeft;
+  const innerH = height - padTop - padBottom;
+  const n = H.tps.length;
+  if (n < 2) {
+    return h("div", { className: "apm-chart apm-trends" }, "Collecting samples for the trends chart…");
+  }
+  const series = trendSeriesOf(H);
+  const max = niceMax(Math.max(...series.reduce<Array<number>>((acc, s) => [...acc, ...s.values], []), 1));
+  const step = innerW / (n - 1);
+  const yOf = (v: number): number => padTop + innerH - (v / max) * innerH;
+  const crossX = hoverIdx >= 0 ? padLeft + hoverIdx * step : -1;
+  const onMove = (e: MouseEvent): void => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: the chart svg is the handler target
+    const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
+    const idx = Math.round((e.clientX - rect.left - padLeft) / step);
+    setHoverIdx(Math.max(0, Math.min(n - 1, idx)));
+  };
+  return h("div", { className: "apm-chart apm-trends" },
+    h("svg", { width, height, viewBox: `0 0 ${width} ${height}`, onMouseMove: onMove, onMouseLeave: (): void => setHoverIdx(-1) },
+      trendGrid(h, width, padLeft, padTop, innerH, max, yOf),
+      h("g", null, series.map((s): unknown => trendSeriesSvg(h, s, innerW, innerH, max, yOf, hoverIdx))),
+      crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null,
+      h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * 2)}s ago`),
+      h("text", { className: "apm-axis-label", x: width - 4, y: height - 4, textAnchor: "end" }, "now")),
+    trendLegend(h, series, hoverIdx, 2));
+}
+
+function renderBudgetGauge(h: CreateElement, update: Record<string, unknown>): unknown {
+  const width = 230;
+  const height = 120;
+  const cx = width / 2;
+  const cy = height - 6;
+  const r = 92;
+  const avg = num(update.serverTickIntervalAvgMs);
+  const frac = Math.min(1, avg / TICK_BUDGET_MS);
+  return h("div", { className: "apm-chart apm-gauge" },
+    h("div", { className: "apm-gauge-title" }, "Tick vs budget"),
+    h("svg", { width, height, viewBox: `0 0 ${width} ${height}` },
+      h("path", { d: arcPath(cx, cy, r, Math.PI, 0), fill: "none", stroke: "#1d2631", strokeWidth: 14, strokeLinecap: "round" }),
+      frac > 0
+        ? h("path", { d: arcPath(cx, cy, r, Math.PI, Math.PI - frac * Math.PI), fill: "none", stroke: gaugeColor(frac), strokeWidth: 14, strokeLinecap: "round" })
+        : null,
+      h("text", { x: cx, y: cy - 30, textAnchor: "middle", className: "apm-gauge-value" }, `${fx(avg, 1)} ms`),
+      h("text", { x: cx, y: cy - 12, textAnchor: "middle", className: "apm-gauge-label" }, `of ${TICK_BUDGET_MS} ms budget`)));
+}
+
+function renderTopSections(h: CreateElement, sections: Array<SectionStat>): unknown {
+  const top = [...sections].sort((a, b): number => num(b.p95Ms) - num(a.p95Ms)).slice(0, 8);
+  if (top.length === 0) {
+    return null;
+  }
+  const maxP95 = Math.max(...top.map((s): number => num(s.p95Ms)), 1);
+  return h("div", { className: "apm-chart apm-topbars" },
+    h("h3", null, "Top sections by P95"),
+    top.map((s): unknown => {
+      const p95 = num(s.p95Ms);
+      const frac = p95 / maxP95;
+      return h("div", { key: s.name, className: "apm-topbar-row" },
+        h("span", { className: "apm-topbar-name" }, s.name),
+        h("div", { className: "apm-topbar-track" },
+          h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { width: `${Math.round(frac * 100)}%` } })),
+        h("span", { className: "apm-topbar-val" }, `${fx(p95, 2)} ms`));
+    }));
+}
+
 
 function renderGrid(h: CreateElement, React: PanelProps["React"], g: Grade, H: SparkHistory, update: Record<string, unknown>, gc: Record<string, unknown>, world: Record<string, unknown>, health: Record<string, unknown>): unknown {
   // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined before the first sample
@@ -402,6 +595,18 @@ function renderTransfersSection(h: CreateElement, transfers: Array<TransferStat>
   ];
 }
 
+function freezeHandler(opts: {
+  frozen: boolean;
+  setFrozen: (v: boolean) => void;
+  live: Record<string, unknown>;
+  frozenSnap: { current: Record<string, unknown> | null };
+}): void {
+  if (!opts.frozen) {
+    opts.frozenSnap.current = opts.live;
+  }
+  opts.setFrozen(!opts.frozen);
+}
+
 function togglePerfHandler(opts: {
   HTTP: PanelProps["HTTP"];
   perfBusy: boolean;
@@ -476,21 +681,18 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const perfEnabled = perf.enabled === true;
   const perfAvailable = perf.available === true;
 
-  const toggleFreeze = (): void => {
-    if (!frozen) {
-      frozenSnap.current = live;
-    }
-    setFrozen(!frozen);
-  };
+  const toggleFreeze = (): void => freezeHandler({ frozen, setFrozen, live, frozenSnap });
   const togglePerf = (): void => togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled });
-  const copyJson = (): void => copySnapshot(snapshot);
   const setSortKey = (key: string): void => setSort((s): { key: string; dir: number } => ({ key, dir: s.key === key ? -s.dir : -1 }));
 
   return h("div", { className: "seven-dtd-apm" },
-    renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update),
+    renderHead(h, g, frozen, toggleFreeze, (): void => copySnapshot(snapshot), gc, update),
     renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, togglePerf),
-    renderTickBudget(h, React, update, g),
-    renderGrid(h, React, g, hist.current, update, gc, world, health),
+    renderTrendsChart(h, React, hist.current),
+    h("div", { className: "apm-charts-row" },
+      renderBudgetGauge(h, update),
+      renderGrid(h, React, g, hist.current, update, gc, world, health)),
+    renderTopSections(h, sections),
     strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error" }, health.lastExportError),
     renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter),
     renderSpikesSection(h, spikes),
@@ -545,3 +747,4 @@ const webMod = {
 };
 Object.assign(globalThis, { [modId]: webMod });
 globalThis.dispatchEvent(new Event(`mod:${modId}:ready`));
+})();
