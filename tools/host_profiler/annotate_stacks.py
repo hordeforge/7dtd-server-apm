@@ -9,7 +9,7 @@ so interactive flames and Speedscope show *which layer* a native frame belongs t
 bridging OS stacks toward mod work without full JIT symbolication.
 
 Usage:
-  python3 tools/apm/annotate_stacks.py stacks.folded -o stacks.annotated.folded
+  python3 tools/host_profiler/annotate_stacks.py stacks.folded -o stacks.annotated.folded
   # then make_flames on the annotated file
 """
 

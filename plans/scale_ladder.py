@@ -9,6 +9,7 @@ near each player.
 """
 
 import json
+import os
 import re
 import socket
 import subprocess
@@ -16,7 +17,8 @@ import time
 from pathlib import Path
 
 APM = Path(__file__).resolve().parent.parent  # 7dtd-apm repo root (plans/..)
-HOST, PORT, PASSWORD = "127.0.0.1", 8081, "retest"
+HOST, PORT = "127.0.0.1", 8081
+PASSWORD = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
 TIERS = [100, 300, 600, 1000]
 SNAPSHOT = Path.home() / (
     ".local/share/Steam/steamapps/common/7 Days to Die Dedicated Server"
@@ -93,6 +95,9 @@ def newest_session() -> Path:
 
 
 def main() -> int:
+    if not PASSWORD:
+        print("SEVENDTD_TELNET_PASSWORD is required (passwords are never stored here)", flush=True)
+        return 1
     ids = player_ids()
     print(f"players joined: {len(ids)}", flush=True)
     if len(ids) < 10:
@@ -114,14 +119,11 @@ def main() -> int:
                 "--only",
                 "all",
                 "--reset-bridge",
-                "--telnet-password",
-                PASSWORD,
             ],
             cwd=APM,
             env={
+                **os.environ,
                 "UV_CACHE_DIR": str(APM / ".uv-cache"),
-                "PATH": "/usr/bin:/bin:/usr/local/bin",
-                "HOME": str(Path.home()),
             },
             check=False,
         )

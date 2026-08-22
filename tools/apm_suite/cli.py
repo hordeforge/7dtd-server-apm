@@ -24,7 +24,7 @@ from .capture import find_server_pid, run_capture, unknown_only_tokens, write_pl
 from .doctor import inspect
 from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, load_json
-from .paths import APM_BACKENDS, REPO, apm_root
+from .paths import REPO, apm_root
 from .runner import backend_python, run
 from .session import audit_session
 
@@ -949,7 +949,9 @@ def flame_build(directory: Path) -> None:
 @flame_app.command("diff")
 def flame_diff(before: Path, after: Path) -> None:
     """Build a differential flamegraph HTML from two sessions."""
-    _exit(backend_python(APM_BACKENDS / "flame_diff_html.py", [str(before), str(after)]))
+    _exit(
+        backend_python(REPO / "tools/host_profiler/flame_diff_html.py", [str(before), str(after)])
+    )
 
 
 if __name__ == "__main__":

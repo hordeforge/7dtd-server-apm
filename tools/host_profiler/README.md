@@ -1,6 +1,7 @@
 # Host perf / bpftrace helpers
 
-Private backends used by `uv run 7dtd-apm capture`. Complements the optional
+Private backends invoked by `uv run 7dtd-apm capture` and the flame commands.
+Complements the optional
 managed bridge (`bridge/README.md`, `docs/APM_CS_BRIDGE.md`). Host samples show
 native CPU, GC, IO, scheduler, and syscalls; C# method names require the bridge.
 

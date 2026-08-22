@@ -1266,7 +1266,7 @@ def test_annotate_stacks_leaves_non_finite_count_lines_untouched() -> None:
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
-        "annotate_stacks", REPO / "tools/apm/annotate_stacks.py"
+        "annotate_stacks", REPO / "tools/host_profiler/annotate_stacks.py"
     )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)

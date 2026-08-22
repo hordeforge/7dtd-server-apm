@@ -17,7 +17,7 @@ fi
 
 # Annotate with [GC]/[LOCK]/[AI]/… tags for Speedscope ↔ mod mapping
 ANNOTATED="$OUTDIR/stacks.annotated.folded"
-python3 "$ROOT/tools/apm/annotate_stacks.py" "$FOLDED" -o "$ANNOTATED" || cp -f "$FOLDED" "$ANNOTATED"
+python3 "$ROOT/tools/host_profiler/annotate_stacks.py" "$FOLDED" -o "$ANNOTATED" || cp -f "$FOLDED" "$ANNOTATED"
 FLAME_SRC="$ANNOTATED"
 [[ -s "$FLAME_SRC" ]] || FLAME_SRC="$FOLDED"
 
@@ -53,7 +53,7 @@ Interactive flamegraphs
 5. flame.svg           — static snapshot
 6. stacks.folded / stacks.annotated.folded
 
-Tags come from tools/apm/annotate_stacks.py (catalog of native→layer labels).
+Tags come from tools/host_profiler/annotate_stacks.py (catalog of native→layer labels).
 Pair with csharp_bridge.md for Harmony targets.
 
 EOF
