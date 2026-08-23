@@ -46,4 +46,8 @@ cp -a "$ROOT/dist/7dtd-apm-bridge" "$STAGE/"
 # members that vanished from dist; rebuild the artifact from scratch instead.
 rm -f "$OUT"
 ( cd "$STAGE" && zip -qr "$OUT" 7dtd-apm-bridge )
-echo "Packaged -> $OUT"
+# Release integrity: operators verify the zip before dropping it into Mods/
+# (sha256sum -c). Rebuilt alongside the zip so it can never go stale.
+rm -f "$OUT.sha256"
+{ cd "$(dirname "$OUT")" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256"; }
+echo "Packaged -> $OUT (+ .sha256)"

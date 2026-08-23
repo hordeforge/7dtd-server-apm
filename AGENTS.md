@@ -32,7 +32,7 @@ Workspace root guide: [`../MODDING_BEST_PRACTICES.md`](../MODDING_BEST_PRACTICES
 ```bash
 uv sync
 uv run 7dtd-apm doctor
-make check                 # ruff, shellcheck, format, mypy, pytest, bpftrace checks
+make check                 # ruff, shellcheck, html/webui lint, format, mypy, pytest, bpftrace checks
 make bridge-build
 make bridge-install DS="/path/to/7 Days to Die Dedicated Server"
 make bridge-uninstall
