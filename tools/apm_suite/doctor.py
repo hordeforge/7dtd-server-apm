@@ -25,7 +25,15 @@ def _sudo() -> dict[str, Any]:
     path = shutil.which("sudo")
     if path is None:
         return {"ok": False, "fix": "install sudo and configure narrowly scoped APM rules"}
-    result = subprocess.run([path, "-n", "true"], capture_output=True, timeout=3, check=False)
+    try:
+        result = subprocess.run([path, "-n", "true"], capture_output=True, timeout=3, check=False)
+    except subprocess.TimeoutExpired:
+        # The timeout exists precisely for a hung sudo; reporting it must not
+        # crash the whole doctor run with an unhandled TimeoutExpired.
+        return {
+            "ok": False,
+            "fix": "sudo -n true timed out after 3s; check sudo/PAM configuration",
+        }
     return {
         "ok": result.returncode == 0,
         "fix": None

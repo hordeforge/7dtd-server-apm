@@ -161,6 +161,50 @@ def test_budget_rejects_missing_budget_file_before_running(tmp_path: Path) -> No
     assert "budget file not found" in result.stderr
 
 
+def test_budget_rejects_unparseable_budget_file_cleanly(tmp_path: Path) -> None:
+    """A torn or hand-mangled budget JSON must fail with a named-path error,
+    not a traceback, and must never silently run against DEFAULT_BUDGET."""
+    from apm_suite.analysis.budget import check_budget
+
+    session = tmp_path / "session"
+    session.mkdir()
+    (session / "summary.json").write_text("{}")
+    bad = tmp_path / "budget.json"
+    bad.write_text('{"max_layer_scores": ')
+    result = runner.invoke(app, ["budget", str(session), "--budget", str(bad)])
+    assert result.exit_code == 2
+    assert str(bad) in result.stderr
+    assert "not valid JSON" in result.stderr
+    with pytest.raises(ValueError, match="not valid JSON"):
+        check_budget(session, bad)
+
+
+def test_budget_rejects_non_object_budget_file(tmp_path: Path) -> None:
+    from apm_suite.analysis.budget import check_budget
+
+    session = tmp_path / "session"
+    session.mkdir()
+    (session / "summary.json").write_text("{}")
+    bad = tmp_path / "budget.json"
+    bad.write_text("[1, 2, 3]")
+    with pytest.raises(ValueError, match="JSON object"):
+        check_budget(session, bad)
+
+
+def test_thread_summary_skips_torn_final_line(tmp_path: Path) -> None:
+    """A collector killed at the window deadline can leave a truncated last
+    jsonl line; the required summary stage must use the intact samples instead
+    of crashing on the torn one."""
+    from apm_suite.analysis.report import thread_summary
+
+    session = tmp_path / "session_torn"
+    (session / "threads").mkdir(parents=True)
+    good = json.dumps({"t": 1.0, "n_threads": 4, "states": {"S": 4}, "wchan_top": {}, "top": []})
+    (session / "threads/threads.jsonl").write_text(good + "\n" + good[:20])
+    summary = thread_summary(session)
+    assert summary["n_threads"] == 4
+
+
 def test_scenario_matrix_rejects_missing_plan_file(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scenario", "matrix", str(tmp_path / "plan.json")])
     assert result.exit_code == 2
@@ -2609,6 +2653,71 @@ def test_doctor_reports_resolved_environment_without_secrets(
 
     monkeypatch.setenv("SEVENDTD_TELNET_PASSWORD", "apm-root-secret")
     assert inspect(None, "127.0.0.1", 8081)["environment"]["telnet_password_set"] is True
+
+
+def test_doctor_sudo_timeout_is_reported_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The sudo check's timeout exists for a hung sudo; hitting it must produce
+    a failed check, not crash the whole doctor report with TimeoutExpired."""
+    import subprocess
+
+    from apm_suite.doctor import _sudo
+
+    monkeypatch.setattr("apm_suite.doctor.shutil.which", lambda name: "/usr/bin/sudo")
+
+    def fake_run(*args: object, **kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(cmd="sudo", timeout=3)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    result = _sudo()
+    assert result["ok"] is False
+    assert "timed out" in (result["fix"] or "")
+
+
+def test_bind_mono_reports_the_precise_blocker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each None return carries its own reason in WARN.txt: missing library,
+    missing sudo, and failed/hung mount are fixed differently, and the old
+    single generic message hid which one applied."""
+    import subprocess
+
+    from apm_suite import capture
+
+    session = tmp_path / "session"
+    session.mkdir()
+
+    monkeypatch.setattr(capture, "_mono_library", lambda pid: None)
+    assert capture._bind_mono(session, 1, sudo_ok=True) is None
+    assert "not mapped" in (session / "WARN.txt").read_text()
+
+    source = tmp_path / "libmonobdwgc-2.0.so"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(capture, "_mono_library", lambda pid: source)
+    assert capture._bind_mono(session, 1, sudo_ok=False) is None
+    assert "sudo -n unavailable" in (session / "WARN.txt").read_text()
+
+    def fake_run(*args: object, **kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(cmd="sudo", timeout=15)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    assert capture._bind_mono(session, 1, sudo_ok=True) is None
+    assert "bind mount failed" in (session / "WARN.txt").read_text()
+
+
+def test_capture_sudo_probe_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hung `sudo -n true` probe must read as unavailable instead of hanging
+    every capture at startup before a collector launches."""
+    import shutil
+    import subprocess as sp
+
+    def fake_run(*args: object, **kwargs: object) -> object:
+        timeout = float(kwargs.get("timeout") or 0)  # type: ignore[arg-type]
+        assert timeout > 0, "sudo probe must pass a timeout"
+        raise sp.TimeoutExpired(cmd="sudo", timeout=timeout)
+
+    monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/sudo")
+    monkeypatch.setattr(sp, "run", fake_run)
+    assert capture._sudo_available() is False
 
 
 # --- live server (opt-in) ----------------------------------------------------------

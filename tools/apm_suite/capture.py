@@ -387,15 +387,48 @@ def _bind_mono(session: Path, pid: int, sudo_ok: bool) -> Path | None:
     """Bind-mount the mono .so to a space-free path so uprobes can attach.
 
     Requires root; mount(2) via sudo is the only option for a non-root APM user.
+    Warns with the precise reason whenever it returns None: a generic "not
+    bound" would send the operator hunting the wrong cause (missing library vs
+    missing sudo vs a failed mount are fixed very differently).
     """
     source = _mono_library(pid)
-    if source is None or not source.is_file() or not sudo_ok:
+    if source is None:
+        _warn(session, "libmonobdwgc-2.0.so not mapped by target; GC uprobes disabled")
+        return None
+    if not source.is_file():
+        _warn(
+            session,
+            f"mono library path from /proc maps is not a file ({source}); GC uprobes disabled",
+        )
+        return None
+    if not sudo_ok:
+        _warn(session, "sudo -n unavailable; cannot bind-mount mono .so; GC uprobes disabled")
         return None
     link = session / "runtime/libmonobdwgc-2.0.so"
-    link.parent.mkdir(parents=True, exist_ok=True)
-    link.touch()
-    mounted = subprocess.run(["sudo", "-n", "mount", "--bind", str(source), str(link)], check=False)
-    return link if mounted.returncode == 0 else None
+    try:
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.touch()
+    except OSError as error:
+        _warn(session, f"cannot create mono bind target {link}: {error}; GC uprobes disabled")
+        return None
+    # Bounded like every other sudo call here: a hung mount must not stall the
+    # capture before any collector launches.
+    try:
+        mounted = subprocess.run(
+            ["sudo", "-n", "mount", "--bind", str(source), str(link)],
+            check=False,
+            timeout=15,
+        )
+    except (subprocess.TimeoutExpired, OSError) as error:
+        _warn(session, f"mono bind mount failed: {error}; GC uprobes disabled")
+        return None
+    if mounted.returncode != 0:
+        _warn(
+            session,
+            f"mono bind mount failed (mount rc={mounted.returncode}); GC uprobes disabled",
+        )
+        return None
+    return link
 
 
 def _unmount_mono(link: Path | None) -> None:
@@ -481,8 +514,9 @@ def telnet_exec(
                 while time_module.monotonic() < deadline:
                     with suppress(TimeoutError, OSError):
                         data = sock.recv(8192)
-                        if data:
-                            chunks.append(data)
+                        if not data:
+                            return  # server closed: nothing more will arrive
+                        chunks.append(data)
 
             drain(0.8)
             if password:
@@ -629,6 +663,22 @@ def _telnet_password_warning(only: str, no_app: bool, telnet_password: str) -> s
     return None
 
 
+def _sudo_available() -> bool:
+    if shutil.which("sudo") is None:
+        return False
+    # Bounded: a wedged sudo (stale helper, hung auth backend) must not hang
+    # every capture at startup before a single collector launches.
+    try:
+        return (
+            subprocess.run(
+                ["sudo", "-n", "true"], capture_output=True, check=False, timeout=10
+            ).returncode
+            == 0
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def run_capture(
     *,
     seconds: int,
@@ -667,10 +717,7 @@ def run_capture(
     if message := _telnet_password_warning(only, no_app, telnet_password):
         _warn(session, message)
 
-    sudo_ok = (
-        shutil.which("sudo") is not None
-        and subprocess.run(["sudo", "-n", "true"], capture_output=True, check=False).returncode == 0
-    )
+    sudo_ok = _sudo_available()
     comm = "7DaysToDieServe"
     exe = ""
     cmdline = ""
@@ -755,8 +802,6 @@ def run_capture(
             _warn(session, "bridge stat reset failed; section totals span server uptime")
 
     mono_link = _bind_mono(session, pid, sudo_ok)
-    if mono_link is None:
-        _warn(session, "mono .so not bound; GC uprobes disabled")
     ctx = CaptureContext(
         session=session,
         pid=pid,

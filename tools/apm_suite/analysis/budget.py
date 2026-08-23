@@ -192,10 +192,21 @@ def check_budget(
     baseline: Path | None = None,
     max_regression: float = 15.0,
 ) -> bool:
-    """Run the gate and persist budget_check.txt/.json. Returns pass/fail."""
+    """Run the gate and persist budget_check.txt/.json. Returns pass/fail.
+
+    Raises ValueError (with the offending path) when a custom budget file is
+    unreadable or not a JSON object: the caller decides how to surface it, but
+    it must never fall through to running against DEFAULT_BUDGET silently.
+    """
     budget = DEFAULT_BUDGET
     if budget_path and budget_path.is_file():
-        budget = json.loads(budget_path.read_text(encoding="utf-8"))
+        try:
+            loaded = json.loads(budget_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"budget file {budget_path} is not valid JSON: {error}") from None
+        if not isinstance(loaded, dict):
+            raise ValueError(f"budget file {budget_path} must contain a JSON object")
+        budget = loaded
     ok, lines = check(session, budget, baseline, max_regression)
     report = "\n".join(lines) + f"\n\nRESULT: {'PASS' if ok else 'FAIL'}\n"
     print(report)

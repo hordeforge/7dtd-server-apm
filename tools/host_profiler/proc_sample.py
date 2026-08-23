@@ -17,6 +17,7 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from typing import IO
 
 
 @dataclass
@@ -184,9 +185,37 @@ def main() -> int:
     # record stamp `t` stays wall-clock so samples correlate with logs.
     end = time.monotonic() + args.seconds
     start_mono = time.monotonic()
-    prev = None
-    prev_mono = None
-    rows = []
+    # Stream each record as it is sampled instead of buffering until exit: the
+    # capture supervisor SIGTERMs this collector at the window deadline, and a
+    # buffered epilogue never runs then, silently discarding the whole run's
+    # evidence. Readers tolerate a torn final line from a mid-write kill.
+    out_fh = None
+    if args.json:
+        args.json.parent.mkdir(parents=True, exist_ok=True)
+        out_fh = args.json.open("w", encoding="utf-8")
+    try:
+        _sample_loop(args, pid, end, start_mono, out_fh)
+    finally:
+        if out_fh is not None:
+            out_fh.close()
+            print(f"wrote {args.json}")
+    return 0
+
+
+def _sample_loop(
+    args: argparse.Namespace,
+    pid: int,
+    end: float,
+    start_mono: float,
+    out_fh: IO[str] | None,
+) -> None:
+    prev: Sample | None = None
+    prev_mono: float | None = None
+    # Streaming aggregates for the end-of-run summary (first sample has no dt).
+    cpu_sum = 0.0
+    cpu_samples = 0.0
+    cpu_max = 0.0
+    last: Sample | None = None
     print(f"sampling pid={pid} for {args.seconds}s every {args.interval}s")
     print(f"{'t':>8} {'cpu%':>7} {'rssMB':>8} thr  fd  {'rMB/s':>7} {'wMB/s':>7} vctx  nvctx")
     while time.monotonic() < end:
@@ -230,27 +259,25 @@ def main() -> int:
         rec = asdict(s)
         if args.threads:
             rec["top_threads"] = thr
-        rows.append(rec)
+        if out_fh is not None:
+            out_fh.write(json.dumps(rec) + "\n")
+            out_fh.flush()
+        if prev is not None:
+            cpu_samples += 1.0
+            cpu_sum += s.cpu_pct
+            cpu_max = max(cpu_max, s.cpu_pct)
+        last = s
         prev = s
         prev_mono = mono_after
         # sleep remaining
         time.sleep(max(0.0, args.interval - (time.monotonic() - mono_before)))
 
-    if args.json and rows:
-        args.json.parent.mkdir(parents=True, exist_ok=True)
-        with args.json.open("w", encoding="utf-8") as f:
-            for r in rows:
-                f.write(json.dumps(r) + "\n")
-        print(f"wrote {args.json}")
-
-        # summary
-        cpus = [r["cpu_pct"] for r in rows[1:]]
-        if cpus:
-            print(
-                f"summary cpu% mean={sum(cpus) / len(cpus):.1f} max={max(cpus):.1f} "
-                f"rssMB last={rows[-1]['rss_mb']:.1f} threads={rows[-1]['num_threads']}"
-            )
-    return 0
+    if last is not None:
+        mean = cpu_sum / cpu_samples if cpu_samples else 0.0
+        print(
+            f"summary cpu% mean={mean:.1f} max={cpu_max:.1f} "
+            f"rssMB last={last.rss_mb:.1f} threads={last.num_threads}"
+        )
 
 
 if __name__ == "__main__":

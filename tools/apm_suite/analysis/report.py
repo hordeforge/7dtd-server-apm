@@ -377,8 +377,15 @@ def thread_summary(session: Path) -> dict[str, Any]:
             main_tid = int(json.loads(meta_path.read_text(encoding="utf-8")).get("pid") or 0)
     samples: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.strip():
+        if not line.strip():
+            continue
+        try:
             samples.append(json.loads(line))
+        except json.JSONDecodeError:
+            # A collector killed mid-window (grace deadline, Ctrl+C) leaves a
+            # torn final line; drop it like every other jsonl reader here
+            # rather than failing the required summary stage.
+            continue
     if not samples:
         return {}
     last = samples[-1]

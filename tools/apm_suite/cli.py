@@ -375,7 +375,17 @@ def import_bundle(
             # dir; a concurrent duplicate import of the same bundle gets its own
             # target instead of merging into this one mid-extract.
             target = claim_dir((store or apm_root()) / stem)
-            archive.extractall(target)
+            try:
+                archive.extractall(target)
+            except OSError as error:
+                # A mid-extract failure (disk full, unreadable member) must not
+                # strand a partial session that later audits INVALID and pollutes
+                # index/prune: remove what landed, then report cleanly.
+                shutil.rmtree(target, ignore_errors=True)
+                err_console.print(
+                    f"[red]extraction failed, removed partial import {target}: {error}[/red]"
+                )
+                raise typer.Exit(2) from None
     except zipfile.BadZipFile as error:
         err_console.print(f"[red]{bundle} is not a readable zip bundle: {error}[/red]")
         raise typer.Exit(2) from None
@@ -786,7 +796,12 @@ def budget(
     if baseline is not None and not (baseline / "summary.json").is_file():
         err_console.print(f"[red]baseline session has no summary.json in {baseline}[/red]")
         raise typer.Exit(2)
-    _exit(0 if check_budget(session, budget_file, baseline, max_regression) else 1)
+    try:
+        passed = check_budget(session, budget_file, baseline, max_regression)
+    except ValueError as error:
+        err_console.print(f"[red]{error}[/red]")
+        raise typer.Exit(2) from None
+    _exit(0 if passed else 1)
 
 
 @app.command()
@@ -967,20 +982,36 @@ def scenario_run(
             reaped = terminate_tree(load_process)
             if reaped is not None:
                 load_rc = reaped
-    # The claim pre-creates the manifest path, so only content proves the
-    # loadgen actually wrote it (an empty marker must not crash the attach).
-    if session is not None and workload.stat().st_size > 0:
-        doc = json.loads(workload.read_text(encoding="utf-8"))
-        if label:
-            doc["label"] = label
-        doc.setdefault("workload", {})["botMode"] = bot_mode or doc.get("workload", {}).get(
-            "botMode", "auto"
-        )
-        atomic_json(session / "workload.json", doc)
-        if stats.is_file():
+    # The claim pre-creates the manifest path, so only parseable content proves
+    # the loadgen actually wrote it: a torn or non-object write (loadgen killed
+    # mid-flush) must not crash the attach after the capture already succeeded.
+    if session is not None:
+        attached = False
+        if workload.stat().st_size > 0:
+            try:
+                doc = json.loads(workload.read_text(encoding="utf-8"))
+            except ValueError as error:
+                err_console.print(
+                    f"[red]loadgen manifest unreadable, not attached: {workload}: {error}[/red]"
+                )
+            else:
+                if isinstance(doc, dict):
+                    if label:
+                        doc["label"] = label
+                    doc.setdefault("workload", {})["botMode"] = bot_mode or doc.get(
+                        "workload", {}
+                    ).get("botMode", "auto")
+                    atomic_json(session / "workload.json", doc)
+                    attached = True
+                else:
+                    err_console.print(
+                        f"[red]loadgen manifest is not a JSON object, not attached: {workload}[/red]"
+                    )
+        if attached and stats.is_file():
             shutil.copy2(stats, session / "loadgen_stats.json")
         audit_session(session)
-        console.print(f"workload manifest attached: {session / 'workload.json'}")
+        if attached:
+            console.print(f"workload manifest attached: {session / 'workload.json'}")
     _exit(capture_rc or load_rc)
 
 
