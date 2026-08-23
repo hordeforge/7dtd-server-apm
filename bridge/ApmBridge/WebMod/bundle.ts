@@ -1,7 +1,7 @@
-// 7dtd-apm-bridge WebMod (TypeScript source).
+// 7dtd-server-apm-bridge WebMod (TypeScript source).
 // Compiled to bundle.js by `tsc -p WebMod/tsconfig.json` (wired into
-// scripts/build_bridge.sh). The dashboard loads /webmods/7dtd-apm-bridge/bundle.js
-// and reads window["7dtd-apm-bridge"]: routes render as direct sidebar entries
+// scripts/build_bridge.sh). The dashboard loads /webmods/7dtd-server-apm-bridge/bundle.js
+// and reads window["7dtd-server-apm-bridge"]: routes render as direct sidebar entries
 // (hidden until the sid session cookie is present), settings as Settings tabs.
 // Do not hand-edit bundle.js; regenerate from this file.
 //
@@ -59,7 +59,7 @@ type PanelProps = {
   }) => QueryResult;
 };
 
-const modId = "7dtd-apm-bridge";
+const modId = "7dtd-server-apm-bridge";
 const HIST = 60; // rolling samples kept for sparklines (~2 min at 2s)
 const TICK_BUDGET_MS = 50; // 20 TPS
 
@@ -1093,7 +1093,7 @@ function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): unknown {
 // dashboard reloads the page after login/logout, so this re-evaluates.
 const loggedIn = document.cookie.split(";").some((c) => c.trim().startsWith("sid="));
 const webMod = {
-  about: "Live, low-overhead managed telemetry from 7dtd-apm-bridge.",
+  about: "Live, low-overhead managed telemetry from 7dtd-server-apm-bridge.",
   routes: loggedIn ? { "APM": ApmPanel, "Efficiency": EfficiencyPanel } : {},
   settings: {},
   mapComponents: []
