@@ -26,8 +26,6 @@ from .capture import (
     unknown_only_tokens,
     write_plan_text,
 )
-from .doctor import inspect
-from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json
 from .models import as_number, layer_signals
 from .paths import REPO, apm_root, require_backends
@@ -100,6 +98,10 @@ def doctor(
     ] = None,
 ) -> None:
     """Check host readiness for each APM capture layer."""
+    # Lazy like the other command-scoped imports: doctor is the only psutil
+    # consumer, and a module-level import would tax every CLI invocation.
+    from .doctor import inspect
+
     result = inspect(pid, telnet_host, telnet_port)
     if json_output == Path("-"):
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -191,6 +193,10 @@ def finalize(
     if not session.is_dir():
         err_console.print(f"[red]not a session directory: {session}[/red]")
         raise typer.Exit(2)
+    # Deferred so commands that never finalize (audit, prune, monitor, export...)
+    # skip the finalize chain's reporting/jinja2 import at startup.
+    from .finalize import finalize as finalize_session
+
     _exit(finalize_session(session, skip_bridge=skip_bridge).exit_code)
 
 
@@ -271,11 +277,10 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
     os.close(fd)
     tmp_zip_path = Path(tmp_zip)
     try:
-        with (
-            tempfile.TemporaryDirectory() as tmp,
-            zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as archive,
-        ):
-            temp = Path(tmp)
+        # Scrubbed text members stream straight into the archive: each one is
+        # already fully resident for scrubbing, so a temp-dir copy would add a
+        # full session-sized write+read for nothing.
+        with zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
             # perf.script / report txt / stacks.folded / flame.html / bpftrace
             # *.out / flame.svg embed dso or file paths like /home/<user>/... -
             # replace the home prefix so bundles do not leak the host username.
@@ -293,30 +298,24 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
                         data = json.loads(source.read_text(encoding="utf-8"))
                     except (json.JSONDecodeError, OSError) as error:
                         raise typer.BadParameter(f"cannot parse {relative}: {error}") from None
-                    sanitized = temp / relative
-                    sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(
+                    archive.writestr(
+                        str(relative),
                         json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n",
-                        encoding="utf-8",
                     )
-                    archive.write(sanitized, relative)
                 elif source.suffix == ".jsonl" or source.suffix in text_suffixes:
                     try:
                         text = source.read_text(errors="replace", encoding="utf-8")
                     except OSError:
-                        archive.write(source, relative)
+                        archive.write(source, str(relative))
                         continue
                     scrub = (
                         (lambda t: _scrub_jsonl(t, home))
                         if source.suffix == ".jsonl"
                         else (lambda t: t.replace(home, "~"))
                     )
-                    sanitized = temp / relative
-                    sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(scrub(text), encoding="utf-8")
-                    archive.write(sanitized, relative)
+                    archive.writestr(str(relative), scrub(text))
                 else:
-                    archive.write(source, relative)
+                    archive.write(source, str(relative))
         os.replace(tmp_zip_path, output)
     finally:
         tmp_zip_path.unlink(missing_ok=True)

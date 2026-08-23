@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json
-from ..models import LayerScore, SummaryV2, layer_requested, schema_dict
+from ..models import LayerScore, SummaryV2, as_number, layer_requested, schema_dict
 from .bridge import attribute_document, attribute_snapshot
 
 
@@ -987,7 +987,11 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
         # opt-in mono_alloc probe (Boehm GC_malloc arg0) is the source
         # on this runtime. Left None when unmeasured so the budget gate
         # treats it as UNKNOWN, never a healthy zero.
-        gross_bps = float(gc_window.get("grossAllocBytesPerSecond") or -1)
+        gross_bps = as_number(gc_window.get("grossAllocBytesPerSecond"))
+        if gross_bps is None:
+            # Missing or junk field: fall back to the bridge's own "unmeasured"
+            # sentinel so the mono_alloc probe path below still runs.
+            gross_bps = -1.0
         gross_mb_s: float | None = round(gross_bps / 1048576, 2) if gross_bps >= 0 else None
         if gross_mb_s is None and window_s > 0:
             alloc_match = re.search(r"@alloc_bytes_total:\s*(\d+)", mono_alloc)
@@ -1111,7 +1115,11 @@ def build_summary(session: Path) -> SummaryV2:
             if "gc" in metadata:
                 _apply_gc_pressure(layers, metadata["gc"])
             _apply_late_tick_pressure(layers, (snapshot or {}).get("update") or {})
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, TypeError, ValueError):
+            # TypeError: a snapshot block whose numeric fields parsed as strings
+            # or containers (hand-edited / imported) raises from the arithmetic
+            # above (e.g. "16.6" - 3.2); drop just the snapshot-derived blocks,
+            # exactly like a JSON decode failure.
             pass
 
     net_window = max(1.0, float(meta.get("seconds") or 1))

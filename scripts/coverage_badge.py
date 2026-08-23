@@ -5,6 +5,7 @@ Must be run by an interpreter that has coverage importable: the Makefile
 `coverage` target arranges that (`--with coverage` under uv, the dev
 dependency group otherwise). Usage: coverage_badge.py OUTPUT.svg
 """
+
 from __future__ import annotations
 
 import json

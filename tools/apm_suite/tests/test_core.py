@@ -1135,6 +1135,45 @@ def test_build_summary_lag_attribution_uses_snapshot(tmp_path: Path) -> None:
     assert any(c["cause"] == "deco_world_bound" for c in causes)
 
 
+def test_build_summary_survives_snapshot_with_non_numeric_fields(tmp_path: Path) -> None:
+    """A hand-edited/imported snapshot whose numeric fields hold strings raises
+    TypeError from the frame math; that must drop only the snapshot-derived
+    blocks, not fail the required summary stage and lose the host evidence."""
+    from apm_suite.analysis.report import build_summary
+
+    session = tmp_path / "session_strsnap"
+    (session / "app").mkdir(parents=True)
+    atomic_json(
+        session / "app/apm_app.json",
+        {
+            "sections": [],
+            "measurement": {"deepSampleRate": 1},
+            "update": {"windowUpdates": 100, "gmUpdateDurationAvgMs": "3.2"},
+            "world": {"entities": 10, "unityDeltaMs": "16.6"},
+        },
+    )
+    atomic_json(session / "meta.json", _meta())
+    summary = build_summary(session)  # must not raise
+    # Host-side evidence survived; only snapshot-derived blocks were dropped.
+    assert [layer.layer for layer in summary.layers] != []
+
+
+def test_build_summary_keeps_measured_zero_gross_alloc(tmp_path: Path) -> None:
+    """grossAllocBytesPerSecond == 0 is real evidence (idle window), never the
+    bridge's -1 unmeasured sentinel: it must land in metadata as a healthy zero
+    instead of degrading to UNKNOWN, while -1 stays absent."""
+    from apm_suite.analysis.report import _snapshot_metadata
+
+    measured = _snapshot_metadata(
+        {"gc": {"grossAllocBytesPerSecond": 0, "heapDeltaBytes": 0, "windowSeconds": 30}}, ""
+    )
+    assert measured["gc"]["grossAllocMBPerSecond"] == 0.0
+    unmeasured = _snapshot_metadata(
+        {"gc": {"grossAllocBytesPerSecond": -1, "heapDeltaBytes": 0, "windowSeconds": 30}}, ""
+    )
+    assert "grossAllocMBPerSecond" not in unmeasured["gc"]
+
+
 def test_parse_managed_sections_reads_each_named_file_once(tmp_path: Path) -> None:
     from apm_suite.analysis.bridge import parse_managed_sections
 
