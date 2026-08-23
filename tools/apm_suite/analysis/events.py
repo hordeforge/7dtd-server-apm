@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -217,9 +217,12 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
         duration = float(spike.get("gmUpdateDurationMs") or 0)
         epoch: float | None = None
         with contextlib.suppress(ValueError, TypeError):
-            epoch = datetime.fromisoformat(
-                str(spike.get("utc") or "").replace("Z", "+00:00")
-            ).timestamp()
+            # Naive stamps (no offset) are UTC by repo convention, matching
+            # session._date and capture._ingest_bridge_snapshot: a bare
+            # .timestamp() would resolve them in this host's local zone and
+            # shift every spike on a non-UTC analysis host.
+            stamp = datetime.fromisoformat(str(spike.get("utc") or "").replace("Z", "+00:00"))
+            epoch = (stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)).timestamp()
         sink.add(
             {
                 "t": epoch,

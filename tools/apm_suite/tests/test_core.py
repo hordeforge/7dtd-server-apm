@@ -1028,6 +1028,35 @@ def test_bridge_spikes_become_timeline_events(tmp_path: Path) -> None:
     assert "entities=500" in spikes[0].message
 
 
+def test_bridge_spike_naive_stamp_reads_as_utc_not_local(tmp_path: Path) -> None:
+    """A spike stamp without an offset is UTC by repo convention (matching
+    session._date and capture._ingest_bridge_snapshot); resolving it in the
+    analysis host's local zone would shift frame_spike epochs by the UTC
+    offset and drop them from windowed views on non-UTC hosts."""
+    from apm_suite.analysis.events import build_timeline
+
+    session = tmp_path / "session_naive_stamp"
+    (session / "app").mkdir(parents=True)
+    atomic_json(
+        session / "app/apm_app.json",
+        {"spikes": [{"utc": "2026-07-16T10:00:00", "gmUpdateDurationMs": 250.0}]},
+    )
+    expected = datetime(2026, 7, 16, 10, 0, tzinfo=UTC).timestamp()
+    original_tz = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = "Asia/Tokyo"  # any non-UTC zone proves locality is ignored
+        time.tzset()
+        doc = build_timeline(session)
+        spike = next(e for e in doc.events if e.kind == "frame_spike")
+        assert spike.model_dump(mode="json")["t"] == pytest.approx(expected)
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()
+
+
 def test_app_scrape_events_withhold_raw_console_text(tmp_path: Path) -> None:
     from apm_suite.analysis.events import build_events
 
