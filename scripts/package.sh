@@ -46,9 +46,11 @@ OUT="$ROOT/dist/7dtd-apm-bridge-$VERSION.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp -a "$ROOT/dist/7dtd-apm-bridge" "$STAGE/"
-# Debug symbols never ship: the release zip carries the DLL, ModInfo, Config,
-# and WebMod only.
-rm -f "$STAGE"/7dtd-apm-bridge/*.pdb
+# Debug symbols never ship: the release zip carries the DLL, ModInfo, the
+# example Config, and WebMod only. The live config name is excluded too, so a
+# future staging change cannot silently reintroduce upgrade resets of user
+# settings (unzipping over Mods/ overwrites every archive member).
+rm -f "$STAGE"/7dtd-apm-bridge/*.pdb "$STAGE"/7dtd-apm-bridge/Config/apmbridge.json
 # Reproducible archive: pin every member's mtime to a source-derived epoch,
 # strip uid/gid and extended-timestamp extra fields (-X), and add members in
 # LC_ALL=C sort order instead of readdir order. Without this, cp -a mtimes and

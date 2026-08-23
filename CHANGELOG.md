@@ -73,6 +73,11 @@ major version.
 
 ### Bridge mod
 
+- Packaging: the release zip ships `Config/apmbridge.json.example` instead of
+  the live config name, so upgrading by unzipping over `Mods/` no longer resets
+  operator-tuned settings (`DeepMode`, `SpikeThresholdMs`, ...); `make
+  bridge-install` seeds the live config from the example on first install only,
+  and the mod runs on built-in defaults when no config file exists.
 - Build: the TypeScript panel build is self-contained (pinned `npx`
   toolchain); no preinstalled global tsc setup needed.
 - API: `POST /api/perf` counts effective changes only; a request that would

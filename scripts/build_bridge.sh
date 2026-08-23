@@ -37,7 +37,11 @@ dotnet build "$ROOT/bridge/ApmBridge/ApmBridge.csproj" -c Release \
 command -v npx >/dev/null 2>&1 || { echo "ERROR: npx (Node.js/npm) not found; cannot build WebMod" >&2; exit 1; }
 npx --yes -p "typescript@$TSC_VERSION" tsc -p "$ROOT/bridge/ApmBridge/WebMod/tsconfig.json"
 cp "$ROOT/bridge/ApmBridge/ModInfo.xml" "$OUT/ModInfo.xml"
-cp "$ROOT/bridge/ApmBridge/apmbridge.json" "$OUT/Config/apmbridge.json"
+# Ship the factory settings under the .example name only: users install the
+# release zip by unzipping it over Mods/, so a live Config/apmbridge.json in
+# the archive would reset their tuned settings on every upgrade. The mod runs
+# on built-in defaults when the config file is absent.
+cp "$ROOT/bridge/ApmBridge/apmbridge.json" "$OUT/Config/apmbridge.json.example"
 cp "$ROOT/bridge/ApmBridge/WebMod/bundle.js" "$OUT/WebMod/bundle.js"
 cp "$ROOT/bridge/ApmBridge/WebMod/styling.css" "$OUT/WebMod/styling.css"
 echo "OK bridge -> $OUT"

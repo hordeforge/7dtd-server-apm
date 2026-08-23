@@ -39,6 +39,28 @@ def test_bridge_docs_do_not_require_global_tsc() -> None:
     assert "no global `tsc`" in docs
 
 
+def test_release_zip_ships_example_config_not_live_config() -> None:
+    # Upgrade contract: users install a release by unzipping it over Mods/,
+    # which overwrites every archive member. The zip must therefore carry only
+    # Config/apmbridge.json.example; shipping the live config name would reset
+    # operator-tuned settings on every upgrade (the mod runs on built-in
+    # defaults when the file is absent).
+    build = (ROOT / "scripts" / "build_bridge.sh").read_text(encoding="utf-8")
+    assert '"$OUT/Config/apmbridge.json.example"' in build
+    assert 'cp "$ROOT/bridge/ApmBridge/apmbridge.json" "$OUT/Config/apmbridge.json"' not in build
+
+    package = (ROOT / "scripts" / "package.sh").read_text(encoding="utf-8")
+    assert "Config/apmbridge.json" in package, (
+        "package.sh must keep excluding the live config name from the stage"
+    )
+
+    install = (ROOT / "scripts" / "install_bridge.sh").read_text(encoding="utf-8")
+    assert "Config/apmbridge.json.example" in install
+    assert install.index("if [[ ! -f") < install.index("apmbridge.json.example"), (
+        "first-install seeding must stay conditional on no existing config"
+    )
+
+
 def test_every_bridge_rest_endpoint_declares_admin_only_permissions() -> None:
     # Deny side of the web authorization matrix: the game dashboard gates each
     # REST endpoint through AdminWebModules before any handler runs, using the
