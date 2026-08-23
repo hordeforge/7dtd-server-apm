@@ -12,8 +12,15 @@ namespace DtdApmBridge
     {
         public const string Version = "2.2.3";
         static readonly Dictionary<string, string> Status = new Dictionary<string, string>();
-        static readonly Dictionary<MethodBase, int> SectionIds = new Dictionary<MethodBase, int>();
-        static readonly HashSet<int> DeepIds = new HashSet<int>();
+        // SectionPrefix/SectionPostfix consult these on game threads for every
+        // instrumented call, including while InitMod is still inserting entries
+        // for later patch sites; unsynchronized reads during a plain
+        // Dictionary/HashSet write can throw or corrupt, so use concurrent types
+        // (same reasoning as GetLengthCache below).
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<MethodBase, int> SectionIds
+            = new System.Collections.Concurrent.ConcurrentDictionary<MethodBase, int>();
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<int, byte> DeepIds
+            = new System.Collections.Concurrent.ConcurrentDictionary<int, byte>();
         static Harmony _harmony;
         // volatile: Reload() swaps the reference from the console thread while
         // the game thread reads it every frame; each object is immutable-in-use.
@@ -191,7 +198,7 @@ namespace DtdApmBridge
                     new HarmonyMethod(typeof(BridgeMod), nameof(SectionPostfix)));
                 int id = Telemetry.Register(method.DeclaringType.Name + "." + method.Name, deep);
                 SectionIds[method] = id;
-                if (deep) DeepIds.Add(id);
+                if (deep) DeepIds[id] = 1;
                 Status[spec] = "active:" + Describe(method);
             }
             catch (Exception ex) { Status[spec] = "failed:" + ex.Message; }
@@ -208,7 +215,7 @@ namespace DtdApmBridge
             try
             {
                 if (SectionIds.TryGetValue(__originalMethod, out int id)
-                    && Telemetry.ShouldSample(id, DeepIds.Contains(id)))
+                    && Telemetry.ShouldSample(id, DeepIds.ContainsKey(id)))
                     __state = Telemetry.Start();
             }
             catch { __state = 0; }
