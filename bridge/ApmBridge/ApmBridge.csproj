@@ -1,13 +1,30 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net48</TargetFramework>
-    <LangVersion>latest</LangVersion>
+    <!-- Pinned to the net48 default so a newer SDK cannot silently change the
+         language surface of the shipped DLL. -->
+    <LangVersion>7.3</LangVersion>
     <Nullable>disable</Nullable>
     <AssemblyName>7dtd-apm-bridge</AssemblyName>
     <RootNamespace>DtdApmBridge</RootNamespace>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>$(BridgeOutput)</OutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- Byte-identical rebuilds from any checkout path: Deterministic makes
+         Roslyn derive the MVID from source hashes; PathMap rewrites embedded
+         source/PDB paths (they leak into the CodeView debug directory of the
+         DLL) to a fixed prefix. Verified by rebuilding from two directories
+         and comparing sha256. -->
+    <Deterministic>true</Deterministic>
+    <PathMap>$(MSBuildThisFileDirectory)=/usr/src/7dtd-apm-bridge/</PathMap>
+    <!-- The SDK also feeds two generated inputs to the compiler whose content
+         contains the absolute checkout path (obj/*/ApmBridge.sourcelink.json
+         and the generated analyzer .editorconfig), which would re-leak the
+         path through the hashed MVID/PDB GUID. Both exist only for debugger
+         source-server lookups; the release zip ships neither PDB nor sources,
+         so they are disabled outright. -->
+    <EnableSourceControlManagerQueries>false</EnableSourceControlManagerQueries>
+    <GenerateMSBuildEditorConfigFile>false</GenerateMSBuildEditorConfigFile>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Assembly-CSharp"><HintPath>$(GameManagedDir)/Assembly-CSharp.dll</HintPath><Private>false</Private></Reference>
