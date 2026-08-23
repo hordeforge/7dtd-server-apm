@@ -2575,6 +2575,24 @@ def test_terminate_tree_kills_launcher_and_grandchild() -> None:
     assert not any(child.is_running() for child in grandchildren)
 
 
+def test_run_redacts_password_flags_from_echoed_command(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """run() echoes every command it executes into the capture log; the value
+    after a password flag must be masked there, and only the secret masked."""
+    from apm_suite import runner
+
+    rc = runner.run(
+        [sys.executable, "-c", "pass", "--telnet-password", "sekret", "--other", "value"],
+        check=False,
+    )
+    assert rc == 0
+    echoed = capsys.readouterr().out
+    assert "sekret" not in echoed
+    assert "<redacted>" in echoed
+    assert "--other value" in echoed
+
+
 def _boom_spec() -> CollectorSpec:
     return CollectorSpec(
         name="boom",
@@ -2731,13 +2749,52 @@ def test_scenario_runs_expire_on_the_prune_clock(tmp_path: Path) -> None:
     assert list(purge_stale_scenario_runs(empty)) == []
 
 
-def test_run_capture_resolves_session_dir_through_claim_dir() -> None:
-    """The capture session directory must go through claim_dir so two captures
-    started in the same second cannot interleave evidence in one directory."""
-    import inspect
+class _FrozenClock:
+    """Stands in for capture.datetime so two runs share one wall-clock stamp."""
 
-    source = inspect.getsource(capture.run_capture)
-    assert "claim_dir(" in source
+    @staticmethod
+    def now(_tz: object | None = None) -> datetime:
+        return datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
+
+
+def test_run_capture_gives_same_stamp_captures_distinct_session_dirs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two captures with an identical wall-clock stamp (retry in the same second,
+    cron overlap) must each claim their own session directory instead of
+    interleaving collectors' evidence; the returned dir must be the one actually
+    written to (meta.json lands inside it)."""
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setattr(capture, "datetime", _FrozenClock)
+    monkeypatch.setattr(capture, "apm_root", lambda: root)
+    monkeypatch.setattr(capture, "_sudo_available", lambda: False)
+    monkeypatch.setattr(capture, "tool_version", lambda name: "")
+
+    def capture_once() -> Path:
+        outcome = capture.run_capture(
+            seconds=1,
+            pid=os.getpid(),
+            only="",  # no collectors requested: this run pins dir claiming alone
+            no_app=True,
+            telnet_host="",
+            telnet_port=0,
+            telnet_password="",
+            finalize=False,
+            symbolize=False,
+            reset_bridge=False,
+        )
+        return outcome.session
+
+    first = capture_once()
+    second = capture_once()
+
+    base = f"session_20260101_000000_pid{os.getpid()}"
+    assert first == root / base  # free path won by exclusive creation
+    assert second == root / f"{base}_1"  # collision resolved, not shared
+    assert first.is_dir() and second.is_dir()
+    for session in (first, second):
+        assert load_json(session / "meta.json")["pid"] == os.getpid()
 
 
 def test_path_env_overrides_treat_empty_as_unset(
@@ -2799,6 +2856,80 @@ def test_telnet_password_warning_scopes_to_app_layer_requests() -> None:
     assert capture._telnet_password_warning("cpu,memory", False, "") is None
     assert capture._telnet_password_warning("all", no_app=True, telnet_password="") is None
     assert capture._telnet_password_warning("all", False, telnet_password="pw") is None
+
+
+# --- unit: telnet cohort helpers ---------------------------------------------------
+
+
+_LISTPLAYERS = (
+    "2 players online. Send 'help' for commands.\n"
+    "1. id=171, name=Alice, pos=(100.0, 63.0, -200.25)\n"
+    "2. id=172, name=Bob, pos=(10.5, 60.0, 20.0)\n"
+    "3. id=173, name=Cid, pos=(-5.0, 61.0, 30.0)\n"
+)
+
+
+def _rally(
+    monkeypatch: pytest.MonkeyPatch, listing: str, at: tuple[int, int] | None = None
+) -> tuple[int, list[str]]:
+    commands: list[str] = []
+
+    def fake_telnet_exec(*_args: object) -> str:
+        return listing
+
+    def fake_telnet_command(_h: str, _p: int, _pw: str, command: str) -> bool:
+        commands.append(command)
+        return True
+
+    monkeypatch.setattr(capture, "telnet_exec", fake_telnet_exec)
+    monkeypatch.setattr(capture, "telnet_command", fake_telnet_command)
+    return capture.rally_players("127.0.0.1", 8081, "pw", at=at), commands
+
+
+def test_rally_players_clusters_cohort_around_first_player(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without --rally-at the FIRST listed player anchors the cluster (y kept),
+    the rest are teleported into a grid around them, and the moved count covers
+    exactly the non-anchor players. The regex silently matches nothing when the
+    game's listplayers format shifts, so the emitted commands are pinned here."""
+    moved, commands = _rally(monkeypatch, _LISTPLAYERS)
+    assert moved == 2
+    assert commands == [
+        "teleportplayer 172 85 63 -215",
+        "teleportplayer 173 91 63 -215",
+    ]
+
+
+def test_rally_players_rally_at_anchors_everyone_to_fresh_coordinates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With --rally-at every player including the first moves into the grid at
+    the fresh coordinates, with y=-1 so the server finds ground."""
+    moved, commands = _rally(monkeypatch, _LISTPLAYERS, at=(500, 900))
+    assert moved == 3
+    assert commands == [
+        "teleportplayer 171 485 -1 885",
+        "teleportplayer 172 491 -1 885",
+        "teleportplayer 173 497 -1 885",
+    ]
+
+
+@pytest.mark.parametrize(
+    "listing",
+    [
+        "",  # server unreachable / empty reply
+        "no players connected\n",  # header only, no rows
+        "1. id=171, name=Solo, pos=(1.0, 2.0, 3.0)\n",  # single player: nowhere to rally to
+        "1. id=x, name=Broken, position unknown\n",  # format drift: regex must not guess
+    ],
+)
+def test_rally_players_moves_nobody_without_parseable_positions(
+    monkeypatch: pytest.MonkeyPatch, listing: str
+) -> None:
+    moved, commands = _rally(monkeypatch, listing)
+    assert moved == 0
+    assert commands == []
 
 
 def test_doctor_reports_resolved_environment_without_secrets(
