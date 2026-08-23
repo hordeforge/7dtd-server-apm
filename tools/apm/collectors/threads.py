@@ -13,9 +13,34 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import TypedDict
 
 
-def read_tid(pid: int, tid: int) -> dict | None:
+class ThreadRow(TypedDict):
+    """One /proc/<pid>/task/<tid> sample; see read_tid."""
+
+    tid: int
+    comm: str
+    state: str
+    utime: int
+    stime: int
+    cpu_ticks: int
+    vol_ctx: int
+    nonvol_ctx: int
+    processor: int
+    wchan: str
+
+
+class ThreadDelta(ThreadRow):
+    """ThreadRow plus the per-interval deltas emitted to jsonl/console."""
+
+    d_ticks: int
+    d_vol_ctx: int
+    d_nonvol_ctx: int
+    cpu_pct: float
+
+
+def read_tid(pid: int, tid: int) -> ThreadRow | None:
     base = Path(f"/proc/{pid}/task/{tid}")
     try:
         stat = (base / "stat").read_text()
@@ -65,9 +90,9 @@ def read_tid(pid: int, tid: int) -> dict | None:
     }
 
 
-def snapshot(pid: int) -> list[dict]:
+def snapshot(pid: int) -> list[ThreadRow]:
     tasks = Path(f"/proc/{pid}/task")
-    rows = []
+    rows: list[ThreadRow] = []
     try:
         for t in tasks.iterdir():
             if not t.name.isdigit():
@@ -96,7 +121,10 @@ def main() -> int:
     # by a near-zero/negative dt; the persisted record stamp "t" stays
     # wall-clock for cross-log correlation.
     end = time.monotonic() + args.seconds
-    prev: dict[int, dict] = {}
+    prev: dict[int, ThreadRow] = {}
+    # Monotonic stamps for the previous sample, keyed like prev (the stamp is
+    # loop control data, not part of the persisted thread record).
+    prev_mono: dict[int, float] = {}
     user_hz = os.sysconf("SC_CLK_TCK")
 
     with args.jsonl.open("w") as fh:
@@ -106,23 +134,23 @@ def main() -> int:
             t0 = time.time()
             m0 = time.monotonic()
             rows = snapshot(args.pid)
-            deltas = []
+            deltas: list[ThreadDelta] = []
             for r in rows:
                 p = prev.get(r["tid"])
+                m_prev = prev_mono.get(r["tid"])
                 d_ticks = r["cpu_ticks"] - p["cpu_ticks"] if p else 0
                 d_vol = r["vol_ctx"] - p["vol_ctx"] if p else 0
                 d_non = r["nonvol_ctx"] - p["nonvol_ctx"] if p else 0
-                dt = max(m0 - p["_mono"], 1e-3) if p else args.interval
+                dt = max(m0 - m_prev, 1e-3) if m_prev is not None else args.interval
                 cpu_pct = 100.0 * (d_ticks / user_hz) / dt if p else 0.0
-                deltas.append(
-                    {
-                        **r,
-                        "d_ticks": d_ticks,
-                        "d_vol_ctx": d_vol,
-                        "d_nonvol_ctx": d_non,
-                        "cpu_pct": round(cpu_pct, 2),
-                    }
-                )
+                delta: ThreadDelta = {
+                    **r,
+                    "d_ticks": d_ticks,
+                    "d_vol_ctx": d_vol,
+                    "d_nonvol_ctx": d_non,
+                    "cpu_pct": round(cpu_pct, 2),
+                }
+                deltas.append(delta)
             deltas.sort(key=lambda x: x["cpu_pct"], reverse=True)
             # wchan histogram
             wchan: dict[str, int] = {}
@@ -131,11 +159,12 @@ def main() -> int:
                 wchan[r["wchan"] or "-"] = wchan.get(r["wchan"] or "-", 0) + 1
                 states[r["state"]] = states.get(r["state"], 0) + 1
 
-            rec = {
+            wchan_top = dict(sorted(wchan.items(), key=lambda kv: -kv[1])[:20])
+            rec: dict[str, object] = {
                 "t": t0,
                 "n_threads": len(rows),
                 "states": states,
-                "wchan_top": dict(sorted(wchan.items(), key=lambda kv: -kv[1])[:20]),
+                "wchan_top": wchan_top,
                 "top": deltas[: args.top],
             }
             fh.write(json.dumps(rec) + "\n")
@@ -145,11 +174,11 @@ def main() -> int:
             top3 = ", ".join(f"{x['comm'][:16]}@{x['cpu_pct']:.0f}%" for x in deltas[:3])
             blocked = states.get("D", 0) + states.get("S", 0)
             print(
-                f"thr={len(rows)} S/D~={blocked} "
-                f"wchan={list(rec['wchan_top'].items())[:3]} top=[{top3}]"
+                f"thr={len(rows)} S/D~={blocked} wchan={list(wchan_top.items())[:3]} top=[{top3}]"
             )
 
-            prev = {r["tid"]: {**r, "_mono": m0} for r in rows}
+            prev = {r["tid"]: r for r in rows}
+            prev_mono = {r["tid"]: m0 for r in rows}
             time.sleep(max(0.0, args.interval - (time.monotonic() - m0)))
 
     print(f"wrote {args.jsonl}")

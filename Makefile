@@ -12,11 +12,11 @@ help:
 	@echo "7dtd-apm contributor targets (requires: Python 3.11+, uv, Linux):"
 	@echo "  make test           pytest suite + version gate (~3s)"
 	@echo "                      single test: uv run pytest tools/apm_suite/tests/test_core.py -k name"
-	@echo "  make lint           ruff over tools/"
+	@echo "  make lint           ruff over tools/, scripts/, plans/"
 	@echo "  make lint-shell     shellcheck (needs the shellcheck binary)"
 	@echo "  make lint-html      Nu HTML checker over rendered reports (needs npx + java)"
 	@echo "  make lint-webui     tsc + oxlint + bundle freshness (needs npx)"
-	@echo "  make format         ruff format tools/   |   make format-check to verify"
+	@echo "  make format         ruff format tools/ scripts/ plans/   |   make format-check to verify"
 	@echo "  make typecheck      mypy strict"
 	@echo "  make check          full local gate = all of the above + check-bt"
 	@echo "  make check-ci       exactly what CI runs (= check minus check-bt)"
@@ -30,11 +30,11 @@ test:
 	$(UV) pytest
 	$(UV) python scripts/check_version.py
 lint:
-	$(UV) ruff check tools
+	$(UV) ruff check tools scripts plans
 lint-shell:
 	@command -v shellcheck >/dev/null 2>&1 || { \
 	  echo "ERROR: shellcheck not found; install it (apt install shellcheck / brew install shellcheck)" >&2; exit 1; }
-	shellcheck scripts/*.sh tools/apm/*.sh tools/apm/collectors/*.sh tools/host_profiler/*.sh
+	shellcheck scripts/*.sh scripts/lib/*.sh tools/apm/*.sh tools/apm/collectors/*.sh tools/host_profiler/*.sh
 lint-html:
 	./scripts/lint-html.sh
 lint-webui:
@@ -42,9 +42,9 @@ lint-webui:
 check-bt:
 	./scripts/check_bt.sh
 format:
-	$(UV) ruff format tools
+	$(UV) ruff format tools scripts plans
 format-check:
-	$(UV) ruff format --check tools
+	$(UV) ruff format --check tools scripts plans
 typecheck:
 	$(UV) mypy
 check: lint lint-shell lint-html lint-webui format-check typecheck test check-bt

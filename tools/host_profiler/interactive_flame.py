@@ -19,7 +19,7 @@ from pathlib import Path
 
 # reuse converters
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from folded_to_speedscope import dumps_deep, load_folded, to_d3_tree  # noqa: E402
+from folded_to_speedscope import dumps_deep, load_folded, to_d3_tree
 
 HTML = r"""<!DOCTYPE html>
 <html lang="en">

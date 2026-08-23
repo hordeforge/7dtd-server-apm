@@ -27,17 +27,24 @@ packages = ["tools/apm_suite"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-exclude = ["scripts/dotnet-install.sh", "research", "tools/apm/testdata"]
+exclude = ["research", "tools/apm/testdata"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM"]
+select = ["E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RUF100"]
 ignore = ["E501"] # Formatter cannot wrap embedded HTML, regexes, and generated snippets safely.
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
-packages = ["apm_suite"]
 mypy_path = "tools"
+files = [
+  "tools/apm_suite",
+  "tools/apm/collectors/app_scrape.py",
+  "tools/apm/collectors/threads.py",
+  "scripts/check_version.py",
+  "plans/ladder_report.py",
+  "plans/scale_ladder.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tools/apm_suite/tests"]

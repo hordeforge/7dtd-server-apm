@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 root = Path.home() / ".local/share/7dtd-apm"
 rows = []
@@ -17,7 +18,9 @@ for session in sorted(root.glob("session_*")):
     attribution = bridge.get("attribution") or {}
     summary = json.loads((session / "summary.json").read_text())
     frame = (summary.get("metadata") or {}).get("frame") or {}
-    scheduler = next((L for L in summary.get("layers", []) if L.get("layer") == "scheduler"), {})
+    scheduler: dict[Any, Any] = next(
+        (L for L in summary.get("layers", []) if L.get("layer") == "scheduler"), {}
+    )
     subsystems = {s["subsystem"]: s["scaled_total_ms"] for s in attribution.get("subsystems") or []}
     entities = attribution.get("entities") or 0
     ticks = attribution.get("window_updates") or 0
