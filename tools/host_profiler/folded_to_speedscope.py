@@ -14,6 +14,12 @@ import json
 import math
 from pathlib import Path
 
+# Folded files can come from outside this pipeline (imported evidence bundles),
+# where a single row may claim thousands of frames. Bound per-stack growth to
+# the same corrupt-input ceiling stackcollapse_perf.MAX_STACK_DEPTH applies, so
+# every downstream tree builder and serializer sees bounded depth.
+MAX_STACK_DEPTH = 4096
+
 
 def load_folded(path: Path) -> list[tuple[list[str], int]]:
     rows: list[tuple[list[str], int]] = []
@@ -34,7 +40,7 @@ def load_folded(path: Path) -> list[tuple[list[str], int]]:
         count = int(value)
         if count <= 0:
             continue
-        frames = [f for f in stack_s.split(";") if f]
+        frames = [f for f in stack_s.split(";") if f][:MAX_STACK_DEPTH]
         if not frames:
             continue
         rows.append((frames, count))
@@ -96,16 +102,90 @@ def to_d3_tree(rows: list[tuple[list[str], int]], root_name: str = "all") -> dic
             node = ensure(node, frame)
             node["value"] += count
 
-    def freeze(node: dict) -> dict:
-        kids = node["children"]
-        out = {"name": node["name"], "value": node["value"]}
-        if kids:
-            out["children"] = [
-                freeze(kids[k]) for k in sorted(kids.keys(), key=lambda x: -kids[x]["value"])
-            ]
-        return out
+    # Post-order freeze with an explicit worklist: tree depth equals stack
+    # depth (bounded only by MAX_STACK_DEPTH), far past the interpreter's
+    # recursion limit, so the recursive form crashed on deep folded rows.
+    frozen: dict[int, dict] = {}
+    work: list[tuple[dict, bool]] = [(root, False)]
+    while work:
+        node, expanded = work.pop()
+        if expanded:
+            out = {"name": node["name"], "value": node["value"]}
+            kids = node["children"]
+            if kids:
+                ordered = sorted(kids.keys(), key=lambda x: -kids[x]["value"])
+                out["children"] = [frozen[id(kids[k])] for k in ordered]
+            frozen[id(node)] = out
+            continue
+        work.append((node, True))
+        for child in node["children"].values():
+            work.append((child, False))
+    return frozen[id(root)]
 
-    return freeze(root)
+
+class _Close:
+    """Pop marker closing a JSON container opened by dumps_deep."""
+
+    __slots__ = ("char",)
+
+    def __init__(self, char: str) -> None:
+        self.char = char
+
+
+class _Raw:
+    """Already-encoded JSON text emitted verbatim by dumps_deep."""
+
+    __slots__ = ("text",)
+
+    def __init__(self, text: str) -> None:
+        self.text = text
+
+
+def dumps_deep(value: object) -> str:
+    """json.dumps without CPython's recursive-encoder depth limit.
+
+    Flame trees nest once per stack frame; json.dumps raises RecursionError
+    well before MAX_STACK_DEPTH. Container traversal here is iterative while
+    every scalar still goes through json.dumps, so escaping and number
+    formatting match ``json.dumps(value, separators=(",", ":"))``
+    byte-for-byte (asserted by the fuzz suite). Dict keys must be strings;
+    anything else raises TypeError instead of guessing at coercion.
+    """
+    parts: list[str] = []
+    stack: list[object] = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, _Close):
+            parts.append(item.char)
+        elif isinstance(item, _Raw):
+            parts.append(item.text)
+        elif isinstance(item, dict):
+            parts.append("{")
+            stack.append(_Close("}"))
+            pairs = list(item.items())
+            # Push in reverse so pops emit insertion order (byte-parity with
+            # json.dumps); the last pair pushed carries no trailing separator.
+            for offset in range(len(pairs)):
+                key, val = pairs[len(pairs) - 1 - offset]
+                if not isinstance(key, str):
+                    raise TypeError(f"dumps_deep supports string keys only, got {key!r}")
+                stack.append(val)
+                # Separators ride the stack as verbatim markers; pushing them as
+                # plain strings would reach the scalar branch and get encoded.
+                stack.append(_Raw(":"))
+                stack.append(key)
+                if offset < len(pairs) - 1:
+                    stack.append(_Raw(","))
+        elif isinstance(item, (list, tuple)):
+            parts.append("[")
+            stack.append(_Close("]"))
+            for offset, val in enumerate(reversed(item)):
+                stack.append(val)
+                if offset < len(item) - 1:
+                    stack.append(_Raw(","))
+        else:
+            parts.append(json.dumps(item))
+    return "".join(parts)
 
 
 def main() -> int:
@@ -136,7 +216,7 @@ def main() -> int:
         tree_path = args.output.with_suffix("").with_suffix(".tree.json")
         if str(args.output).endswith(".speedscope.json"):
             tree_path = Path(str(args.output).replace(".speedscope.json", ".tree.json"))
-    tree_path.write_text(json.dumps(to_d3_tree(rows)))
+    tree_path.write_text(dumps_deep(to_d3_tree(rows)))
     print(f"wrote {tree_path}")
     return 0
 

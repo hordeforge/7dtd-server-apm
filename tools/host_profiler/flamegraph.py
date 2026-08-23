@@ -67,14 +67,22 @@ def main() -> int:
 
     x_of: dict[tuple[str, ...], float] = {(): 0.0}
 
-    def place(parent: tuple[str, ...], x0: float) -> None:
-        x = x0
-        for child in by_parent.get(parent, []):
-            x_of[child] = x
-            place(child, x)
-            x += width * (totals[child] / grand)
-
-    place((), 0.0)
+    # Iterative DFS over the prefix tree: stack depth in the folded file is
+    # unbounded input, and the recursive form hit CPython's recursion limit on
+    # deep stacks. Each frame carries its own running x, mirroring place().
+    root_frame: list[object] = [(), 0.0, iter(by_parent.get((), []))]
+    work: list[list[object]] = [root_frame]
+    while work:
+        frame = work[-1]
+        parent, x, children = frame
+        child = next(children, None)
+        if child is None:
+            work.pop()
+            continue
+        assert isinstance(parent, tuple)
+        x_of[child] = float(x)
+        work.append([child, float(x), iter(by_parent.get(child, []))])
+        frame[1] = float(x) + width * (totals[child] / grand)
 
     rects = []
     for key, val in totals.items():

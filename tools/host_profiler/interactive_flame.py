@@ -19,7 +19,7 @@ from pathlib import Path
 
 # reuse converters
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from folded_to_speedscope import load_folded, to_d3_tree  # noqa: E402
+from folded_to_speedscope import dumps_deep, load_folded, to_d3_tree  # noqa: E402
 
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -274,7 +274,7 @@ def main() -> int:
     # and execute (stored XSS when the report is opened). Escape the HTML-significant
     # characters as \uXXXX (still valid JSON/JS, no <script> break-out).
     tree_json = (
-        json.dumps(tree).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        dumps_deep(tree).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     )
     page = (
         HTML.replace("__TITLE__", html.escape(args.title))
