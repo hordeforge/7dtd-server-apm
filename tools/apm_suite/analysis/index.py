@@ -146,10 +146,13 @@ def html_index(rows: list[dict[str, Any]]) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>7dtd APM sessions</title>
 <style>
+/* Shared APM web tokens (report + dashboard + session index):
+   bg #0f1115 · surface #161a22 · outline #2a2f3a · rule #303642 ·
+   text #e8eaed · muted #9aa0a6 · link #8ab4f8 · accent #e6bd3a */
 body{{font-family:system-ui;background:#0f1115;color:#e8eaed;margin:24px}}
 a{{color:#8ab4f8}} table{{border-collapse:collapse;width:100%}}
-th,td{{border:1px solid #333;padding:8px;text-align:left}}
-th{{background:#1a1d24}}
+th,td{{border:1px solid #303642;padding:8px;text-align:left}}
+th{{background:#161a22}}
 .sr-only{{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}}
 </style></head><body>
 <h1>APM session index</h1>

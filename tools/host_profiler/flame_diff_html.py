@@ -37,9 +37,13 @@ def build_html(a: Path, b: Path, rows: list[dict]) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Flame delta</title>
 <style>
+/* Shared APM web tokens (report + dashboard + session index + flame pages):
+   bg #0f1115 · surface #161a22 · outline #2a2f3a · rule #303642 ·
+   text #e8eaed · muted #9aa0a6 · link #8ab4f8 · accent #e6bd3a */
 body{{font-family:system-ui;background:#0f1115;color:#e8eaed;margin:24px}}
+a{{color:#8ab4f8}}
 code{{font-size:12px}} table{{border-collapse:collapse;width:100%}}
-th,td{{border:1px solid #333;padding:6px;text-align:left}} th{{background:#1a1d24}}
+th,td{{border:1px solid #303642;padding:6px;text-align:left}} th{{background:#161a22}}
 .muted{{color:#9aa0a6}}
 </style></head><body>
 <h1>Speedscope / folded frame delta</h1>

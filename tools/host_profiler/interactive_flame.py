@@ -28,26 +28,27 @@ HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>__TITLE__</title>
 <style>
-  :root { --bg:#0f1115; --panel:#1a1d24; --fg:#e8eaed; --muted:#9aa0a6; --accent:#8ab4f8; --hi:#fdd663; }
+  /* Shared APM web tokens (report + dashboard + session index + flame pages). */
+  :root { --bg:#0f1115; --panel:#161a22; --fg:#e8eaed; --muted:#9aa0a6; --accent:#8ab4f8; --hi:#fdd663; --rule:#303642; }
   * { box-sizing: border-box; }
   body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg); }
-  header { padding:12px 16px; background:var(--panel); display:flex; flex-wrap:wrap; gap:12px; align-items:center; border-bottom:1px solid #333; }
+  header { padding:12px 16px; background:var(--panel); display:flex; flex-wrap:wrap; gap:12px; align-items:center; border-bottom:1px solid var(--rule); }
   header h1 { font-size:16px; margin:0; font-weight:600; }
   header .muted { color:var(--muted); font-size:13px; }
   #controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-left:auto; }
-  input[type=search] { background:#0f1115; border:1px solid #444; color:var(--fg); padding:6px 10px; border-radius:6px; min-width:200px; }
-  button { background:#2a2f3a; border:1px solid #444; color:var(--fg); padding:6px 12px; border-radius:6px; cursor:pointer; }
+  input[type=search] { background:var(--bg); border:1px solid var(--rule); color:var(--fg); padding:6px 10px; border-radius:6px; min-width:200px; }
+  button { background:#2a2f3a; border:1px solid var(--rule); color:var(--fg); padding:6px 12px; border-radius:6px; cursor:pointer; }
   button:hover { border-color:var(--accent); }
   #breadcrumb { padding:8px 16px; font-size:12px; color:var(--muted); word-break:break-all; min-height:1.5em; }
   #breadcrumb a { color:var(--accent); cursor:pointer; text-decoration:none; margin-right:4px; }
   #chart { width:100%; overflow:hidden; }
   svg { display:block; width:100%; }
-  .frame rect { stroke:#0f1115; stroke-width:0.5; cursor:pointer; }
+  .frame rect { stroke:var(--bg); stroke-width:0.5; cursor:pointer; }
   .frame text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; fill:#111; pointer-events:none; }
   .frame.dim rect { opacity:0.25; }
   .frame.hit rect { stroke:var(--hi); stroke-width:1.5; }
   #tip {
-    display:none; position:fixed; z-index:10; background:#202124; border:1px solid #555;
+    display:none; position:fixed; z-index:10; background:var(--panel); border:1px solid var(--rule);
     padding:8px 10px; border-radius:6px; font-size:12px; max-width:480px; pointer-events:none;
     box-shadow:0 4px 16px rgba(0,0,0,.4);
   }

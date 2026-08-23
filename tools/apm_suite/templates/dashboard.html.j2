@@ -1,7 +1,10 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>7dtd APM — {{ session.name }}</title>
 <style>
-:root{color-scheme:dark}body{font:14px system-ui;margin:0;background:#0b0d11;color:#e8eaed}header,main{padding:20px 28px}header{background:#12151c}main{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}.card{background:#161a22;border:1px solid #2a2f3a;border-radius:10px;padding:16px}.full{grid-column:1/-1}table{width:100%;border-collapse:collapse}th,td{padding:7px;border-bottom:1px solid #303642;text-align:left}a{color:#8ab4f8}.score{font-size:36px}.bar{height:8px;background:#303642}.fill{height:100%;background:#e6bd3a}.muted{color:#9aa0a6}.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+/* Shared APM web tokens (report + dashboard + session index):
+   bg #0f1115 · surface #161a22 · outline #2a2f3a · rule #303642 ·
+   text #e8eaed · muted #9aa0a6 · link #8ab4f8 · accent #e6bd3a */
+:root{color-scheme:dark}body{font:14px system-ui;margin:0;background:#0f1115;color:#e8eaed}header,main{padding:20px 28px}header{background:#161a22}main{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(340px,1fr))}.card{background:#161a22;border:1px solid #2a2f3a;border-radius:10px;padding:16px}.full{grid-column:1/-1}table{width:100%;border-collapse:collapse}th,td{padding:7px;border-bottom:1px solid #303642;text-align:left}a{color:#8ab4f8}.score{font-size:36px}.bar{height:8px;background:#303642}.fill{height:100%;background:#e6bd3a}.muted{color:#9aa0a6}.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
 </style></head><body>
 <header><h1>7dtd APM Dashboard</h1><div class="muted">{{ session.name }} · pid {{ meta.pid or '?' }} · {{ meta.utc or '' }}</div><nav><a href="report.html">Report</a> · <a href="../index.html">All sessions</a></nav></header>
 <main>
