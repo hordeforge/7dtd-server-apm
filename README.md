@@ -1,17 +1,15 @@
-# 7dtd-apm
+# ☣️ Geiger (7DTD Server APM)
 
-Observability and performance analysis for Linux 7 Days to Die dedicated
-servers. The host tool captures process, CPU, scheduler, synchronization,
-runtime, memory, filesystem, block, and network evidence. The optional
-`7dtd-apm-bridge.dll` adds managed game-method timing without optimization or
-load-generation behavior.
+> **Part of [HordeForge](https://github.com/hordeforge)** — High-Performance Systems Engineering for 7 Days to Die.
+
+Observability and performance analysis for Linux 7 Days to Die dedicated servers. The host tool captures process, CPU, scheduler, synchronization, runtime, memory, filesystem, block, and network evidence. The optional `HordeForge_Geiger` bridge adds managed game-method timing without optimization or load-generation behavior.
 
 Project boundaries are deliberate:
 
-- `7dtd-apm` measures, correlates, reports, compares, and enforces evidence gates.
+- `7dtd-server-apm` measures, correlates, reports, compares, and enforces evidence gates.
 - `7dtd-loadgen` creates controlled clients and workloads. APM only invokes its public runner.
-- `7dtd-optimizer` contains reviewed runtime optimizations. APM never changes it automatically.
-- Host CCD/NUMA/affinity tuning is ops, not APM or EfficientServer. Measure here, apply with systemd/`taskset`; checklist: [`../7dtd-optimizer/docs/HOST_TUNING.md`](../7dtd-optimizer/docs/HOST_TUNING.md).
+- `7dtd-server-optimizer` contains reviewed runtime optimizations. APM never changes it automatically.
+- Host CCD/NUMA/affinity tuning is ops, not APM or EfficientServer. Measure here, apply with systemd/`taskset`; checklist: [`../7dtd-server-optimizer/docs/HOST_TUNING.md`](../7dtd-server-optimizer/docs/HOST_TUNING.md).
 
 ## Measured bottleneck findings ("laggy without CPU")
 
@@ -38,7 +36,7 @@ The `forensic` preset (`scenario run --preset forensic`) attributes it:
    `PooledBinaryWriter` *reflection* (`Type.GetMethod` per serialize); the IL shows
    an enum switch, not reflection, so that attribution was wrong and is dropped.
    The cost is allocation, not compute. See
-   [`../7dtd-optimizer/docs/measured-scaling.md`](../7dtd-optimizer/docs/measured-scaling.md) §4b.
+   [`../7dtd-server-optimizer/docs/measured-scaling.md`](../7dtd-server-optimizer/docs/measured-scaling.md) §4b.
 4. **Main-thread-bound.** The 20 TPS game loop is single-threaded, so any
    pause or per-entity cost lands on one thread across ~200.
 5. **Per-entity tick cost is linear** at ~0.08 ms/entity/tick, so 1000 AI
@@ -54,20 +52,20 @@ The `forensic` preset (`scenario run --preset forensic`) attributes it:
 Lever order: cut gross allocation at source (throttle the A* graph updates +
 pool `AstarVoxelGrid.InitScan` node buffers, network serialize-once, guard the
 dedicated `GC.Collect`), then entity-tick striding for scale. Full evidence:
-[`../7dtd-optimizer/docs/OPTIMIZATION_CANDIDATES.md`](../7dtd-optimizer/docs/OPTIMIZATION_CANDIDATES.md)
+[`../7dtd-server-optimizer/docs/OPTIMIZATION_CANDIDATES.md`](../7dtd-server-optimizer/docs/OPTIMIZATION_CANDIDATES.md)
 §4b/§4c.
 
 ## Quick start
 
 ```bash
 uv sync
-uv run 7dtd-apm doctor
+uv run 7dtd-server-apm doctor
 make bridge-build
 make bridge-install DS="/path/to/7 Days to Die Dedicated Server"
-uv run 7dtd-apm capture --seconds 45
+uv run 7dtd-server-apm capture --seconds 45
 
 # Capture while the sibling project generates six joined clients.
-uv run 7dtd-apm scenario run --seconds 60 --clients 6 --actions 500 --preset standard
+uv run 7dtd-server-apm scenario run --seconds 60 --clients 6 --actions 500 --preset standard
 ```
 
 Passwords should be supplied through `SEVENDTD_TELNET_PASSWORD`; they are never
@@ -77,7 +75,7 @@ placed in child-process arguments. EAC must be disabled when using server mods.
 
 `7dtd-loadgen`'s stock-vs-zdtd harness (scripts/compare_sut.sh) drives this
 tool automatically on the stock phase of every comparison scenario:
-`COMPARE_APM=1` runs `7dtd-apm capture --seconds N --no-app` over the
+`COMPARE_APM=1` runs `7dtd-server-apm capture --seconds N --no-app` over the
 connected window, finalizes the session under `stock/apm/session_*/`, and
 summarizes it into the comparison surface (layer scores, IPC, GC alloc rate,
 lag verdict). The bridge must be installed in the stock dedicated server (the
@@ -166,28 +164,28 @@ weighted coverage.
 ## Main commands
 
 ```bash
-uv run 7dtd-apm doctor
-uv run 7dtd-apm capture --seconds 45 --only all --reset-bridge
-uv run 7dtd-apm finalize SESSION
-uv run 7dtd-apm audit SESSION
-uv run 7dtd-apm index
-uv run 7dtd-apm scenario run --preset deep --warmup 90 --label exp1
-uv run 7dtd-apm scenario run --preset deep --bot-mode demolition --no-spawn
-uv run 7dtd-apm scenario run --preset deep --spawn-entity vehicleTruck4x4 --spawn-per-player 5
-uv run 7dtd-apm scenario run --preset deep --bot-mode bait --rally --label combat
-uv run 7dtd-apm scenario matrix plans/campaign.default.json
-uv run 7dtd-apm monitor --interval 5
-uv run 7dtd-apm compare BASELINE CANDIDATE
-uv run 7dtd-apm budget CANDIDATE --baseline BASELINE
-uv run 7dtd-apm export SESSION -o support-bundle.zip
-uv run 7dtd-apm prune --keep 20 --dry-run
-uv run 7dtd-apm flame build SESSION_DIR
-uv run 7dtd-apm bridge --help
+uv run 7dtd-server-apm doctor
+uv run 7dtd-server-apm capture --seconds 45 --only all --reset-bridge
+uv run 7dtd-server-apm finalize SESSION
+uv run 7dtd-server-apm audit SESSION
+uv run 7dtd-server-apm index
+uv run 7dtd-server-apm scenario run --preset deep --warmup 90 --label exp1
+uv run 7dtd-server-apm scenario run --preset deep --bot-mode demolition --no-spawn
+uv run 7dtd-server-apm scenario run --preset deep --spawn-entity vehicleTruck4x4 --spawn-per-player 5
+uv run 7dtd-server-apm scenario run --preset deep --bot-mode bait --rally --label combat
+uv run 7dtd-server-apm scenario matrix plans/campaign.default.json
+uv run 7dtd-server-apm monitor --interval 5
+uv run 7dtd-server-apm compare BASELINE CANDIDATE
+uv run 7dtd-server-apm budget CANDIDATE --baseline BASELINE
+uv run 7dtd-server-apm export SESSION -o support-bundle.zip
+uv run 7dtd-server-apm prune --keep 20 --dry-run
+uv run 7dtd-server-apm flame build SESSION_DIR
+uv run 7dtd-server-apm bridge --help
 make check     # full local gate incl. bpftrace probe validation
 make check-ci  # CI variant (no bpftrace; GitHub Actions has no host kernel)
 ```
 
-Sessions live under `~/.local/share/7dtd-apm/session_*` (override with
+Sessions live under `~/.local/share/7dtd-server-apm/session_*` (override with
 `SEVENDTD_APM_DIR`). Each contains raw artifacts,
 structured summaries, collector states, coverage/confidence, a workload
 manifest when run as a scenario, offline HTML, and an integrity manifest.
@@ -195,13 +193,13 @@ manifest when run as a scenario, offline HTML, and an integrity manifest.
 ## Environment variables
 
 All configuration is environment-based; there are no config files on the Python
-side. `uv run 7dtd-apm doctor` reports the resolved values (the telnet secret
+side. `uv run 7dtd-server-apm doctor` reports the resolved values (the telnet secret
 appears only as set/unset). An exported-but-empty variable is treated as unset.
 
 | Variable | Default | Valid values | Purpose |
 |---|---|---|---|
 | `SEVENDTD_TELNET_PASSWORD` | unset | server telnet password | Secret for the app-layer scrape and telnet actions. Supply via the environment or Typer's `envvar` wiring, never as argv. Required for the `app` collector to authenticate. |
-| `SEVENDTD_APM_DIR` | `~/.local/share/7dtd-apm` | writable directory | Session store root (`session_*`, `.scenario`, `.trash`). |
+| `SEVENDTD_APM_DIR` | `~/.local/share/7dtd-server-apm` | writable directory | Session store root (`session_*`, `.scenario`, `.trash`). |
 | `SEVENDTD_DS_DIR` | Steam default dedicated-server path | existing directory | Dedicated install used by `doctor`, bridge build/install scripts, and probe helpers. |
 | `SEVENDTD_GAME_DIR` | Steam default client path | existing directory | Client install fallback for `make bridge-build` when the dedicated Managed assemblies are absent. Build-time only; no runtime code reads it. |
 | `APM_KEEP_SESSIONS` | `40` | integer >= 0 | Newest sessions kept by post-capture auto-prune; `0` (or any value <= 0) disables auto-prune. Non-integers warn and fall back to `40`. |
