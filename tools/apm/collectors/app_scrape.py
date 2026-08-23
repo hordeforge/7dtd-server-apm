@@ -28,16 +28,21 @@ STREAMED_LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
 def session(host: str, port: int, password: str, cmds: list[str], timeout: float = 2.0) -> str:
     chunks: list[str] = []
-    pending = ""
+    # The reassembly buffer stays bytes: decoding per chunk would turn any
+    # multi-byte UTF-8 sequence split across two reads into U+FFFD pairs.
+    # Line separators (\n, \r) are pure ASCII so they can never occur inside
+    # a multi-byte sequence, making byte-level splitting safe.
+    pending = b""
 
     def feed(raw: bytes) -> str:
         """Filter one received chunk into persistable text: complete lines are
         kept unless they are streamed console-log lines; the trailing partial
         line waits for the rest of itself."""
         nonlocal pending
-        stream = pending + raw.decode("utf-8", errors="replace")
-        *lines, pending = stream.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        kept = [line for line in lines if not STREAMED_LOG_LINE.match(line)]
+        stream = pending + raw
+        *lines, pending = stream.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
+        decoded = [line.decode("utf-8", errors="replace") for line in lines]
+        kept = [line for line in decoded if not STREAMED_LOG_LINE.match(line)]
         return "".join(line + "\n" for line in kept)
 
     with socket.create_connection((host, port), timeout=5) as sock:
@@ -69,10 +74,10 @@ def session(host: str, port: int, password: str, cmds: list[str], timeout: float
         # the session store.
         recv()
         if password:
-            sock.sendall((password + "\n").encode())
+            sock.sendall((password + "\n").encode("utf-8"))
             recv()
         for c in cmds:
-            sock.sendall((c + "\n").encode())
+            sock.sendall((c + "\n").encode("utf-8"))
             time.sleep(0.1)
             chunks.append(f">>> {c}\n" + recv())
         with contextlib.suppress(OSError):

@@ -42,10 +42,10 @@ def telnet(commands: list[str], read_seconds: float = 2.0) -> str:
                     pass
 
         drain(0.6)
-        sock.sendall((PASSWORD + "\n").encode())
+        sock.sendall((PASSWORD + "\n").encode("utf-8"))
         drain(0.4)
         for i, command in enumerate(commands):
-            sock.sendall((command + "\n").encode())
+            sock.sendall((command + "\n").encode("utf-8"))
             time.sleep(0.04)
             if i % 40 == 39:
                 drain(0.2)

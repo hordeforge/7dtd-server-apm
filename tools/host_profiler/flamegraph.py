@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 def color(name: str) -> str:
-    h = hashlib.md5(name.encode()).hexdigest()
+    h = hashlib.md5(name.encode("utf-8")).hexdigest()
     r = 200 + int(h[0:2], 16) % 55
     g = 50 + int(h[2:4], 16) % 120
     b = 20 + int(h[4:6], 16) % 50

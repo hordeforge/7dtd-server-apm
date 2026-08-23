@@ -2176,6 +2176,57 @@ def test_app_scrape_session_persists_only_command_responses() -> None:
         assert leaked not in text
 
 
+def test_app_scrape_keeps_utf8_split_across_reads() -> None:
+    """A multi-byte UTF-8 sequence split across TCP reads must survive intact.
+
+    Decoding per chunk would turn each half of a split character into U+FFFD;
+    the reassembly buffer stays bytes so decode happens per complete line.
+    """
+    import importlib.util
+    import socket
+    import threading
+    import time as time_module
+
+    spec = importlib.util.spec_from_file_location(
+        "app_scrape", REPO / "tools/apm/collectors/app_scrape.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def server(listener: socket.socket) -> None:
+        ready.set()
+        conn, _ = listener.accept()
+        try:
+            with conn:
+                conn.sendall(b"greeting\n")
+                conn.recv(1024)  # password line
+                conn.recv(1024)  # apm status
+                # "é☃😀" split mid-character: first send ends inside é's
+                # lead/continuation boundary.
+                conn.sendall(b"GmUpdate=2.0ms player=Jos\xc3")
+                time_module.sleep(0.2)
+                conn.sendall(b"\xa9\xe2\x98\x83\xf0\x9f\x98\x80 done\n")
+        except OSError:
+            pass
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    ready = threading.Event()
+    thread = threading.Thread(target=server, args=(listener,), daemon=True)
+    thread.start()
+    try:
+        text = module.session("127.0.0.1", port, "pw", ["apm status"], timeout=2.0)
+    finally:
+        thread.join(timeout=5)
+        listener.close()
+
+    assert "José☃😀 done" in text
+    assert "\ufffd" not in text
+
+
 def test_flamegraph_svg_survives_non_finite_counts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

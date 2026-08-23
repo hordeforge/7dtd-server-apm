@@ -485,11 +485,11 @@ def telnet_command(host: str, port: int, password: str, command: str) -> bool:
             with suppress(TimeoutError, OSError):
                 sock.recv(4096)
             if password:
-                sock.sendall((password + "\n").encode())
+                sock.sendall((password + "\n").encode("utf-8"))
                 time_module.sleep(0.3)
                 with suppress(TimeoutError, OSError):
                     sock.recv(4096)
-            sock.sendall((command + "\n").encode())
+            sock.sendall((command + "\n").encode("utf-8"))
             time_module.sleep(0.3)
             sock.sendall(b"exit\n")
         return True
@@ -520,9 +520,9 @@ def telnet_exec(
 
             drain(0.8)
             if password:
-                sock.sendall((password + "\n").encode())
+                sock.sendall((password + "\n").encode("utf-8"))
                 drain(0.5)
-            sock.sendall((command + "\n").encode())
+            sock.sendall((command + "\n").encode("utf-8"))
             drain(read_seconds)
             sock.sendall(b"exit\n")
     except OSError:
