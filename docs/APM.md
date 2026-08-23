@@ -28,6 +28,11 @@ Install the bridge documented in `bridge/README.md`. Host capture issues only
 `apm status`, `apm capabilities`, and `apm dump`; it then copies a fresh
 structured snapshot. EfficientServer is not an instrumentation dependency.
 
+The telnet scrape persists only bridge command replies: the server's streamed
+console-log lines (which name players, IPs, and Steam IDs) are filtered out in
+the collector before anything reaches the session store, the raw scrape file is
+excluded from export bundles, and session directories are owner-only.
+
 ## Controlled scenarios
 
 ```bash

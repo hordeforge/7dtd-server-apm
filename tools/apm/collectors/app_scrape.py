@@ -10,24 +10,47 @@ import argparse
 import contextlib
 import json
 import os
+import re
 import socket
 import time
 from pathlib import Path
 
+# The dedicated server streams its console log to telnet clients between
+# command replies. Those lines begin with the game's ISO timestamp prefix
+# ("2026-08-23T10:00:00 4020.512 INF ...") and carry player names, IPs, and
+# Steam IDs; bridge command replies never use that shape. Lines are judged
+# only once complete (a reply or a streamed line may arrive split across
+# reads, so the unfinished tail is carried into the next chunk and rejoined),
+# and the fragment left over when the socket closes is discarded rather than
+# persisted: without its head it cannot be classified.
+STREAMED_LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+
 
 def session(host: str, port: int, password: str, cmds: list[str], timeout: float = 2.0) -> str:
     chunks: list[str] = []
+    pending = ""
+
+    def feed(raw: bytes) -> str:
+        """Filter one received chunk into persistable text: complete lines are
+        kept unless they are streamed console-log lines; the trailing partial
+        line waits for the rest of itself."""
+        nonlocal pending
+        stream = pending + raw.decode("utf-8", errors="replace")
+        *lines, pending = stream.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+        kept = [line for line in lines if not STREAMED_LOG_LINE.match(line)]
+        return "".join(line + "\n" for line in kept)
+
     with socket.create_connection((host, port), timeout=5) as sock:
         sock.settimeout(timeout)
 
         def recv() -> str:
-            parts: list[bytes] = []
+            parts: list[str] = []
             try:
                 while True:
                     d = sock.recv(8192)
                     if not d:
                         break
-                    parts.append(d)
+                    parts.append(feed(d))
                     # Inter-chunk silence window. A laggy server (exactly when we
                     # scrape at scale) can stall mid-response; too short a window
                     # truncates a large reply like `apm capabilities`. The caller's
@@ -36,13 +59,14 @@ def session(host: str, port: int, password: str, cmds: list[str], timeout: float
             except TimeoutError:
                 pass
             sock.settimeout(timeout)
-            return b"".join(parts).decode("utf-8", errors="replace")
+            return "".join(parts)
 
         # The greeting and the post-logon reply are drained only to keep the
         # protocol in step; they are discarded so the persisted scrape holds
-        # just the requested command responses. Everything the server streams
-        # around logon (banner text, echoed input, unrelated chat/log lines)
-        # is server-controlled and must not reach the session store.
+        # just the requested command responses. Everything the server streams,
+        # around logon or between commands (banner text, echoed input, chat,
+        # log lines naming players), is server-controlled and must not reach
+        # the session store.
         recv()
         if password:
             sock.sendall((password + "\n").encode())

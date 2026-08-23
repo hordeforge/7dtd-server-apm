@@ -2107,7 +2107,9 @@ def test_correlate_parse_ts_converts_log_stamps_via_local_zone_rules() -> None:
 
 def test_app_scrape_session_persists_only_command_responses() -> None:
     """The telnet drain must keep protocol replies but discard the pre-auth
-    banner, the post-logon reply, and any player-identifying stream content."""
+    banner, the post-logon reply, and any player-identifying stream content,
+    including stream lines interleaved into a command window or split across
+    reads."""
     import importlib.util
     import socket
     import threading
@@ -2130,9 +2132,15 @@ def test_app_scrape_session_persists_only_command_responses() -> None:
                 received.append(conn.recv(1024))  # password line
                 conn.sendall(b"Logon successful.\n")
                 received.append(conn.recv(1024))  # apm status
+                # Genuine reply, then a streamed log line whose tail arrives
+                # only after the next command is sent (mid-line TCP split).
                 conn.sendall(b"frameAvg=41.2ms spikes=3\n")
+                conn.sendall(
+                    b"2026-08-23T10:00:00 42.0 INF Player 'Bob' joined "
+                    b"[198.51.100.9] steamid=76561198"
+                )
                 received.append(conn.recv(1024))  # apm dump
-                conn.sendall(b"GmUpdate=5.0ms(x100,max=9.0)\n")
+                conn.sendall(b"000002\nGmUpdate=5.0ms(x100,max=9.0)\n")
         except OSError:
             pass
 
@@ -2155,7 +2163,16 @@ def test_app_scrape_session_persists_only_command_responses() -> None:
     assert b"apm status" in received[1] and b"apm dump" in received[2]
     assert ">>> apm status" in text and "frameAvg=41.2ms" in text
     assert "GmUpdate=5.0ms" in text
-    for leaked in ("greeting", "Alice", "203.0.113.7", "Logon successful"):
+    for leaked in (
+        "greeting",
+        "Alice",
+        "203.0.113.7",
+        "Logon successful",
+        "INF Player",
+        "Bob",
+        "198.51.100.9",
+        "76561198000000002",
+    ):
         assert leaked not in text
 
 

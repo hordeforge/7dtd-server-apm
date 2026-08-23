@@ -35,7 +35,11 @@ major version.
   the `cmdline`/`exe` redaction to JSONL lines, and still exclude raw
   `bridge.jsonl` entirely.
 - Privacy: the app scrape discards the telnet banner and post-logon reply and
-  persists only the requested `apm` command responses.
+  persists only the requested `apm` command responses. Streamed console-log
+  lines interleaved into a command window (which can carry player names, IPs,
+  and Steam IDs) are now dropped too: complete lines are matched by their
+  timestamp prefix, split lines are rejoined across reads before matching, and
+  an unclassifiable trailing fragment at socket close is discarded.
 - Fixed: `audit` now honors its documented contract and verifies artifacts
   against the hashes recorded in `manifest.json` (it previously rebuilt the
   manifest from current contents, so edited evidence always passed). A failed

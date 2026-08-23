@@ -706,9 +706,11 @@ def run_capture(
     session = claim_dir(root / f"session_{stamp}_pid{pid}")
     for sub in ("app", "runtime", "threads", "sync", "scheduler", "cpu", "memory", "io", "bt"):
         (session / sub).mkdir(parents=True, exist_ok=True)
-    # Raw sessions capture the server log stream (player names/IPs/SteamIDs via the
-    # telnet drain), unlike the scrubbed export bundle - keep them owner-only on
-    # shared hosts.
+    # Owner-only perms on shared hosts: sessions hold raw host evidence, and
+    # the app scrape reads the telnet wire where the server streams player-
+    # identifying log lines. app_scrape filters those before persisting; these
+    # perms are the second layer, and the scrubbed export bundle drops the raw
+    # telnet artifact entirely.
     with suppress(OSError):
         root.chmod(0o700)
         session.chmod(0o700)
