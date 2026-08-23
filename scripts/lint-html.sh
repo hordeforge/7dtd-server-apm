@@ -35,7 +35,7 @@ cat > "$scratch/session/summary.json" <<'JSON'
 JSON
 (
   cd "$root"
-  uv run --project "$root" python - "$scratch/session" <<'PY'
+  uv run --locked --project "$root" python - "$scratch/session" <<'PY'
 import os
 import sys
 from pathlib import Path

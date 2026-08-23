@@ -3,11 +3,14 @@ ROOT := $(CURDIR)
 # make targets, scripts, and doctor cannot disagree about the fallback path.
 # An environment SEVENDTD_DS_DIR or `make DS=/path ...` override still wins.
 DS ?= $(or $(SEVENDTD_DS_DIR),$(shell . "$(ROOT)/scripts/lib/ds_paths.sh" && printf '%s' "$$SEVENDTD_DS_DIR"))
-UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --project $(ROOT)
+# --locked makes every target fail instead of silently re-locking when
+# pyproject.toml drifted from uv.lock; dependency updates must go through
+# `uv lock` explicitly.
+UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --locked --project $(ROOT)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test lint lint-shell check-bt format format-check typecheck check lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package sbom
+.PHONY: help test lint lint-shell check-bt format format-check typecheck check check-ci lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package sbom
 help:
 	@echo "7dtd-apm contributor targets (requires: Python 3.11+, uv, Linux):"
 	@echo "  make test           pytest suite + version gate (~3s)"
@@ -67,7 +70,7 @@ package:
 # sha256 of every artifact uv.lock pins, production deps only (no dev group).
 sbom:
 	mkdir -p $(ROOT)/dist
-	env UV_CACHE_DIR=$(ROOT)/.uv-cache uv export --project $(ROOT) \
+	env UV_CACHE_DIR=$(ROOT)/.uv-cache uv export --project $(ROOT) --locked \
 	  --format requirements-txt --no-emit-project --no-header --no-dev \
 	  -o $(ROOT)/dist/sbom-python.txt
 	@echo "SBOM -> dist/sbom-python.txt"

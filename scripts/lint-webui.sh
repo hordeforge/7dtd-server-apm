@@ -12,7 +12,8 @@
 #
 # tsc/oxlint run through npx pinned by TSC_VERSION/OXLINT_VERSION. The repo
 # deliberately does not track package.json/node_modules (.gitignore), so the
-# versions live here as the single source of truth.
+# versions live in scripts/lib/tool_versions.sh (TSC_VERSION, shared with the
+# release build) and here as their single sources of truth.
 # Override locally: TSC_VERSION=5.9.3 OXLINT_VERSION=1.79.0 bash scripts/lint-webui.sh
 #
 # Requires: node/npm (npx).
@@ -20,12 +21,13 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck disable=SC1091
+. "$root/scripts/lib/tool_versions.sh"
 oxlint_version="${OXLINT_VERSION:-1.79.0}"
 oxlint_standards_version="${OXLINT_STANDARDS_VERSION:-0.8.1}"
 oxlint_tsgolint_version="${OXLINT_TSGOLINT_VERSION:-7.0.2001}"
 oxlint_plugins_version="${OXLINT_PLUGINS_VERSION:-1.78.0}"
 anti_slop_sha="${ANTI_SLOP_SHA:-6d538555cb151d4121ed51a27db81890eacf8ae9}"
-tsc_version="${TSC_VERSION:-5.9.3}"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-apm/oxlint-standards"
 webmod_dir="$root/bridge/ApmBridge/WebMod"
 
@@ -35,7 +37,7 @@ command -v npx >/dev/null 2>&1 || {
 }
 
 # 1. Type check (per WebMod/tsconfig.json, strict).
-npx --yes -p "typescript@$tsc_version" tsc -p "$webmod_dir/tsconfig.json" --noEmit
+npx --yes -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --noEmit
 
 # 2. Lint the source with oxlint. The @rikalabs plugin, the vendored
 #    dmmulroy/anti-slop plugin source (pinned by ANTI_SLOP_SHA; the project is
@@ -73,7 +75,7 @@ cp "$root/.oxlintrc.jsonc" "$cache_dir/oxlintrc.jsonc"
 #    classic script (both forms are equivalent), so the check strips it.
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-npx --yes -p "typescript@$tsc_version" tsc -p "$webmod_dir/tsconfig.json" --outDir "$tmp" >/dev/null
+npx --yes -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --outDir "$tmp" >/dev/null
 if ! diff -q <(sed '1{/^"use strict";$/d}' "$tmp/bundle.js") \
              <(sed '1{/^"use strict";$/d}' "$webmod_dir/bundle.js") >/dev/null; then
   echo "7dtd-apm: lint-webui: committed bundle.js is stale (bundle.ts changed without regeneration). Run: make bridge-build" >&2

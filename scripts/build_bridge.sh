@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/tool_versions.sh"
 if [[ -n "${DOTNET_ROOT:-}" && -x "${DOTNET_ROOT}/dotnet" ]]; then
   export PATH="$DOTNET_ROOT:$PATH"
 elif [[ -x "$HOME/.cache/dotnet-sdk/dotnet" ]]; then
@@ -24,15 +26,16 @@ else
 fi
 [[ -f "$HARMONY" ]] || { echo "ERROR: Harmony not found: $HARMONY" >&2; exit 1; }
 OUT="$ROOT/dist/7dtd-apm-bridge"
-mkdir -p "$OUT/Config"
-mkdir -p "$OUT/WebMod"
+# Rebuild the output dir from scratch so dist mirrors current sources exactly;
+# a stale member left by a removed or renamed file would ship in the package.
+rm -rf "$OUT"
+mkdir -p "$OUT/Config" "$OUT/WebMod"
 dotnet build "$ROOT/bridge/ApmBridge/ApmBridge.csproj" -c Release \
   -p:GameManagedDir="$MANAGED" -p:HarmonyPath="$HARMONY" -p:BridgeOutput="$OUT/"
 # WebMod: compile the TypeScript source (WebMod/bundle.ts) to bundle.js, the
 # exact path the dashboard loads (/webmods/7dtd-apm-bridge/bundle.js).
 command -v npx >/dev/null 2>&1 || { echo "ERROR: npx (Node.js/npm) not found; cannot build WebMod" >&2; exit 1; }
-tsc_version="${TSC_VERSION:-5.9.3}"
-npx --yes -p "typescript@$tsc_version" tsc -p "$ROOT/bridge/ApmBridge/WebMod/tsconfig.json"
+npx --yes -p "typescript@$TSC_VERSION" tsc -p "$ROOT/bridge/ApmBridge/WebMod/tsconfig.json"
 cp "$ROOT/bridge/ApmBridge/ModInfo.xml" "$OUT/ModInfo.xml"
 cp "$ROOT/bridge/ApmBridge/apmbridge.json" "$OUT/Config/apmbridge.json"
 cp "$ROOT/bridge/ApmBridge/WebMod/bundle.js" "$OUT/WebMod/bundle.js"

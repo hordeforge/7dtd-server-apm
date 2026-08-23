@@ -13,6 +13,10 @@
 # redistribute (see ../MODDING_BEST_PRACTICES.md / AGENTS.md). Same pattern as
 # ../7dtd-optimizer/scripts/package.sh.
 set -euo pipefail
+# Pin locale and timezone: zip stores member times as MS-DOS local time, so an
+# unpinned TZ would leak the build host's zone into the artifact bytes.
+export LC_ALL=C
+export TZ=UTC
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 "$ROOT/scripts/build_bridge.sh"
@@ -45,10 +49,28 @@ cp -a "$ROOT/dist/7dtd-apm-bridge" "$STAGE/"
 # Debug symbols never ship: the release zip carries the DLL, ModInfo, Config,
 # and WebMod only.
 rm -f "$STAGE"/7dtd-apm-bridge/*.pdb
+# Reproducible archive: pin every member's mtime to a source-derived epoch,
+# strip uid/gid and extended-timestamp extra fields (-X), and add members in
+# LC_ALL=C sort order instead of readdir order. Without this, cp -a mtimes and
+# filesystem ordering leak into the zip and no two rebuilds share a sha256,
+# making the published .sha256 unverifiable. Epoch precedence per
+# reproducible-builds.org: SOURCE_DATE_EPOCH, else the HEAD commit time (two
+# builds of one commit agree), else wall clock (non-git tree).
+EPOCH="${SOURCE_DATE_EPOCH:-}"
+if [[ -z "$EPOCH" ]]; then
+  EPOCH="$(git -C "$ROOT" log -1 --format=%ct 2>/dev/null || true)"
+fi
+[[ -n "$EPOCH" ]] || EPOCH="$(date +%s)"
+find "$STAGE" -exec touch -h -d "@$EPOCH" {} +
 # zip updates archives in place, so a rerun over an old zip would keep stale
 # members that vanished from dist; rebuild the artifact from scratch instead.
 rm -f "$OUT"
-( cd "$STAGE" && zip -qr "$OUT" 7dtd-apm-bridge )
+(
+  cd "$STAGE" &&
+    find 7dtd-apm-bridge -mindepth 1 -print0 |
+    LC_ALL=C sort -z |
+    xargs -0 zip -X -q "$OUT"
+)
 # Release integrity: operators verify the zip before dropping it into Mods/
 # (sha256sum -c). Rebuilt alongside the zip so it can never go stale.
 rm -f "$OUT.sha256"

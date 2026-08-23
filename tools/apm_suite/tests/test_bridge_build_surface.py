@@ -21,10 +21,17 @@ def _rest_api_class_bodies(source: str) -> dict[str, str]:
 
 
 def test_bridge_build_uses_pinned_npx_typescript() -> None:
+    # The pin lives in scripts/lib/tool_versions.sh, shared with lint-webui.sh
+    # so the freshness gate checks the same TypeScript that ships.
     script = (ROOT / "scripts" / "build_bridge.sh").read_text(encoding="utf-8")
-    assert 'tsc_version="${TSC_VERSION:-5.9.3}"' in script
-    assert 'npx --yes -p "typescript@$tsc_version" tsc' in script
+    assert "scripts/lib/tool_versions.sh" in script
+    assert 'npx --yes -p "typescript@$TSC_VERSION" tsc' in script
     assert "command -v tsc" not in script
+
+    lib = (ROOT / "scripts" / "lib" / "tool_versions.sh").read_text(encoding="utf-8")
+    match = re.search(r':\s*"\$\{TSC_VERSION:=([0-9.]+)\}"', lib)
+    assert match, "tool_versions.sh must pin TSC_VERSION to an explicit x.y.z"
+    assert re.fullmatch(r"\d+\.\d+\.\d+", match.group(1))
 
 
 def test_bridge_docs_do_not_require_global_tsc() -> None:
