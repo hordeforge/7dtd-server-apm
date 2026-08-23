@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import shutil
+from collections.abc import Iterator
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -158,6 +160,23 @@ def sessions_beyond_budget(
         doomed.append(session)
         total -= sizes[session]
     return doomed
+
+
+def remove_sessions(doomed: list[Path]) -> Iterator[tuple[Path, OSError | None]]:
+    """Delete sessions past retention; one implementation for the CLI `prune`
+    command and post-capture auto-prune so their failure behavior cannot drift.
+
+    Yields each session with None on success or the OSError on failure: a single
+    undeletable session (e.g. EBUSY from a leaked mono bind mount) must not abort
+    the whole prune and strand the remaining deletions.
+    """
+    for session in doomed:
+        try:
+            shutil.rmtree(session)
+        except OSError as error:
+            yield session, error
+        else:
+            yield session, None
 
 
 def audit_session(session: Path) -> tuple[ManifestV2, bool]:

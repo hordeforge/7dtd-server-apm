@@ -25,7 +25,7 @@ from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, load_json, unique_path
 from .paths import REPO, apm_root
 from .runner import backend_python, run, terminate_tree
-from .session import audit_session, list_sessions, sessions_beyond_budget
+from .session import audit_session, list_sessions, remove_sessions, sessions_beyond_budget
 
 app = typer.Typer(help="Host-only APM for 7 Days to Die dedicated servers.", no_args_is_help=True)
 flame_app = typer.Typer(help="Build and compare flame profiles.", no_args_is_help=True)
@@ -601,10 +601,15 @@ def prune_sessions(
 ) -> None:
     """Delete old sessions beyond --keep or a total size budget."""
     max_bytes = max_gb * 1024**3 if max_gb is not None else None
-    for old in sessions_beyond_budget(list_sessions(apm_root()), keep, max_bytes):
+    doomed = sessions_beyond_budget(list_sessions(apm_root()), keep, max_bytes)
+    for old in doomed:
         console.print(("would remove " if dry_run else "removing ") + str(old))
-        if not dry_run:
-            shutil.rmtree(old)
+    if dry_run:
+        return
+    for old, error in remove_sessions(doomed):
+        # One stuck session must not strand the rest: report and keep going.
+        if error is not None:
+            err_console.print(f"[red]could not remove {old}: {error}[/red]")
 
 
 @app.command()

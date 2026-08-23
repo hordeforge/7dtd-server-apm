@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class StrictModel(BaseModel):
@@ -110,6 +110,22 @@ class EventsV2(StrictModel):
     dropped: int = Field(ge=0)
     by_kind: dict[str, int] = Field(default_factory=dict)
     events: list[EventV2] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _counts_consistent(self) -> EventsV2:
+        # CHECK-constraint analog: count is the total observed, retained the
+        # materialized subset, dropped the remainder. A document violating
+        # either identity is corrupt or hand-edited and must fail validation
+        # instead of feeding readers a silently inconsistent timeline.
+        if self.retained != len(self.events):
+            raise ValueError(
+                f"retained={self.retained} does not match {len(self.events)} materialized events"
+            )
+        if self.count != self.retained + self.dropped:
+            raise ValueError(
+                f"count={self.count} != retained {self.retained} + dropped {self.dropped}"
+            )
+        return self
 
 
 class HealthV2(StrictModel):

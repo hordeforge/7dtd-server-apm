@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -21,10 +22,11 @@ from apm_suite.capture import CaptureContext, CollectorSpec
 from apm_suite.cli import app
 from apm_suite.finalize import finalize
 from apm_suite.io import atomic_json, load_json
-from apm_suite.models import LayerScore, ManifestV2, Target, schema_dict
+from apm_suite.models import EventsV2, LayerScore, ManifestV2, Target, schema_dict
 from apm_suite.reporting import render_session
 from apm_suite.runner import terminate_tree
 from apm_suite.session import REQUIRED, audit_session
+from pydantic import ValidationError
 from typer.testing import CliRunner
 
 runner = CliRunner()
@@ -317,6 +319,56 @@ def test_atomic_json_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "nested/value.json"
     atomic_json(path, {"snowman": "☃"})
     assert json.loads(path.read_text()) == {"snowman": "☃"}
+
+
+def test_atomic_write_fsyncs_file_and_parent_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each atomic write must fsync the file data AND the parent directory: a
+    rename without a directory fsync can be lost on power failure, silently
+    reverting evidence files that later audits hash."""
+    calls: list[int] = []
+    real_fsync = os.fsync
+
+    def counting_fsync(fd: int) -> None:
+        calls.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", counting_fsync)
+
+    path = tmp_path / "nested/value.json"
+    atomic_json(path, {"a": 1})
+    atomic_json(path, {"a": 2})
+
+    assert len(calls) >= 4  # two writes x (file fsync + directory fsync)
+    assert json.loads(path.read_text()) == {"a": 2}
+
+
+def test_events_schema_enforces_count_identities() -> None:
+    """CHECK-constraint analog at the ingestion boundary: count = retained +
+    dropped and retained = len(events) must hold or validation fails, so a
+    corrupt/hand-edited events.json cannot feed readers inconsistent totals."""
+    base = {
+        "schema": "7dtd.apm.events.v2",
+        "session": "session_x",
+        "count": 3,
+        "retained": 2,
+        "dropped": 1,
+        "by_kind": {},
+        "events": [
+            {"kind": "gc", "severity": "info", "message": "a"},
+            {"kind": "gc", "severity": "warn", "message": "b"},
+        ],
+    }
+    EventsV2.model_validate(base)
+
+    mismatched_total = dict(base, count=4)
+    with pytest.raises(ValidationError, match="count=4"):
+        EventsV2.model_validate(mismatched_total)
+
+    mismatched_retained = dict(base, retained=1)
+    with pytest.raises(ValidationError, match="retained=1"):
+        EventsV2.model_validate(mismatched_retained)
 
 
 def test_password_not_in_capture_command() -> None:
@@ -1739,6 +1791,34 @@ def test_prune_size_budget_removes_oldest_kept_first(
     result = runner.invoke(app, ["prune", "--keep", "3", "--max-gb", str(2500 / 1024**3)])
     assert result.exit_code == 0
     assert sorted(p.name for p in root.glob("session_*")) == ["session_1", "session_2"]
+
+
+def test_prune_continues_past_undeletable_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One undeletable session (e.g. EBUSY from a leaked mono bind mount) must
+    not abort the prune run and strand the remaining deletions."""
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    _prune_store(root, 4)
+    stuck = root / "session_1"
+
+    real_rmtree = shutil.rmtree
+
+    def failing_rmtree(path: Any, **kwargs: Any) -> None:
+        if Path(path) == stuck:
+            raise OSError(16, "Device or resource busy")
+        real_rmtree(path, **kwargs)
+
+    monkeypatch.setattr(shutil, "rmtree", failing_rmtree)
+    result = runner.invoke(app, ["prune", "--keep", "2"])
+
+    assert result.exit_code == 0
+    # session_1 (stuck) survives; the other doomed session is still removed.
+    assert sorted(p.name for p in root.glob("session_*")) == ["session_1", "session_2", "session_3"]
+    assert "could not remove" in result.stderr
+    assert str(stuck) in result.stderr
 
 
 # --- resource lifecycle ------------------------------------------------------------

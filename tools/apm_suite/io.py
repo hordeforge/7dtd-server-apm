@@ -8,6 +8,21 @@ from pathlib import Path
 from typing import Any
 
 
+def _sync_parent_directory(path: Path) -> None:
+    """Fsync the directory so the just-completed rename survives power loss.
+
+    The file fsync alone is not enough: without a directory fsync a host crash
+    can revert evidence files to empty or missing even though the write
+    reported success, which would then fail every later integrity audit.
+    """
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    fd = os.open(path.parent, flags)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_text(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -18,6 +33,7 @@ def atomic_text(path: Path, content: str) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         tmp.replace(path)
+        _sync_parent_directory(path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

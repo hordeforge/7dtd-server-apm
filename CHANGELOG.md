@@ -37,6 +37,15 @@ major version.
   drifting copies of the same logic; they share one helper now.
 - Fixed: finalize-time lag diagnosis and the bridge analyzer apply identical
   deep-sample scaling (shared attribute helper).
+- Fixed: session writes are now durable, not just atomic: the parent directory
+  is fsynced after each rename, so a power loss can no longer revert evidence
+  files to empty or missing after a reported-successful write.
+- Changed: retention deletion is one shared implementation for `prune` and
+  post-capture auto-prune; a single undeletable session (e.g. EBUSY from a
+  leaked mono bind mount) no longer aborts a prune run and strands the rest.
+- Fixed: events.json ingestion rejects internally inconsistent documents
+  (count must equal retained + dropped, retained must equal the number of
+  materialized events) instead of feeding readers misleading totals.
 - jitmap files with undecodable bytes no longer abort finalize; percentage
   shares are rounded instead of truncated.
 
