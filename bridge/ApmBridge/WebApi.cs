@@ -17,9 +17,20 @@ namespace DtdApmBridge
 
         public override void HandleRestGet(RequestContext context)
         {
+            // Same structured error envelope as the perf POST below: a failed
+            // snapshot must answer a coded 500, not an unhandled handler
+            // exception with no programmatic detail.
+            string json;
+            try { json = Telemetry.SnapshotJson(); }
+            catch (Exception ex)
+            {
+                BridgeMod.Log("apm snapshot failed: " + ex.Message);
+                SendEmptyResponse(context, HttpStatusCode.InternalServerError, null, "SNAPSHOT_FAILED", null);
+                return;
+            }
             JsonWriter writer;
             PrepareEnvelopedResult(out writer);
-            writer.WriteRaw(Encoding.UTF8.GetBytes(Telemetry.SnapshotJson()));
+            writer.WriteRaw(Encoding.UTF8.GetBytes(json));
             SendEnvelopedResult(context, ref writer, HttpStatusCode.OK, null, null, null);
         }
 
@@ -32,9 +43,11 @@ namespace DtdApmBridge
 
     /// <summary>
     /// Admin toggle for the sibling EfficientServer perf mod: GET /api/perf
-    /// reports the config state, POST {"enabled":bool} flips it and restarts
-    /// the server (the container restart policy boots it with the new config).
-    /// This is an ops switch for a sibling mod, not a measurement feature.
+    /// reports the config state, POST flips the top-level Enabled flag or
+    /// individual feature groups (single or batch bodies) and restarts the
+    /// server when anything actually changed (the container restart policy
+    /// boots it with the new config). This is an ops switch for a sibling
+    /// mod, not a measurement feature.
     /// </summary>
     public sealed class Perf : AbsRestApi
     {
@@ -114,24 +127,30 @@ namespace DtdApmBridge
             return groups;
         }
 
-        static bool SetGroup(JObject root, string group, bool enabled)
+        // Applies one allowlisted toggle. Returns 1 when the value flipped,
+        // 0 when the stored value already matches (idempotent replay), and
+        // -1 for a group name outside the allowlist.
+        static int SetGroup(JObject root, string group, bool enabled)
         {
             string[] parts = group.Split('.');
             if (parts.Length == 2 && parts[0] == "SkipOnDedicated")
             {
                 if (root["SkipOnDedicated"] is JObject sk && sk[parts[1]] != null)
                 {
+                    if (sk[parts[1]] is JValue prev && prev.Type == JTokenType.Boolean && (bool)prev == enabled) return 0;
                     sk[parts[1]] = enabled;
-                    return true;
+                    return 1;
                 }
-                return false;
+                return -1;
             }
             if (parts.Length == 1 && Array.IndexOf(GroupKeys, parts[0]) >= 0 && root[parts[0]] is JObject jo)
             {
+                bool current = (bool?)jo["Enabled"] ?? false;
+                if (current == enabled) return 0;
                 jo["Enabled"] = enabled;
-                return true;
+                return 1;
             }
-            return false;
+            return -1;
         }
 
         public override void HandleRestGet(RequestContext context)
@@ -173,51 +192,79 @@ namespace DtdApmBridge
             // after the lock is released.
             string errorCode = null;
             int changed = 0;
+            int directives = 0;
             lock (ConfigFileLock)
             {
                 JObject root = ReadRoot();
                 if (root == null)
                 {
-                    errorCode = "WRITE_FAILED";
+                    // Missing or unreadable perf config: a state the client can
+                    // see coming (GET reports available=false), not a server
+                    // fault, so 409 instead of a misleading 500.
+                    errorCode = "UNAVAILABLE";
                 }
                 else
                 {
                     // Single top-level toggle: {"enabled": bool}
                     if (body["enabled"] is JValue top && top.Type == JTokenType.Boolean)
                     {
-                        root["Enabled"] = (bool)top;
-                        changed++;
+                        directives++;
+                        bool current = (bool?)root["Enabled"] ?? false;
+                        if (current != (bool)top) { root["Enabled"] = (bool)top; changed++; }
                     }
                     // Single group toggle: {"group": "...", "enabled": bool}
                     if (errorCode == null && body["group"] is JValue gv && body["enabled"] is JValue ev && ev.Type == JTokenType.Boolean)
                     {
-                        if (!SetGroup(root, Convert.ToString(gv), (bool)ev)) errorCode = "INVALID_GROUP";
-                        else changed++;
+                        directives++;
+                        int result = SetGroup(root, Convert.ToString(gv), (bool)ev);
+                        if (result < 0) errorCode = "INVALID_GROUP";
+                        else changed += result;
                     }
                     // Batch: {"groups": {"AiLod": false, "SkipOnDedicated.WaterSplashParticles": true, ...}}
                     if (errorCode == null && body["groups"] is JObject batch)
+                    {
+                        directives++;
                         foreach (var kv in batch)
                         {
                             if (!(kv.Value is JValue bv) || bv.Type != JTokenType.Boolean) { errorCode = "INVALID_BODY"; break; }
-                            if (!SetGroup(root, kv.Key, (bool)bv)) { errorCode = "INVALID_GROUP"; break; }
-                            changed++;
+                            int result = SetGroup(root, kv.Key, (bool)bv);
+                            if (result < 0) { errorCode = "INVALID_GROUP"; break; }
+                            changed += result;
                         }
-                    if (errorCode == null && changed == 0) errorCode = "INVALID_BODY";
-                    if (errorCode == null && !WriteRoot(root)) errorCode = "WRITE_FAILED";
+                    }
+                    if (errorCode == null && directives == 0) errorCode = "INVALID_BODY";
+                    if (errorCode == null && changed > 0 && !WriteRoot(root)) errorCode = "WRITE_FAILED";
                 }
             }
             if (errorCode != null)
             {
                 SendEmptyResponse(context,
-                    errorCode == "WRITE_FAILED" ? HttpStatusCode.InternalServerError : HttpStatusCode.BadRequest,
+                    errorCode == "WRITE_FAILED" ? HttpStatusCode.InternalServerError
+                        : errorCode == "UNAVAILABLE" ? HttpStatusCode.Conflict
+                        : HttpStatusCode.BadRequest,
                     null, errorCode, null);
                 return;
             }
-            BridgeMod.Log("perf config applied " + changed + " change(s)");
+            if (changed == 0)
+            {
+                // Idempotent replay: nothing changed (or nothing was requested),
+                // so skip both the file write and the disruptive server restart.
+                BridgeMod.Log("perf config: no changes (state already as requested)");
+            }
+            else
+            {
+                BridgeMod.Log("perf config applied " + changed + " change(s)");
+            }
             var payload = Encoding.UTF8.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(
-                new { changed = changed, restarting = true, note = "server restarts in a moment" }));
+                new
+                {
+                    changed = changed,
+                    restarting = changed > 0,
+                    note = changed > 0 ? "server restarts in a moment" : "no changes; config already in the requested state"
+                }));
             writer.WriteRaw(payload);
             SendEnvelopedResult(context, ref writer, HttpStatusCode.OK, null, null, null);
+            if (changed == 0) return;
             // Flush the response, then shut down; the container restart policy
             // boots the server again with the flipped config.
             System.Threading.Tasks.Task.Run(async () =>
@@ -229,17 +276,6 @@ namespace DtdApmBridge
                 }
                 catch (Exception ex) { BridgeMod.Log("perf restart failed: " + ex.Message); }
             });
-        }
-
-        static bool TryGetBool(IDictionary<string, object> input, string key, out bool value)
-        {
-            value = false;
-            if (!input.TryGetValue(key, out object raw) || raw == null) return false;
-            if (raw is bool b) { value = b; return true; }
-            if (raw is string s) return bool.TryParse(s, out value);
-            if (raw is long l) { value = l != 0; return true; }
-            if (raw is double d) { value = d != 0; return true; }
-            return false;
         }
 
         public override int[] DefaultMethodPermissionLevels() => new[] { 0, 0, 0, 0, 0 };

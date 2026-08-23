@@ -696,9 +696,16 @@ function togglePerfHandler(opts: {
     return;
   }
   opts.setPerfBusy(true);
-  void opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled }).catch(() => {
-    opts.setPerfBusy(false);
-  });
+  // A no-op POST (config already in the requested state) answers 200 without
+  // restarting, so busy must also clear on success or the button stays
+  // disabled until a manual reload.
+  void opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled })
+    .then((): void => {
+      opts.setPerfBusy(false);
+    })
+    .catch(() => {
+      opts.setPerfBusy(false);
+    });
 }
 
 function copySnapshot(snapshot: Record<string, unknown>, setCopyStatus: (v: string) => void): void {

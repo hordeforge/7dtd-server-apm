@@ -15,8 +15,17 @@ present (the dashboard reloads after login/logout), so it is hidden while
 logged out; a logged-in non-admin sees the entry and an "admin access
 required" state from the panel, since the endpoint stays at permission 0.
 The panel also hosts an admin switch for the sibling EfficientServer perf mod:
-`GET/POST /api/perf` reads/flips its config `Enabled` flag and restarts the
-server (container restart policy reloads it). The edited path defaults to
+`GET/POST /api/perf` reads/flips its config `Enabled` flag and individual
+feature groups (`{"group": "...", "enabled": bool}` or batch
+`{"groups": {"AiLod": true, ...}}`) and restarts the server when anything
+actually changed (container restart policy reloads it); a request whose values
+already all match answers `changed: 0`, `restarting: false`, and skips both the
+write and
+the restart. POST errors are coded envelopes: `400 INVALID_BODY` (unparseable
+body or no recognizable toggle),
+`400 INVALID_GROUP`, `409 UNAVAILABLE` when the config file is missing or
+unreadable (GET reports `available: false`), `500 WRITE_FAILED`. The edited
+path defaults to
 `/mods/EfficientServer/Config/efficientserver.json` (bridge config
 `PerfModConfigPath`); the server mounts `mods/` rw so the toggle can write it.
 

@@ -53,6 +53,15 @@ major version.
 
 - Build: the TypeScript panel build is self-contained (pinned `npx`
   toolchain); no preinstalled global tsc setup needed.
+- API: `POST /api/perf` counts effective changes only; a request that would
+  change nothing now answers `changed: 0, restarting: false` and skips the
+  config write and the server restart instead of kicking players for a no-op.
+  A missing or unreadable perf config now answers `409 UNAVAILABLE` (matching
+  GET's `available: false`) instead of a misleading `500 WRITE_FAILED`, which
+  is reserved for real write failures. `GET /api/apm` answers a coded
+  `500 SNAPSHOT_FAILED` envelope when snapshot serialization fails instead of
+  an unhandled handler exception. Panel toggle buttons re-enable after a
+  no-op response (previously stuck busy until reload).
 
 ## 2.2.3 (tag v2.2.3) - bridge mod - 2026-08-22
 

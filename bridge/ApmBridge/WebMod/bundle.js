@@ -454,7 +454,14 @@
             return;
         }
         opts.setPerfBusy(true);
-        void opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled }).catch(() => {
+        // A no-op POST (config already in the requested state) answers 200 without
+        // restarting, so busy must also clear on success or the button stays
+        // disabled until a manual reload.
+        void opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled })
+            .then(() => {
+            opts.setPerfBusy(false);
+        })
+            .catch(() => {
             opts.setPerfBusy(false);
         });
     }
