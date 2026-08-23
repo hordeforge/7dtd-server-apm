@@ -5,13 +5,35 @@ ROOT := $(CURDIR)
 DS ?= $(or $(SEVENDTD_DS_DIR),$(shell . "$(ROOT)/scripts/lib/ds_paths.sh" && printf '%s' "$$SEVENDTD_DS_DIR"))
 UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --project $(ROOT)
 
-.PHONY: test lint lint-shell check-bt format format-check typecheck check lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package
+.DEFAULT_GOAL := help
+
+.PHONY: help test lint lint-shell check-bt format format-check typecheck check lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package
+help:
+	@echo "7dtd-apm contributor targets (requires: Python 3.11+, uv, Linux):"
+	@echo "  make test           pytest suite + version gate (~3s)"
+	@echo "                      single test: uv run pytest tools/apm_suite/tests/test_core.py -k name"
+	@echo "  make lint           ruff over tools/"
+	@echo "  make lint-shell     shellcheck (needs the shellcheck binary)"
+	@echo "  make lint-html      Nu HTML checker over rendered reports (needs npx + java)"
+	@echo "  make lint-webui     tsc + oxlint + bundle freshness (needs npx)"
+	@echo "  make format         ruff format tools/   |   make format-check to verify"
+	@echo "  make typecheck      mypy strict"
+	@echo "  make check          full local gate = all of the above + check-bt"
+	@echo "  make check-ci       exactly what CI runs (= check minus check-bt)"
+	@echo "  make check-bt       bpftrace --dry-run over every probe (needs bpftrace + sudo -n; skips visibly)"
+	@echo "  make bridge-build   build bridge DLL + WebMod (needs dotnet SDK + npx)"
+	@echo "  make bridge-install DS=/path/to/server   build + install into Mods/"
+	@echo "  make bridge-uninstall DS=/path/to/server"
+	@echo "  make package        release zip under dist/"
+	@echo "  make clean          remove caches, venv, dist, bridge build output"
 test:
 	$(UV) pytest
 	$(UV) python scripts/check_version.py
 lint:
 	$(UV) ruff check tools
 lint-shell:
+	@command -v shellcheck >/dev/null 2>&1 || { \
+	  echo "ERROR: shellcheck not found; install it (apt install shellcheck / brew install shellcheck)" >&2; exit 1; }
 	shellcheck scripts/*.sh tools/apm/*.sh tools/apm/collectors/*.sh tools/host_profiler/*.sh
 lint-html:
 	./scripts/lint-html.sh

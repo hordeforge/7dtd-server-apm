@@ -220,6 +220,10 @@ appears only as set/unset). An exported-but-empty variable is treated as unset.
 - [`tools/README.md`](tools/README.md) - private backend ownership
 - [`TODO.md`](TODO.md) - phased implementation and verification log
 
-Python 3.11+, `uv`, and Linux are required. `perf`, bpftrace, and narrowly
-configured non-interactive privileges are optional; `doctor` reports exactly
-which layers can run. Game and kernel compatibility is recorded per session.
+Python 3.11+, `uv`, and Linux are required. `make check` additionally shells
+out to `shellcheck`, `node`/`npx` (the tsc/oxlint/vnu versions are pinned in
+`scripts/lint-*.sh`), and `java` (vnu-jar); each check names its missing tool
+instead of failing mid-gate. `make help` lists every target with its
+prerequisites. `perf`, bpftrace, and narrowly configured non-interactive
+privileges are optional; `doctor` reports exactly which layers can run. Game
+and kernel compatibility is recorded per session.

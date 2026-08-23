@@ -29,6 +29,11 @@ tsc_version="${TSC_VERSION:-5.9.3}"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-apm/oxlint-standards"
 webmod_dir="$root/bridge/ApmBridge/WebMod"
 
+command -v npx >/dev/null 2>&1 || {
+  echo "7dtd-apm: lint-webui: npx (Node.js/npm) not found; tsc/oxlint run through pinned npx packages" >&2
+  exit 1
+}
+
 # 1. Type check (per WebMod/tsconfig.json, strict).
 npx --yes -p "typescript@$tsc_version" tsc -p "$webmod_dir/tsconfig.json" --noEmit
 

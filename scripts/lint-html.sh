@@ -16,6 +16,15 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 vnu_version="${VNU_VERSION:-26.8.20}"
 
+command -v npx >/dev/null 2>&1 || {
+  echo "7dtd-apm: lint-html: npx (Node.js/npm) not found; vnu runs through pinned npx packages" >&2
+  exit 1
+}
+command -v java >/dev/null 2>&1 || {
+  echo "7dtd-apm: lint-html: java not found; vnu-jar needs a Java runtime (e.g. apt install default-jre)" >&2
+  exit 1
+}
+
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
