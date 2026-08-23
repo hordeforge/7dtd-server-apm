@@ -19,6 +19,14 @@ major version.
 
 ### Host CLI
 
+- Supply chain: CI actions run from immutable commit SHAs instead of mutable
+  tags (`actions/checkout` v4.4.0; `astral-sh/setup-uv` updated v6 to
+  v10.0.1), Dependabot keeps `uv.lock` and those pins current weekly, and a
+  guard test fails any future tag-pinned action or unpinned executed `npx`
+  call in the scripts.
+- Packaging: `make sbom` emits a hash-pinned production dependency inventory
+  (`dist/sbom-python.txt`, name/version plus sha256 of every locked artifact)
+  for releases and vulnerability scanners.
 - Privacy: event timelines no longer embed raw telnet console text in spike
   messages; only the extracted `gmUpdateDuration` is kept. The console stream
   can carry player names, IPs, and Steam IDs.

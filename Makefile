@@ -7,7 +7,7 @@ UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --project $(ROOT)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test lint lint-shell check-bt format format-check typecheck check lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package
+.PHONY: help test lint lint-shell check-bt format format-check typecheck check lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package sbom
 help:
 	@echo "7dtd-apm contributor targets (requires: Python 3.11+, uv, Linux):"
 	@echo "  make test           pytest suite + version gate (~3s)"
@@ -25,6 +25,7 @@ help:
 	@echo "  make bridge-install DS=/path/to/server   build + install into Mods/"
 	@echo "  make bridge-uninstall DS=/path/to/server"
 	@echo "  make package        release zip under dist/"
+	@echo "  make sbom           hash-pinned production dependency inventory under dist/"
 	@echo "  make clean          remove caches, venv, dist, bridge build output"
 test:
 	$(UV) pytest
@@ -62,6 +63,14 @@ bridge-uninstall:
 package:
 	chmod +x scripts/build_bridge.sh scripts/package.sh
 	./scripts/package.sh
+# Dependency inventory for releases and vuln scanners: name==version plus the
+# sha256 of every artifact uv.lock pins, production deps only (no dev group).
+sbom:
+	mkdir -p $(ROOT)/dist
+	env UV_CACHE_DIR=$(ROOT)/.uv-cache uv export --project $(ROOT) \
+	  --format requirements-txt --no-emit-project --no-header --no-dev \
+	  -o $(ROOT)/dist/sbom-python.txt
+	@echo "SBOM -> dist/sbom-python.txt"
 clean:
 	rm -rf .mypy_cache .pytest_cache .ruff_cache .uv-cache .venv dist
 	find tools -type d -name __pycache__ -prune -exec rm -rf {} +
