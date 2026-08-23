@@ -434,18 +434,27 @@ def memory_trend(session: Path) -> dict[str, Any]:
         if record.get("t") is not None and record.get("rss_mb") is not None:
             times.append(float(record["t"]))
             rss.append(float(record["rss_mb"]))
-            fds.append(int(record.get("fd_count") or 0))
+            raw_fd = record.get("fd_count")
+            if isinstance(raw_fd, (int, float)) and not isinstance(raw_fd, bool) and raw_fd >= 0:
+                fds.append(int(raw_fd))
     if len(rss) < 3:
         return {}
     span = times[-1] - times[0]
     rss_slope = (rss[-1] - rss[0]) / span if span > 0 else 0  # MB/s
-    return {
+    # fd_count is -1 (or absent) when its sample could not list /proc/pid/fd
+    # (a /proc race), so it is UNKNOWN, not a real count: feeding the sentinel
+    # into end-start arithmetic manufactured fd growth (+151 from a single
+    # raced first sample) and fired false leak causes. `fds` holds only
+    # measured counts (filtered during parsing); omit it entirely when none.
+    result: dict[str, Any] = {
         "rss_start_mb": round(rss[0], 1),
         "rss_end_mb": round(rss[-1], 1),
         "rss_growth_mb_per_s": round(rss_slope, 3),
-        "fd_start": fds[0],
-        "fd_end": fds[-1],
     }
+    if fds:
+        result["fd_start"] = fds[0]
+        result["fd_end"] = fds[-1]
+    return result
 
 
 # Frames that are runtime/BCL/engine/profiler noise, never the allocation's real

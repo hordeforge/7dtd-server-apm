@@ -1591,6 +1591,52 @@ def test_parse_proc_jsonl_survives_non_numeric_fields(
     assert all(isinstance(e["value"], (int, float)) for e in sink.events)
 
 
+def _write_proc_jsonl(session: Path, records: list[dict[str, object]]) -> None:
+    session.mkdir(parents=True)
+    (session / "memory").mkdir()
+    (session / "memory/proc.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records)
+    )
+
+
+def test_memory_trend_ignores_unknown_fd_sentinel(tmp_path: Path) -> None:
+    """fd_count=-1 means the sample could not list /proc/pid/fd; treating it as
+    a count manufactured fd growth (e.g. 150-(-1)=151) and fired false leak
+    causes. Endpoints must come from measured counts only."""
+    from apm_suite.analysis.report import memory_trend
+
+    session = tmp_path / "session_fd_race"
+    _write_proc_jsonl(
+        session,
+        [
+            {"t": 1.0, "rss_mb": 1000.0, "fd_count": -1},  # raced listing
+            {"t": 2.0, "rss_mb": 1000.5, "fd_count": 40},
+            {"t": 3.0, "rss_mb": 1001.0, "fd_count": 150},
+        ],
+    )
+    trend = memory_trend(session)
+    assert trend["fd_start"] == 40
+    assert trend["fd_end"] == 150
+
+
+def test_memory_trend_omits_fds_when_every_sample_is_unknown(tmp_path: Path) -> None:
+    from apm_suite.analysis.report import memory_trend
+
+    session = tmp_path / "session_fd_unknown"
+    _write_proc_jsonl(
+        session,
+        [
+            {"t": 1.0, "rss_mb": 1000.0, "fd_count": -1},
+            {"t": 2.0, "rss_mb": 1000.5, "fd_count": None},
+            {"t": 3.0, "rss_mb": 1001.0, "fd_count": -1},
+        ],
+    )
+    trend = memory_trend(session)
+    assert "fd_start" not in trend
+    assert "fd_end" not in trend
+    assert trend["rss_growth_mb_per_s"] == pytest.approx(0.5)
+
+
 @pytest.mark.parametrize(
     "wchan_top",
     [
