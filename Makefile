@@ -28,7 +28,7 @@ help:
 	@echo "  make bridge-install DS=/path/to/server   build + install into Mods/"
 	@echo "  make bridge-uninstall DS=/path/to/server"
 	@echo "  make package        release zip under dist/"
-	@echo "  make sbom           hash-pinned production dependency inventory under dist/"
+	@echo "  make sbom           hash-pinned + CycloneDX production dependency inventories under dist/"
 	@echo "  make clean          remove caches, venv, dist, bridge build output"
 test:
 	$(UV) pytest
@@ -66,14 +66,20 @@ bridge-uninstall:
 package:
 	chmod +x scripts/build_bridge.sh scripts/package.sh
 	./scripts/package.sh
-# Dependency inventory for releases and vuln scanners: name==version plus the
-# sha256 of every artifact uv.lock pins, production deps only (no dev group).
+# Dependency inventory for releases and vuln scanners, production deps only
+# (no dev group). Two formats from the same locked resolution: the
+# requirements-txt export carries name==version plus the sha256 of every
+# artifact uv.lock pins; the CycloneDX 1.5 export is the standard BOM shape
+# (purl + dependency graph) that scanners ingest directly.
 sbom:
 	mkdir -p $(ROOT)/dist
 	env UV_CACHE_DIR=$(ROOT)/.uv-cache uv export --project $(ROOT) --locked \
 	  --format requirements-txt --no-emit-project --no-header --no-dev \
 	  -o $(ROOT)/dist/sbom-python.txt
-	@echo "SBOM -> dist/sbom-python.txt"
+	env UV_CACHE_DIR=$(ROOT)/.uv-cache uv export --project $(ROOT) --locked \
+	  --preview-features sbom-export --format cyclonedx1.5 --no-emit-project --no-dev \
+	  -o $(ROOT)/dist/sbom-python.cdx.json
+	@echo "SBOM -> dist/sbom-python.txt + dist/sbom-python.cdx.json"
 clean:
 	rm -rf .mypy_cache .pytest_cache .ruff_cache .uv-cache .venv dist
 	find tools -type d -name __pycache__ -prune -exec rm -rf {} +

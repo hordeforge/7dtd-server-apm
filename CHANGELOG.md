@@ -26,7 +26,9 @@ major version.
   call in the scripts.
 - Packaging: `make sbom` emits a hash-pinned production dependency inventory
   (`dist/sbom-python.txt`, name/version plus sha256 of every locked artifact)
-  for releases and vulnerability scanners.
+  for releases and vulnerability scanners, plus a CycloneDX 1.5 BOM of the same
+  locked resolution (`dist/sbom-python.cdx.json`, purl + dependency graph) that
+  SBOM and vuln scanners ingest directly.
 - Privacy: event timelines no longer embed raw telnet console text in spike
   messages; only the extracted `gmUpdateDuration` is kept. The console stream
   can carry player names, IPs, and Steam IDs.
