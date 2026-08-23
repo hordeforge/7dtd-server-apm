@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/maci0/7dtd-apm"
+Repository = "https://github.com/hordeforge/7dtd-server-apm"
 
 [project.scripts]
 7dtd-apm = "apm_suite.cli:app"

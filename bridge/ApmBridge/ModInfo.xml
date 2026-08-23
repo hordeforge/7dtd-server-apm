@@ -5,6 +5,6 @@
   <Description value="Optional instrumentation-only telemetry provider for the host 7dtd-apm suite." />
   <Author value="7dtd-apm" />
   <Version value="2.2.3" />
-  <Website value="https://github.com/maci0/7dtd-apm" />
+  <Website value="https://github.com/hordeforge/7dtd-server-apm" />
   <SkipWithAntiCheat value="true" />
 </xml>
