@@ -113,13 +113,13 @@ def html_index(rows: list[dict[str, Any]]) -> str:
         flame_icon = ""
         if row.get("has_flame"):
             flame_icon = (
-                f'<a href="{html.escape(row["dir"], quote=True)}/cpu/perf/flame.html">'
+                f'<a class="artifact" href="{html.escape(row["dir"], quote=True)}/cpu/perf/flame.html">'
                 '<span role="img" aria-label="flamegraph report available (open it)">\U0001f525</span></a>'
             )
         bridge_icon = ""
         if row.get("has_bridge"):
             bridge_icon = (
-                f'<a href="{html.escape(row["dir"], quote=True)}/csharp_bridge.md">'
+                f'<a class="artifact" href="{html.escape(row["dir"], quote=True)}/csharp_bridge.md">'
                 '<span role="img" aria-label="bridge capture available (open it)">\U0001f309</span></a>'
             )
         body.append(
@@ -154,14 +154,20 @@ a{{color:#8ab4f8}} table{{border-collapse:collapse;width:100%}}
 th,td{{border:1px solid #303642;padding:8px;text-align:left}}
 th{{background:#161a22}}
 .sr-only{{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}}
+/* Icon-only artifact links are small glyphs; pad them to a 24x24 target
+   (WCAG 2.5.8 Target Size Minimum). */
+td a.artifact{{display:inline-block;min-width:24px;min-height:24px;line-height:24px;text-align:center;text-decoration:none;font-size:16px}}
+td a.artifact:focus-visible{{outline:2px solid #8ab4f8;outline-offset:1px}}
 </style></head><body>
+<main>
 <h1>APM session index</h1>
 <p>{len(rows)} sessions</p>
 <table>
 <caption class="sr-only">APM sessions</caption>
-<tr><th scope="col">session</th><th scope="col">utc</th><th scope="col">pid</th><th scope="col">ent/ply</th><th scope="col">health</th><th scope="col">grade</th><th scope="col">lag diagnosis</th><th scope="col">profile</th><th scope="col">gross alloc / STW</th><th scope="col">artifacts</th></tr>
+<tr><th scope="col">session</th><th scope="col">utc</th><th scope="col">pid</th><th scope="col">entities/players</th><th scope="col">health</th><th scope="col">grade</th><th scope="col">lag diagnosis</th><th scope="col">profile</th><th scope="col">gross alloc / STW</th><th scope="col">artifacts</th></tr>
 {"".join(body)}
 </table>
+</main>
 </body></html>
 """
 

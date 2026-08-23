@@ -105,8 +105,14 @@ def main() -> int:
         )
 
     svg = [
-        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}">',
+        # Accessible name/description for the whole picture (WCAG 1.1.1):
+        # screen readers announce the graphic instead of an unlabeled svg.
+        f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+        f'role="img" aria-labelledby="flame-title flame-desc">',
         '<rect width="100%" height="100%" fill="#f8f8f8"/>',
+        '<title id="flame-title">7dtd flamegraph</title>',
+        f'<desc id="flame-desc">Flamegraph of {grand:.0f} samples; each rectangle is a stack frame, '
+        "width is its share of samples, depth is the call-stack level.</desc>",
         f'<text x="10" y="20" font-size="14" font-family="sans-serif">7dtd flamegraph (samples={grand:.0f})</text>',
         *rects,
         "</svg>",

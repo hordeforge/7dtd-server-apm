@@ -49,15 +49,19 @@ a{{color:#8ab4f8}}
 code{{font-size:12px}} table{{border-collapse:collapse;width:100%}}
 th,td{{border:1px solid #303642;padding:6px;text-align:left}} th{{background:#161a22}}
 .muted{{color:#9aa0a6}}
+.sr-only{{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}}
 </style></head><body>
+<main>
 <h1>Speedscope / folded frame delta</h1>
 <p class="muted">A={_esc(str(a))}<br/>B={_esc(str(b))}<br/>
 Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
 <p><a href="dashboard.html">Dashboard</a> · <a href="../index.html">All sessions</a></p>
 <table>
+<caption class="sr-only">Frame weight delta between sessions A and B</caption>
 <tr><th scope="col">Frame</th><th scope="col">A</th><th scope="col">B</th><th scope="col">Δ</th><th scope="col">Relative Δ magnitude</th></tr>
 {"".join(tr)}
 </table>
+</main>
 </body></html>
 """
 

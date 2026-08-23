@@ -40,7 +40,8 @@ HTML = r"""<!DOCTYPE html>
   button { background:#2a2f3a; border:1px solid var(--rule); color:var(--fg); padding:6px 12px; border-radius:6px; cursor:pointer; }
   button:hover { border-color:var(--accent); }
   #breadcrumb { padding:8px 16px; font-size:12px; color:var(--muted); word-break:break-all; min-height:1.5em; }
-  #breadcrumb a { color:var(--accent); cursor:pointer; text-decoration:none; margin-right:4px; }
+  #breadcrumb a { color:var(--accent); cursor:pointer; text-decoration:underline; margin-right:4px; }
+  #breadcrumb a:hover, #breadcrumb a:focus-visible { text-decoration:none; }
   #chart { width:100%; overflow:hidden; }
   svg { display:block; width:100%; }
   .frame rect { stroke:var(--bg); stroke-width:0.5; cursor:pointer; }
@@ -151,7 +152,7 @@ function render() {
   const height = (maxD + 2) * H + 20;
   const total = focus.value || 1;
 
-  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`;
+  let   svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="group" aria-label="Flamegraph chart: each frame is a focusable button">`;
   nodes = [];
   const marks = new Map();
   if (search) markMatches(focus, marks);
