@@ -581,6 +581,53 @@ def test_audit_hashes_all_artifacts_without_touching_fixture(tmp_path: Path) -> 
     assert load_json(session / "manifest.json")["schema"] == "7dtd.apm.manifest.v2"
 
 
+def test_audit_detects_tampered_artifact_and_preserves_baseline(tmp_path: Path) -> None:
+    """`audit` must verify against the RECORDED hashes (its documented contract),
+    not re-stamp current contents: edited evidence fails, and the failed audit
+    leaves the original manifest in place so the drift stays provable."""
+    session = _session(tmp_path / "session_tamper")
+    assert audit_session(session)[1]
+    baseline = load_json(session / "manifest.json")
+    (session / "summary.json").write_text('{"tampered": true}\n')
+    result = runner.invoke(app, ["audit", str(session)])
+    assert result.exit_code == 1
+    assert "INVALID" in result.stdout
+    # The offending path is named on stderr, not just counted.
+    assert "summary.json" in result.stderr
+    # The recorded baseline survives the failed verification.
+    assert load_json(session / "manifest.json") == baseline
+
+
+def test_audit_accepts_newly_attached_artifacts(tmp_path: Path) -> None:
+    """Attaching an extra artifact then re-auditing stays valid (docs/APM.md):
+    only changes to already-recorded artifacts are integrity failures."""
+    session = _session(tmp_path / "session_attach")
+    assert audit_session(session)[1]
+    (session / "extra.txt").write_text("attached after the first audit")
+    result = runner.invoke(app, ["audit", str(session)])
+    assert result.exit_code == 0
+    assert "valid" in result.stdout
+
+
+def test_bridge_export_period_from_config_or_default(tmp_path: Path) -> None:
+    """The monitor's stale-read threshold keys off the bridge's export cadence
+    (PeriodicExportSeconds), falling back to 30 on absent/invalid config; a
+    non-positive value must not collapse the threshold to zero."""
+    from apm_suite.cli import bridge_export_period
+
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir()
+    assert bridge_export_period(telemetry) == 30.0  # no config file
+    config = telemetry.parent / "Config"
+    config.mkdir()
+    atomic_json(config / "apmbridge.json", {"PeriodicExportSeconds": 60})
+    assert bridge_export_period(telemetry) == 60.0
+    atomic_json(config / "apmbridge.json", {"PeriodicExportSeconds": 0})
+    assert bridge_export_period(telemetry) == 30.0
+    (config / "apmbridge.json").write_text("not json\n")
+    assert bridge_export_period(telemetry) == 30.0
+
+
 def _result_json(status: str, name: str = "futex", layer: str = "sync_locks") -> dict[str, object]:
     return {
         "schema": "7dtd.apm.collector-result.v1",

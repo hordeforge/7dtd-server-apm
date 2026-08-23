@@ -198,11 +198,15 @@ def audit(
     if not session.is_dir():
         err_console.print(f"[red]not a session directory: {session}[/red]")
         raise typer.Exit(2)
-    manifest, valid = audit_session(session)
+    manifest, valid = audit_session(session, verify_recorded=True)
     console.print(
         f"audit: {'valid' if valid else 'INVALID'}; "
         f"{len(manifest.errors)} errors, {len(manifest.warnings)} warnings"
     )
+    # An INVALID verdict without the offending paths is not actionable; name
+    # every error (missing file, failed schema, recorded-hash mismatch).
+    for error in manifest.errors:
+        err_console.print(f"[red]{error}[/red]")
     _exit(1 if not valid or (strict and manifest.warnings) else 0)
 
 
@@ -619,9 +623,12 @@ def monitor(
             if isinstance(current_late, int):
                 previous_late = current_late
             bridge_age = sample.get("bridge_age_s")
+            # Older than one and a half export periods means the exporter
+            # missed at least one expected refresh: a genuinely stale read.
+            export_period = bridge_export_period(bridge_latest.parent)
             stale = (
                 f"  [bridge {bridge_age}s old]"
-                if isinstance(bridge_age, float) and bridge_age > interval * 1.5
+                if isinstance(bridge_age, float) and bridge_age > export_period * 1.5
                 else ""
             )
             current_gc = sample.get("full_gc")
@@ -652,6 +659,21 @@ def monitor(
 
 def _ms(value: object) -> str:
     return f"{value:.1f}" if isinstance(value, (int, float)) else "-"
+
+
+def bridge_export_period(telemetry_dir: Path) -> float:
+    """Seconds between bridge exports of apm_app_latest.json.
+
+    Read from the mod config beside the telemetry dir (default 30): the
+    monitor's stale-read flag must key off the export cadence, not the sample
+    interval, or every fresh-at-cadence sample is flagged stale.
+    """
+    config = telemetry_dir.parent / "Config" / "apmbridge.json"
+    try:
+        value = float(json.loads(config.read_text(encoding="utf-8")).get("PeriodicExportSeconds"))
+    except (OSError, ValueError, TypeError):
+        return 30.0
+    return value if value > 0 else 30.0
 
 
 @app.command("prune")

@@ -28,6 +28,11 @@ major version.
   `bridge.jsonl` entirely.
 - Privacy: the app scrape discards the telnet banner and post-logon reply and
   persists only the requested `apm` command responses.
+- Fixed: `audit` now honors its documented contract and verifies artifacts
+  against the hashes recorded in `manifest.json` (it previously rebuilt the
+  manifest from current contents, so edited evidence always passed). A failed
+  verification preserves the recorded manifest, names the offending paths on
+  stderr, and exits 1; newly attached files still verify clean.
 - Fixed: folded/speedscope/flamegraph loaders crashed on non-finite sample
   weights (`int(inf)`); inf/nan samples are skipped now.
 - Changed: `--only` layer aliases resolve through one shared table across

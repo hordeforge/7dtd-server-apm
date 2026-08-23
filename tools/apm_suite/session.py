@@ -297,13 +297,48 @@ def purge_expired_trash(
             yield entry, None
 
 
-def audit_session(session: Path) -> tuple[ManifestV2, bool]:
+def verify_recorded_hashes(session: Path) -> list[str]:
+    """Tamper check against the recorded manifest (the `audit` CLI contract).
+
+    Returns one error per recorded artifact whose file is now missing or whose
+    size/content no longer matches manifest.json, plus an error when the
+    manifest itself is unreadable (the integrity baseline is gone). Empty when
+    the session carries no recorded manifest yet (first audit records it).
+    """
+    path = session / "manifest.json"
+    if not path.is_file():
+        return []
+    try:
+        recorded = ManifestV2.model_validate(load_json(path))
+    except (ValueError, ValidationError):
+        return ["recorded manifest.json is unreadable; integrity baseline lost"]
+    errors: list[str] = []
+    for artifact in recorded.artifacts:
+        current = session / artifact.path
+        if not current.is_file():
+            errors.append(f"integrity: {artifact.path} is recorded but missing")
+            continue
+        size = current.stat().st_size
+        if size != artifact.bytes:
+            errors.append(
+                f"integrity: {artifact.path} changed since the manifest was recorded "
+                f"({artifact.bytes} -> {size} bytes)"
+            )
+        elif file_sha256(current) != artifact.sha256:
+            errors.append(f"integrity: {artifact.path} differs from its recorded hash")
+    return errors
+
+
+def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[ManifestV2, bool]:
     meta = load_json(session / "meta.json") if (session / "meta.json").is_file() else {}
     errors = [
         f"missing or empty: {rel}"
         for rel in REQUIRED
         if not (session / rel).is_file() or not (session / rel).stat().st_size
     ]
+    # Read the baseline before anything below rewrites manifest.json.
+    tampered = verify_recorded_hashes(session) if verify_recorded else []
+    errors += tampered
     errors += _validate_documents(session)
     warnings: list[str] = []
 
@@ -362,5 +397,11 @@ def audit_session(session: Path) -> tuple[ManifestV2, bool]:
         warnings=warnings,
         errors=errors,
     )
-    atomic_json(session / "manifest.json", schema_dict(manifest))
+    # A failed verification must not rewrite manifest.json: re-stamping the
+    # current contents would destroy the recorded baseline the operator needs
+    # to see which artifact drifted. Newly attached files (docs: "re-audit a
+    # session after deliberately attaching any additional artifact") verify
+    # clean and are simply folded into the refreshed manifest.
+    if not tampered:
+        atomic_json(session / "manifest.json", schema_dict(manifest))
     return manifest, not errors

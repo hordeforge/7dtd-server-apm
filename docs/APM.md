@@ -16,7 +16,11 @@ reject different layer sets, collector selections, or durations differing by
 more than 10%.
 
 The integrity manifest is written after finalization output closes. Re-audit a
-session after deliberately attaching any additional artifact.
+session after deliberately attaching any additional artifact. `audit` also
+verifies every already-recorded artifact against its recorded hash: edited or
+deleted evidence fails the audit (the recorded manifest is preserved so the
+drift stays provable), while newly attached files are folded into a refreshed
+manifest.
 
 ## Application evidence
 
