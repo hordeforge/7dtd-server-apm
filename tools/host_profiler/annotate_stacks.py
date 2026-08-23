@@ -45,13 +45,25 @@ TAG_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
+_TAG_CACHE: dict[str, str] = {}
+
+
 def tag_frame(name: str) -> str:
     if name.startswith("["):
         return name  # already tagged
+    # Frame names repeat across thousands of folded lines; run each name's rule
+    # regexes once instead of once per occurrence.
+    cached = _TAG_CACHE.get(name)
+    if cached is not None:
+        return cached
     for tag, pat in TAG_RULES:
         if pat.search(name):
-            return f"[{tag}] {name}"
-    return name
+            result = f"[{tag}] {name}"
+            break
+    else:
+        result = name
+    _TAG_CACHE[name] = result
+    return result
 
 
 def annotate_folded_line(line: str) -> str:

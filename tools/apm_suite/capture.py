@@ -336,28 +336,46 @@ def find_server_pid() -> int | None:
     return matches[0] if len(matches) == 1 else None
 
 
+_TOOL_VERSIONS: dict[str, str] = {}
+
+
 def tool_version(binary: str) -> str:
+    """Version line for a collector tool, probed at most once per binary.
+
+    _result() records a version for every collector spec (skipped ones included),
+    so an uncached probe would spawn the same --version subprocess up to twice
+    per spec each capture. Caching also bounds a hung probe: without it a single
+    wedged `bpftrace --version` costs its full timeout once PER result record,
+    not once per capture.
+    """
+    cached = _TOOL_VERSIONS.get(binary)
+    if cached is not None:
+        return cached
     # Same PATH skew as the collector gate: a sudo-only tool (e.g. bpftrace under
     # secure_path) may be absent from the unprivileged PATH, so its recorded
     # version can be empty even though the collector runs. This is metadata only
     # and never gates a capture, so it is left as a best-effort user-PATH lookup.
     path = shutil.which(binary)
     if not path:
-        return ""
-    try:
-        result = subprocess.run(
-            [path, "--version"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=5,
-        )
-    except (subprocess.TimeoutExpired, OSError):
-        return ""
-    lines = (result.stdout or result.stderr).strip().splitlines()
-    return lines[0] if lines else ""
+        version = ""
+    else:
+        try:
+            result = subprocess.run(
+                [path, "--version"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                timeout=5,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            version = ""
+        else:
+            lines = (result.stdout or result.stderr).strip().splitlines()
+            version = lines[0] if lines else ""
+    _TOOL_VERSIONS[binary] = version
+    return version
 
 
 def count_samples(artifact: Path) -> int | None:

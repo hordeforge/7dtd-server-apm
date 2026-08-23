@@ -2105,6 +2105,38 @@ def test_correlate_parse_ts_converts_log_stamps_via_local_zone_rules() -> None:
         time.tzset()
 
 
+def test_correlate_nearest_proc_binary_search_matches_linear_scan() -> None:
+    """nearest_proc over sorted rows must return the same sample as a full scan
+    (including the earlier-sample tie-break) while the spike-window membership
+    check stays an exact < 5s test at both boundaries."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "correlate", REPO / "tools/host_profiler/correlate.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    rows = [{"t": t, "cpu_pct": 200.0} for t in (10.0, 20.0, 30.0, 40.0)]
+    times = [r["t"] for r in rows]
+    for query in (-5.0, 9.999, 10.0, 14.9, 15.0, 25.0, 39.999, 40.0, 100.0):
+        expected = min(rows, key=lambda r: abs(r["t"] - query))
+        assert module.nearest_proc(times, rows, query) == expected, query
+    assert module.nearest_proc([], [], 1.0) is None
+
+    # Window membership: exactly 5s away is outside (< 5), just inside counts.
+    spike_ts = sorted(s for s in (12.0, 34.0))
+    inside = [8.0, 16.99, 29.01, 38.99]
+    outside = [6.99, 17.01, 23.0, 39.01]
+    for t in inside:
+        index = module.bisect_left(spike_ts, t - 5)
+        assert index < len(spike_ts) and spike_ts[index] < t + 5, t
+    for t in outside:
+        index = module.bisect_left(spike_ts, t - 5)
+        assert not (index < len(spike_ts) and spike_ts[index] < t + 5), t
+
+
 def test_app_scrape_session_persists_only_command_responses() -> None:
     """The telnet drain must keep protocol replies but discard the pre-auth
     banner, the post-logon reply, and any player-identifying stream content,

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from bisect import bisect_left
 from datetime import datetime
 from pathlib import Path
 
@@ -47,10 +48,23 @@ def load_proc(capture: Path) -> list[dict]:
     ]
 
 
-def nearest_proc(rows: list[dict], t: float) -> dict | None:
+def nearest_proc(times: list[float], rows: list[dict], t: float) -> dict | None:
+    """Sample with the smallest |t - stamp|; ties prefer the EARLIER sample.
+
+    `rows` must be sorted by their "t" ascending with the parallel `times` list
+    holding those stamps, so each lookup is a binary search instead of a full
+    scan (a long game log against a dense proc.jsonl is O(spikes x samples)
+    otherwise).
+    """
     if not rows:
         return None
-    return min(rows, key=lambda r: abs(r["t"] - t))
+    index = bisect_left(times, t)
+    candidates: list[dict] = []
+    if index > 0:
+        candidates.append(rows[index - 1])
+    if index < len(rows):
+        candidates.append(rows[index])
+    return min(candidates, key=lambda r: abs(r["t"] - t))
 
 
 def main() -> int:
@@ -61,6 +75,8 @@ def main() -> int:
     args = ap.parse_args()
 
     proc = load_proc(args.capture)
+    proc.sort(key=lambda r: r["t"])
+    proc_times = [r["t"] for r in proc]
     text = args.game_log.read_text(encoding="utf-8", errors="replace")
     spikes = []
     for m in RE_SPIKE.finditer(text):
@@ -85,7 +101,7 @@ def main() -> int:
 
     print(f"{'frame_ms':>8} {'cpu%':>7} {'rssMB':>7} {'zed':>5} top")
     for sp in spikes:
-        pr = nearest_proc(proc, sp["ts"])
+        pr = nearest_proc(proc_times, proc, sp["ts"])
         if pr and abs(pr["t"] - sp["ts"]) <= args.window + 5:
             print(
                 f"{sp['frame_ms']:8.1f} {pr['cpu_pct']:7.1f} {pr['rss_mb']:7.1f} "
@@ -97,11 +113,15 @@ def main() -> int:
     # highlight host max cpu near any spike
     if proc and spikes:
         print("\nhost samples within 5s of any spike with cpu%>150% (multi-core):")
-        spike_ts = [s["ts"] for s in spikes]
+        spike_ts = sorted(s["ts"] for s in spikes)
         for r in proc:
             if r["cpu_pct"] < 150:
                 continue
-            if any(abs(r["t"] - st) < 5 for st in spike_ts):
+            # Any spike in [t-5, t+5]: binary search the first candidate at or
+            # after t-5 and compare it against t+5, instead of scanning every
+            # spike per sample.
+            index = bisect_left(spike_ts, r["t"] - 5)
+            if index < len(spike_ts) and spike_ts[index] < r["t"] + 5:
                 print(
                     f"  t={r['t']:.0f} cpu={r['cpu_pct']:.0f}% rss={r['rss_mb']:.0f} thr={r['num_threads']}"
                 )
