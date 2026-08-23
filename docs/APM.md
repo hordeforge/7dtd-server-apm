@@ -24,9 +24,12 @@ manifest.
 
 ## Application evidence
 
-Install the bridge documented in `bridge/README.md`. Host capture issues only
-`apm status`, `apm capabilities`, and `apm dump`; it then copies a fresh
-structured snapshot. EfficientServer is not an instrumentation dependency.
+Install the bridge documented in `bridge/README.md`. The telnet scrape issues
+only `apm status`, `apm capabilities`, and `apm dump`, then copies a fresh
+structured snapshot; a windowed capture additionally sends `apm reset`
+(`--reset-bridge`) and `apm jitmap full` (automatic for `scenario run`,
+opt-in via `capture --symbolize`), whose replies are not persisted.
+EfficientServer is not an instrumentation dependency.
 
 The telnet scrape persists only bridge command replies: the server's streamed
 console-log lines (which name players, IPs, and Steam IDs) are filtered out in

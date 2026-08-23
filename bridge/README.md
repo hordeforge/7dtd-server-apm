@@ -9,7 +9,8 @@ It is also a native V3 WebDashboard plugin. `WebMod/` adds a direct **7DTD APM**
 sidebar entry (a module route, not a Settings tab) and authenticated
 `GET /api/apm` exposes the same bounded
 snapshot used by console capture. The endpoint defaults to administrator
-permission level 0. Enable `WebDashboardEnabled`, browse to its configured port(8080 in the loadgen profile), and sign in normally; the mod opens no separate
+permission level 0. Enable `WebDashboardEnabled`, browse to its configured port
+(8080 in the loadgen profile), and sign in normally; the mod opens no separate
 web listener. The menu entry is registered only when the web session cookie is
 present (the dashboard reloads after login/logout), so it is hidden while
 logged out; a logged-in non-admin sees the entry and an "admin access

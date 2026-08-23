@@ -33,7 +33,7 @@ A missing hook is **unavailable evidence**, not a zero-cost method. Recommendati
 
 ## Install / ops
 
-Bridge build and install live under `bridge/` (see [`../bridge/README.md`](../bridge/README.md)). Host capture issues only `apm status`, `apm capabilities`, and `apm dump`; it then copies a fresh structured snapshot. EfficientServer is **not** an instrumentation dependency.
+Bridge build and install live under `bridge/` (see [`../bridge/README.md`](../bridge/README.md)). The telnet scrape issues only `apm status`, `apm capabilities`, and `apm dump`, then copies a fresh structured snapshot; windowed captures additionally send `apm reset` / `apm jitmap full` (`--reset-bridge`; jitmap automatic for `scenario run`, opt-in via `capture --symbolize`). EfficientServer is **not** an instrumentation dependency.
 
 Automatic Harmony source generation was removed because heuristic patch output was unsafe to present as production code.
 

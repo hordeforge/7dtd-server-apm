@@ -48,7 +48,7 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 35. [ ] Cut the bridge's own export allocation (observer effect)
 
 ## D. CLI / UX
-36. [x] `scenario ladder` command (ramp + capture at milestones)
+36. [x] Milestone capture ramp (`scenario matrix` plan + `scaling` fit)
 37. [ ] `capture --follow` streams metrics during capture
 38. [ ] `compare --attribution` diffs two captures' subsystem shares
 39. [ ] `watch` alias for monitor
