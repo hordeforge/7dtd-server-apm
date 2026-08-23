@@ -231,6 +231,68 @@ function trend(h: CreateElement, React: PanelProps["React"], label: string, seri
     spark(React, series, color, 130, 30));
 }
 
+// Host OS metrics served by the bridge (Telemetry.HostSample). Older bridges
+// omit the host section entirely; the guard returns null and the strip hides.
+type HostStat = {
+  load1: number;
+  load5: number;
+  load15: number;
+  memTotalBytes: number;
+  memAvailBytes: number;
+  uptimeS: number;
+  rssBytes: number;
+  threadCount: number;
+  cpuCores: number;
+};
+function hostStatOf(candidate: unknown): HostStat | null {
+  if (typeof candidate !== "object" || candidate === null) {
+    return null;
+  }
+  // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
+  const o = candidate as Record<string, unknown>;
+  const memTotal = num(o.memTotalBytes);
+  if (memTotal <= 0) {
+    return null;
+  }
+  return {
+    load1: num(o.load1),
+    load5: num(o.load5),
+    load15: num(o.load15),
+    memTotalBytes: memTotal,
+    memAvailBytes: num(o.memAvailBytes),
+    uptimeS: num(o.uptimeS),
+    rssBytes: num(o.rssBytes),
+    threadCount: num(o.threadCount),
+    cpuCores: num(o.cpuCores)
+  };
+}
+
+function fmtUptime(uptimeS: number): string {
+  const s = Math.floor(uptimeS);
+  const d = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  if (d > 0) {
+    return `${d}d ${h}h`;
+  }
+  if (h > 0) {
+    return `${h}h ${m}m`;
+  }
+  return `${m}m`;
+}
+
+function renderHostStrip(h: CreateElement, host: HostStat): unknown {
+  const memUsed = Math.max(0, host.memTotalBytes - host.memAvailBytes);
+  const memPct = host.memTotalBytes > 0 ? (memUsed / host.memTotalBytes) * 100 : 0;
+  return h("div", { className: "apm-host" },
+    h("span", { className: "apm-label" }, "Host"),
+    cell(h, "Load 1/5/15m", `${host.load1.toFixed(2)} / ${host.load5.toFixed(2)} / ${host.load15.toFixed(2)}`, null),
+    cell(h, "RAM", `${mib(memUsed).toFixed(0)} / ${mib(host.memTotalBytes).toFixed(0)} MiB (${memPct.toFixed(0)}%)`, memPct > 90 ? "apm-bad" : null),
+    cell(h, "RSS", `${mib(host.rssBytes).toFixed(0)} MiB`, null),
+    cell(h, "Threads", `${host.threadCount} / ${host.cpuCores} cores`, null),
+    cell(h, "Uptime", fmtUptime(host.uptimeS), null));
+}
+
 function formatUtc(utc: unknown): string {
   return strOrEmpty(utc).replace("T", " ").replace(/\..*$/u, "");
 }
@@ -849,6 +911,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const health = objOrEmpty(snapshot.health);
   const gc = objOrEmpty(snapshot.gc);
   const world = objOrEmpty(snapshot.world);
+  const host = hostStatOf(snapshot.host);
   const sections = listOrEmpty<SectionStat>(snapshot.sections);
   const transfers = listOrEmpty<TransferStat>(snapshot.mapTransfers);
   const spikes = listOrEmpty<SpikeRecord>(snapshot.spikes);
@@ -868,6 +931,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   return h("div", { className: "seven-dtd-apm" },
     renderHead(h, g, frozen, toggleFreeze, (): void => copySnapshot(snapshot, setCopyStatus), gc, update),
     h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus),
+    host !== null ? renderHostStrip(h, host) : null,
     renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf),
     renderTrendsChart(h, React, hist.current),
     h("div", { className: "apm-charts-row" },

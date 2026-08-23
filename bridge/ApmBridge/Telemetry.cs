@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -274,7 +275,7 @@ namespace DtdApmBridge
         {
             List<SpikeSample> spikes;
             Metric.Copied[] copies;
-            object update, health, transfers, gcWindow;
+            object update, health, transfers, gcWindow, host;
             WorldSample world;
             lock (Gate)
             {
@@ -294,6 +295,9 @@ namespace DtdApmBridge
                 copies = new Metric.Copied[_metricCount];
                 for (int i = 0; i < _metricCount; i++) copies[i] = Metrics[i].CopyUnderLock(Deep[i]);
             }
+            // Host /proc reads happen outside the lock: a slow read must never
+            // block the sim path (the export runs on a ThreadPool thread).
+            host = HostSample();
             var sections = new object[copies.Length];
             for (int i = 0; i < copies.Length; i++) sections[i] = Metric.Build(copies[i]);
             return new {
@@ -301,6 +305,7 @@ namespace DtdApmBridge
                 utc = DateTime.UtcNow.ToString("o"), capabilities = BridgeMod.Capabilities(),
                 measurement = new { updateDurationName = "GameManager.gmUpdate", durationUnit = "ms", deepSampleRate = BridgeMod.Config.DeepSampleRate },
                 update, health,
+                host,
                 gc = gcWindow,
                 world,
                 mapTransfers = transfers,
@@ -333,6 +338,65 @@ namespace DtdApmBridge
             };
         }
         public static string SnapshotJson() => JsonConvert.SerializeObject(Snapshot());
+
+        /// <summary>
+        /// Host OS metrics from /proc: the bridge runs inside the dedicated
+        /// server process on the same machine, so /proc/loadavg and
+        /// /proc/meminfo report the host (or container cgroup) state the sim
+        /// contends with. Unreadable or non-Linux hosts return null and the
+        /// dashboard hides the host strip.
+        /// </summary>
+        static object HostSample()
+        {
+            try
+            {
+                string[] la = File.ReadAllText("/proc/loadavg").Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                string meminfo = File.ReadAllText("/proc/meminfo");
+                string[] up = File.ReadAllText("/proc/uptime").Trim().Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                double load1 = 0, load5 = 0, load15 = 0;
+                if (la.Length > 0) double.TryParse(la[0], NumberStyles.Float, CultureInfo.InvariantCulture, out load1);
+                if (la.Length > 1) double.TryParse(la[1], NumberStyles.Float, CultureInfo.InvariantCulture, out load5);
+                if (la.Length > 2) double.TryParse(la[2], NumberStyles.Float, CultureInfo.InvariantCulture, out load15);
+                double uptimeS = 0;
+                if (up.Length > 0) double.TryParse(up[0], NumberStyles.Float, CultureInfo.InvariantCulture, out uptimeS);
+                using (Process process = Process.GetCurrentProcess())
+                {
+                    return new
+                    {
+                        load1, load5, load15,
+                        memTotalBytes = ParseMeminfo(meminfo, "MemTotal"),
+                        memAvailBytes = ParseMeminfo(meminfo, "MemAvailable"),
+                        uptimeS = (long)uptimeS,
+                        rssBytes = process.WorkingSet64,
+                        threadCount = process.Threads.Count,
+                        cpuCores = Environment.ProcessorCount
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                BridgeMod.Log("host sample failed: " + ex.Message);
+                return null;
+            }
+        }
+
+        // "/proc/meminfo" line "MemTotal:       16384000 kB" -> bytes.
+        static long ParseMeminfo(string meminfo, string key)
+        {
+            string prefix = key + ":";
+            foreach (string line in meminfo.Split('\n'))
+            {
+                if (!line.StartsWith(prefix, StringComparison.Ordinal)) continue;
+                string[] parts = line.Split(new[] { ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+                long kb;
+                if (parts.Length >= 2 && long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out kb))
+                {
+                    return kb * 1024;
+                }
+                break;
+            }
+            return 0;
+        }
         static void Write(string path)
         {
             // Unique temp (a console `apm dump` can race the ThreadPool export) and

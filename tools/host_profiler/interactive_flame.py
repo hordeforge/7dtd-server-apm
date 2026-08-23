@@ -84,12 +84,29 @@ const PAD = 2;
 let showTotal = true;
 let focus = ROOT;
 let search = "";
+// Frames rendered by the most recent render(), indexed by data-i. Event
+// handlers are delegated on #chart (bound once, survive innerHTML swaps)
+// and resolve back to their frame through this array.
+let nodes = [];
 
 const chart = document.getElementById("chart");
 const tip = document.getElementById("tip");
 const crumb = document.getElementById("breadcrumb");
 const meta = document.getElementById("meta");
 meta.textContent = `samples=${ROOT.value}`;
+
+// Coalesce render requests to one per animation frame: a resize drag or
+// search-as-you-type otherwise rebuilds the whole SVG many times per second.
+let renderQueued = false;
+function scheduleRender(after) {
+  if (renderQueued) return;
+  renderQueued = true;
+  requestAnimationFrame(() => {
+    renderQueued = false;
+    render();
+    if (after) after();
+  });
+}
 
 function color(name) {
   let h = 0;
@@ -105,9 +122,21 @@ function matches(node) {
   return node.name.toLowerCase().includes(search);
 }
 
-function anyMatch(node) {
-  if (matches(node)) return true;
-  return (node.children || []).some(anyMatch);
+const NO_MARK = Object.freeze({ hit: false, dim: false });
+
+// One pass over the tree computing per-node highlight state: hit = the node
+// itself matches, dim = nothing in its subtree matches. Doing this up front
+// keeps place() O(1) per node instead of rescanning the subtree of every
+// node while a search filter is active.
+function markMatches(node, marks) {
+  let subtreeHit = matches(node);
+  const kids = node.children || [];
+  for (const c of kids) {
+    if (markMatches(c, marks)) subtreeHit = true;
+  }
+  const mark = { hit: matches(node), dim: !subtreeHit };
+  marks.set(node, mark);
+  return subtreeHit;
 }
 
 function render() {
@@ -122,19 +151,20 @@ function render() {
   const total = focus.value || 1;
 
   let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`;
-  const nodes = [];
+  nodes = [];
+  const marks = new Map();
+  if (search) markMatches(focus, marks);
 
   function place(node, x0, x1, depth) {
     const w = x1 - x0;
     if (w < 0.5) return;
     const y = depth * H;
-    const hit = search ? matches(node) : false;
-    const dim = search ? !anyMatch(node) : false;
+    const mark = search ? marks.get(node) : NO_MARK;
     const pct = (100 * node.value / total).toFixed(2);
     const label = showTotal
       ? `${node.name} (${pct}%)`
       : `${node.name} (n=${node.value})`;
-    nodes.push({ node, x0, x1, y, w, hit, dim, label, pct });
+    nodes.push({ node, x0, x1, y, w, hit: mark.hit, dim: mark.dim, label, pct });
     const kids = node.children || [];
     let x = x0;
     for (const c of kids) {
@@ -162,33 +192,53 @@ function render() {
   svg += `</svg>`;
   chart.innerHTML = svg;
 
-  chart.querySelectorAll(".frame").forEach(g => {
-    const i = +g.getAttribute("data-i");
-    const n = nodes[i];
-    function activate(viaKeyboard) {
-      zoomTo(n.node, `${n.node.name} (${n.node.value} samples)`, viaKeyboard);
-    }
-    function showTipAt(x, y) {
-      tip.style.display = "block";
-      tip.style.left = Math.min(x + 12, window.innerWidth - 300) + "px";
-      tip.style.top = (y + 12) + "px";
-      const ofRoot = (100 * n.node.value / ROOT.value).toFixed(2);
-      tip.innerHTML = `<b>${escapeHtml(n.node.name)}</b><br/>samples: ${n.node.value}<br/>of zoom: ${n.pct}%<br/>of total: ${ofRoot}%`;
-    }
-    g.addEventListener("click", ev => activate(ev.detail === 0));
-    g.addEventListener("keydown", ev => {
-      if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); activate(true); }
-    });
-    g.addEventListener("mousemove", ev => showTipAt(ev.clientX, ev.clientY));
-    g.addEventListener("focus", () => {
-      const r = g.querySelector("rect").getBoundingClientRect();
-      showTipAt(Math.min(r.left + r.width / 2, window.innerWidth - 300), r.bottom);
-    });
-    g.addEventListener("blur", () => { tip.style.display = "none"; });
-    g.addEventListener("mouseleave", () => { tip.style.display = "none"; });
-  });
   updateCrumb();
 }
+
+function frameAt(target) {
+  const g = target instanceof Element ? target.closest(".frame") : null;
+  return g ? nodes[+g.getAttribute("data-i")] : null;
+}
+
+function frameElementAt(target) {
+  return target instanceof Element ? target.closest(".frame") : null;
+}
+
+function showTipFor(n, x, y) {
+  tip.style.display = "block";
+  tip.style.left = Math.min(x + 12, window.innerWidth - 300) + "px";
+  tip.style.top = (y + 12) + "px";
+  const ofRoot = (100 * n.node.value / ROOT.value).toFixed(2);
+  tip.innerHTML = `<b>${escapeHtml(n.node.name)}</b><br/>samples: ${n.node.value}<br/>of zoom: ${n.pct}%<br/>of total: ${ofRoot}%`;
+}
+
+// Delegated frame interactions (bound once): pointer and keyboard events
+// resolve through .frame[data-i] instead of rebinding five listeners per
+// frame on every render.
+chart.addEventListener("click", ev => {
+  const n = frameAt(ev.target);
+  if (n) zoomTo(n.node, `${n.node.name} (${n.node.value} samples)`, ev.detail === 0);
+});
+chart.addEventListener("keydown", ev => {
+  if (ev.key !== "Enter" && ev.key !== " ") return;
+  const n = frameAt(ev.target);
+  if (n) { ev.preventDefault(); zoomTo(n.node, `${n.node.name} (${n.node.value} samples)`, true); }
+});
+chart.addEventListener("mousemove", ev => {
+  const n = frameAt(ev.target);
+  if (!n) { tip.style.display = "none"; return; }
+  showTipFor(n, ev.clientX, ev.clientY);
+});
+chart.addEventListener("mouseleave", () => { tip.style.display = "none"; });
+chart.addEventListener("focusin", ev => {
+  const g = frameElementAt(ev.target);
+  if (!g) return;
+  const n = nodes[+g.getAttribute("data-i")];
+  if (!n) return;
+  const r = g.querySelector("rect").getBoundingClientRect();
+  showTipFor(n, Math.min(r.left + r.width / 2, window.innerWidth - 300), r.bottom);
+});
+chart.addEventListener("focusout", () => { tip.style.display = "none"; });
 
 function updateCrumb() {
   // simple path: only show current focus name chain is hard without parent links; show focus name
@@ -229,16 +279,19 @@ document.getElementById("reset").onclick = () => { focus = ROOT; search = ""; do
 document.getElementById("pct").onclick = () => { showTotal = !showTotal; render(); announce(showTotal ? "Showing percent of total" : "Showing self samples"); };
 document.getElementById("q").addEventListener("input", e => {
   search = (e.target.value || "").trim().toLowerCase();
-  render();
-  if (!search) return;
-  let hits = 0;
-  (function count(n) { if (matches(n)) hits++; (n.children || []).forEach(count); })(ROOT);
-  announce(`${hits} frame${hits === 1 ? "" : "s"} match "${search}"`);
+  // Coalesced with the render so typing does not walk the tree twice per
+  // keystroke (once to redraw, once to count matches).
+  scheduleRender(() => {
+    if (!search) return;
+    let hits = 0;
+    (function count(n) { if (matches(n)) hits++; (n.children || []).forEach(count); })(ROOT);
+    announce(`${hits} frame${hits === 1 ? "" : "s"} match "${search}"`);
+  });
 });
 window.addEventListener("keydown", e => {
   if (e.key === "Escape") { focus = ROOT; search = ""; document.getElementById("q").value = ""; render(); announce("Reset zoom"); }
 });
-window.addEventListener("resize", () => render());
+window.addEventListener("resize", () => scheduleRender());
 render();
 </script>
 </body>

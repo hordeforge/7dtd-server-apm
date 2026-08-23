@@ -93,6 +93,10 @@ a[data-for="tooltip-Efficiency"]::before {
 .apm-trends svg { display: block; width: 100%; height: auto; }
 .apm-chart-head { display: flex; align-items: center; gap: .6rem; margin-bottom: .4rem; flex-wrap: wrap; }
 .apm-vgrid { stroke: rgba(127,127,127,.12); }
+.apm-host { display: flex; flex-wrap: wrap; align-items: stretch; gap: .5rem; margin-top: .75rem; }
+.apm-host > .apm-label { align-self: center; margin-right: .25rem; }
+.apm-host .apm-cell { flex: 0 0 auto; min-width: 110px; padding: .5rem .75rem; }
+.apm-host .apm-cell strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .apm-gauge-title { opacity: .7; font-size: .85rem; margin-bottom: .25rem; }
 .apm-gauge text { font-family: inherit; }
 .apm-gauge-value { fill: #fff; font-size: 21px; font-weight: 700; }
