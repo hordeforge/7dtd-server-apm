@@ -1642,6 +1642,44 @@ def test_annotate_stacks_leaves_non_finite_count_lines_untouched() -> None:
     assert module.annotate_folded_line(line) == line
 
 
+def test_correlate_parse_ts_converts_log_stamps_via_local_zone_rules() -> None:
+    """Server log stamps carry no offset field, so parse_ts must resolve them
+    with this host's zone rules (DST included); stamping them as UTC shifts
+    every spike correlation by the local UTC offset on non-UTC hosts."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "correlate", REPO / "tools/host_profiler/correlate.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    # wall stamp -> the UTC hour that wall time denotes in that zone on that
+    # date (independent of the code under test): JST=CET=UTC+1h, CEST=UTC+2h.
+    cases = [
+        ("Asia/Tokyo", "2026-01-15T12:00:00", 3),
+        ("Europe/Warsaw", "2026-01-15T12:00:00", 11),  # CET
+        ("Europe/Warsaw", "2026-07-01T12:00:00", 10),  # CEST, not a fixed +01:00
+    ]
+    original_tz = os.environ.get("TZ")
+    try:
+        for zone, wall, utc_hour in cases:
+            os.environ["TZ"] = zone
+            time.tzset()
+            year, month, rest = wall.split("-")
+            day = int(rest[:2])
+            expected = datetime(int(year), int(month), day, utc_hour, tzinfo=UTC).timestamp()
+            assert module.parse_ts(wall) == pytest.approx(expected)
+        assert module.parse_ts("not-a-timestamp") == 0.0
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()
+
+
 def test_app_scrape_session_persists_only_command_responses() -> None:
     """The telnet drain must keep protocol replies but discard the pre-auth
     banner, the post-logon reply, and any player-identifying stream content."""

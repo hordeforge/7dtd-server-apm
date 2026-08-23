@@ -164,17 +164,22 @@ def main() -> int:
             print(f"need --pid or running server: {e}")
             return 1
 
-    end = time.time() + args.seconds
+    # Loop control and rate math run on the monotonic clock: a wall-clock step
+    # (NTP correction, manual change) mid-run would otherwise end the window
+    # early/late or divide rates by a near-zero/negative dt. The persisted
+    # record stamp `t` stays wall-clock so samples correlate with logs.
+    end = time.monotonic() + args.seconds
+    start_mono = time.monotonic()
     prev = None
+    prev_mono = None
     rows = []
     print(f"sampling pid={pid} for {args.seconds}s every {args.interval}s")
     print(f"{'t':>8} {'cpu%':>7} {'rssMB':>8} thr  fd  {'rMB/s':>7} {'wMB/s':>7} vctx  nvctx")
-    t0 = time.time()
-    while time.time() < end:
+    while time.monotonic() < end:
         if not Path(f"/proc/{pid}").exists():
             print("process exited")
             break
-        t_before = time.time()
+        mono_before = time.monotonic()
         # /proc reads race with process exit (the exists() check above is TOCTOU)
         # and can return short/empty files; a bad sample must not kill the run.
         try:
@@ -182,20 +187,21 @@ def main() -> int:
         except (OSError, ValueError, IndexError):
             print("process exited or /proc read raced")
             break
+        mono_after = time.monotonic()
         # fix cpu for first sample interval after sleep
-        if prev is not None:
-            dt = s.t - prev.t
+        if prev is not None and prev_mono is not None:
+            dt = max(mono_after - prev_mono, 1e-3)
             user_hz = os.sysconf("SC_CLK_TCK")
             d_ticks = (s.utime + s.stime) - (prev.utime + prev.stime)
-            s.cpu_pct = 100.0 * (d_ticks / user_hz) / max(dt, 1e-3)
-            dr = (s.read_bytes - prev.read_bytes) / max(dt, 1e-3) / (1024 * 1024)
-            dw = (s.write_bytes - prev.write_bytes) / max(dt, 1e-3) / (1024 * 1024)
+            s.cpu_pct = 100.0 * (d_ticks / user_hz) / dt
+            dr = (s.read_bytes - prev.read_bytes) / dt / (1024 * 1024)
+            dw = (s.write_bytes - prev.write_bytes) / dt / (1024 * 1024)
             dvc = s.voluntary_ctx - prev.voluntary_ctx
             dnc = s.nonvoluntary_ctx - prev.nonvoluntary_ctx
         else:
             dr = dw = 0.0
             dvc = dnc = 0
-        rel = s.t - t0
+        rel = mono_after - start_mono
         print(
             f"{rel:8.1f} {s.cpu_pct:7.1f} {s.rss_mb:8.1f} {s.num_threads:3d} {s.fd_count:4d} "
             f"{dr:7.2f} {dw:7.2f} {dvc:5d} {dnc:5d}"
@@ -212,9 +218,9 @@ def main() -> int:
             rec["top_threads"] = thr
         rows.append(rec)
         prev = s
+        prev_mono = mono_after
         # sleep remaining
-        elapsed = time.time() - t_before
-        time.sleep(max(0.0, args.interval - elapsed))
+        time.sleep(max(0.0, args.interval - (time.monotonic() - mono_before)))
 
     if args.json and rows:
         args.json.parent.mkdir(parents=True, exist_ok=True)

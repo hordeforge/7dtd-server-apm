@@ -91,15 +91,20 @@ def main() -> int:
     args = ap.parse_args()
 
     args.jsonl.parent.mkdir(parents=True, exist_ok=True)
-    end = time.time() + args.seconds
+    # Loop control and the cpu% dt run on the monotonic clock so a wall-clock
+    # step (NTP correction) cannot end the window early/late or divide rates
+    # by a near-zero/negative dt; the persisted record stamp "t" stays
+    # wall-clock for cross-log correlation.
+    end = time.monotonic() + args.seconds
     prev: dict[int, dict] = {}
     user_hz = os.sysconf("SC_CLK_TCK")
 
     with args.jsonl.open("w") as fh:
-        while time.time() < end:
+        while time.monotonic() < end:
             if not Path(f"/proc/{args.pid}").exists():
                 break
             t0 = time.time()
+            m0 = time.monotonic()
             rows = snapshot(args.pid)
             deltas = []
             for r in rows:
@@ -107,7 +112,7 @@ def main() -> int:
                 d_ticks = r["cpu_ticks"] - p["cpu_ticks"] if p else 0
                 d_vol = r["vol_ctx"] - p["vol_ctx"] if p else 0
                 d_non = r["nonvol_ctx"] - p["nonvol_ctx"] if p else 0
-                dt = max(t0 - (p.get("_t", t0) if p else t0), 1e-3) if p else args.interval
+                dt = max(m0 - p["_mono"], 1e-3) if p else args.interval
                 cpu_pct = 100.0 * (d_ticks / user_hz) / dt if p else 0.0
                 deltas.append(
                     {
@@ -144,8 +149,8 @@ def main() -> int:
                 f"wchan={list(rec['wchan_top'].items())[:3]} top=[{top3}]"
             )
 
-            prev = {r["tid"]: {**r, "_t": t0} for r in rows}
-            time.sleep(max(0.0, args.interval - (time.time() - t0)))
+            prev = {r["tid"]: {**r, "_mono": m0} for r in rows}
+            time.sleep(max(0.0, args.interval - (time.monotonic() - m0)))
 
     print(f"wrote {args.jsonl}")
     return 0

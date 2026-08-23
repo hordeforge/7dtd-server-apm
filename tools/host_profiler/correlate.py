@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 
 # Reuse game log spike parser patterns
@@ -28,10 +28,14 @@ RE_PERF = re.compile(
 
 
 def parse_ts(s: str) -> float:
-    # local log timestamps without Z
+    # Server log stamps are host-local wall time with no offset field (the
+    # dedicated server logs its local DateTime.Now); proc.jsonl "t" values are
+    # true epoch seconds from time.time(). A naive .timestamp() applies this
+    # host's zone rules including DST, keeping both sides on one clock;
+    # stamping the naive value as UTC would shift every match by the UTC
+    # offset and miss the window on any non-UTC host.
     try:
-        dt = datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
-        return dt.timestamp()
+        return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").timestamp()
     except ValueError:
         return 0.0
 
