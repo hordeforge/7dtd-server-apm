@@ -275,7 +275,9 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
             # Applied to known-text artifacts only.
             home = str(Path.home())
             text_suffixes = {".txt", ".folded", ".html", ".script", ".md", ".log", ".out", ".svg"}
-            for source in session.rglob("*"):
+            # Sorted walk: identical session content must yield an identical
+            # member order, not a readdir-order zip layout.
+            for source in sorted(session.rglob("*")):
                 if not source.is_file() or source.name in excluded or source.suffix == ".err":
                     continue
                 relative = source.relative_to(session)

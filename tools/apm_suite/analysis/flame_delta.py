@@ -31,6 +31,9 @@ def load_weights(path: Path) -> dict[str, int]:
 
 
 def delta(a: dict[str, int], b: dict[str, int], top: int = 30) -> list[dict[str, Any]]:
+    # Iterate a deterministic name order, not set(a) | set(b): str hashing is
+    # per-process randomized, so equal-|delta| frames would survive the stable
+    # sort into a run-dependent top-N and make compare output irreproducible.
     rows: list[dict[str, Any]] = [
         {
             "frame": name,
@@ -38,7 +41,7 @@ def delta(a: dict[str, int], b: dict[str, int], top: int = 30) -> list[dict[str,
             "b": b.get(name, 0),
             "delta": b.get(name, 0) - a.get(name, 0),
         }
-        for name in set(a) | set(b)
+        for name in sorted(set(a) | set(b))
     ]
-    rows.sort(key=lambda r: abs(int(r["delta"])), reverse=True)
+    rows.sort(key=lambda r: (-abs(int(r["delta"])), str(r["frame"])))
     return rows[:top]

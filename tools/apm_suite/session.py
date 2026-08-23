@@ -109,7 +109,7 @@ def _legacy_results(session: Path) -> list[CollectorResult]:
     collectors: list[CollectorResult] = []
     for name, (layer, rel) in COLLECTORS.items():
         artifact = session / rel
-        failed = [p for p in (session / Path(rel).parent).glob("*.err") if p.stat().st_size]
+        failed = sorted(p for p in (session / Path(rel).parent).glob("*.err") if p.stat().st_size)
         status: Literal["ok", "failed", "unavailable"] = (
             "failed"
             if failed and not artifact.is_file()
@@ -134,10 +134,14 @@ def _requested(name: str, layer: str, requested_set: set[str]) -> bool:
 
 
 def list_sessions(root: Path) -> list[Path]:
-    """Session directories under root, newest first (mtime)."""
+    """Session directories under root, newest first (mtime).
+
+    Name breaks mtime ties so ordering (and with it which sessions `prune`
+    dooms) never depends on readdir order.
+    """
     return sorted(
         (p for p in root.glob("session_*") if p.is_dir()),
-        key=lambda p: p.stat().st_mtime,
+        key=lambda p: (p.stat().st_mtime, p.name),
         reverse=True,
     )
 

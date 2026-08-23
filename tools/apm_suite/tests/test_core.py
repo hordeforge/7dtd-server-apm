@@ -1784,6 +1784,21 @@ def test_flame_load_weights_and_delta_rank_by_abs(tmp_path: Path) -> None:
     assert abs_deltas == sorted(abs_deltas, reverse=True)
 
 
+def test_flame_delta_ties_rank_by_frame_name() -> None:
+    """Equal-|delta| frames must keep one stable order: set iteration is hash
+    randomized per process, so without the name tiebreak the truncated top-N
+    (and thus compare.json) differs run to run."""
+    from apm_suite.analysis.flame_delta import delta
+
+    # Every frame moves by exactly -3; only the name tiebreak can order them.
+    names = ["zeta", "mu", "alpha", "kappa", "beta", "omega"]
+    a = {name: 3 for name in names}
+    rows = delta(a, {}, top=30)
+    assert [r["frame"] for r in rows] == sorted(names)
+    cut = delta(a, {}, top=2)
+    assert [r["frame"] for r in cut] == ["alpha", "beta"]
+
+
 # --- non-finite sample weights must never crash a load ----------------------------
 
 
@@ -2330,6 +2345,21 @@ def test_retention_policy_shared_by_prune_and_auto_prune(tmp_path: Path) -> None
         tmp_path / "session_001",
         tmp_path / "session_000",
         tmp_path / "session_002",  # oldest kept session goes first under budget
+    ]
+
+
+def test_list_sessions_breaks_mtime_ties_by_name(tmp_path: Path) -> None:
+    """Equal mtimes (same-second captures, restored archives) must order by
+    name: a readdir-order tie would make prune pick different victims per run."""
+    from apm_suite.session import list_sessions
+
+    for name in ("session_b", "session_a", "session_c"):
+        (tmp_path / name).mkdir()
+        os.utime(tmp_path / name, (5000, 5000))
+    assert [p.name for p in list_sessions(tmp_path)] == [
+        "session_c",
+        "session_b",
+        "session_a",
     ]
 
 

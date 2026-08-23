@@ -51,7 +51,12 @@ def annotate(text: str, starts: list[int], entries: list[tuple[int, str]]) -> st
 
 def annotate_session(session: Path) -> int:
     """Annotate every *.bt.out that has hex JIT frames. Returns files touched."""
-    maps = list((session / "cpu/perf").glob("perf-*.map")) + list(session.glob("**/perf-*.map"))
+    # Deterministic map pick: the cpu/perf map wins (capture-time canonical),
+    # then any others by path. Directory read order must not decide which JIT
+    # symbol table annotates evidence that later feeds reports.
+    cpu_maps = sorted((session / "cpu/perf").glob("perf-*.map"))
+    other_maps = sorted(p for p in session.glob("**/perf-*.map") if p not in cpu_maps)
+    maps = cpu_maps + other_maps
     if not maps:
         return 0
     starts, entries = load_map(maps[0])
