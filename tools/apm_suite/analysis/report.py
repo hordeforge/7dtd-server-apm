@@ -186,18 +186,12 @@ def _scheduler_layer(texts: dict[str, str], duration: float) -> LayerScore:
         score += 30
     if "preempt" in combined or "@preempted" in combined:
         score += 20
-    # Main-thread off-CPU: total includes the healthy 20-TPS frame-pacing
-    # sleep (server sleeps between ticks when it has spare budget), which is
-    # NOT lag. Two refinements isolate the pathological part:
-    #  - D-state (uninterruptible, disk) blocks are always suspect,
-    #  - among S-state blocks, the single dominant stack is the pacing sleep;
-    #    the remaining stack time is mid-frame lock/cond waits.
     # Main-thread off-CPU total is dominated by the healthy 20-TPS frame-pacing
-    # sleep (server sleeps between ticks when under budget). With fp unwinding
-    # that sleep fragments across many shallow stacks, so it cannot be split by
-    # stack. D-state (uninterruptible, disk) blocks are the one unambiguous
-    # pathological signal here; the "laggy" headline lives on app_sim late
-    # ticks (bridge-measured tick overage), not on this total.
+    # sleep (server sleeps between ticks when under budget), which is NOT lag.
+    # With fp unwinding that sleep fragments across many shallow stacks, so it
+    # cannot be split by stack. D-state (uninterruptible, disk) blocks are the
+    # one unambiguous pathological signal here; the "laggy" headline lives on
+    # app_sim late ticks (bridge-measured tick overage), not on this total.
     stall_match = re.search(r"@stall_us_total:\s*(\d+)", offcpu)
     stall_ms = int(stall_match.group(1)) / 1000 if stall_match else 0
     d_state = re.search(r"@stall_state_us\[2\]:\s*(\d+)", offcpu)

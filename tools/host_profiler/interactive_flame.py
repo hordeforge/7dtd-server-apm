@@ -198,8 +198,6 @@ function updateCrumb() {
 
 // Re-render around a node and tell assistive tech what happened. `what` is an
 // optional screen-reader announcement; the visual state is the same either way.
-// Re-render around a node and tell assistive tech what happened. `what` is an
-// optional screen-reader announcement; the visual state is the same either way.
 function zoomTo(node, what, viaKeyboard) {
   focus = node;
   render();

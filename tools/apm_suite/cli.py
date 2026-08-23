@@ -293,25 +293,20 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
                         encoding="utf-8",
                     )
                     archive.write(sanitized, relative)
-                elif source.suffix == ".jsonl":
+                elif source.suffix == ".jsonl" or source.suffix in text_suffixes:
                     try:
                         text = source.read_text(errors="replace", encoding="utf-8")
                     except OSError:
                         archive.write(source, relative)
                         continue
+                    scrub = (
+                        (lambda t: _scrub_jsonl(t, home))
+                        if source.suffix == ".jsonl"
+                        else (lambda t: t.replace(home, "~"))
+                    )
                     sanitized = temp / relative
                     sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(_scrub_jsonl(text, home), encoding="utf-8")
-                    archive.write(sanitized, relative)
-                elif source.suffix in text_suffixes:
-                    try:
-                        text = source.read_text(errors="replace", encoding="utf-8")
-                    except OSError:
-                        archive.write(source, relative)
-                        continue
-                    sanitized = temp / relative
-                    sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(text.replace(home, "~"), encoding="utf-8")
+                    sanitized.write_text(scrub(text), encoding="utf-8")
                     archive.write(sanitized, relative)
                 else:
                     archive.write(source, relative)
