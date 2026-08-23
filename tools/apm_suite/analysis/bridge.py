@@ -575,7 +575,7 @@ def match_rules(
                 "experiment": {
                     "suggestion": (
                         "Apply one lever below, re-run the identical "
-                        "`7dtd-apm scenario run` workload, then `7dtd-apm compare` "
+                        "`7dtd-server-apm scenario run` workload, then `7dtd-server-apm compare` "
                         "the before/after sessions."
                     ),
                     "harmony_targets": rule.get("harmony_targets") or [],
@@ -593,7 +593,7 @@ def build_playbook(hits: list[dict[str, Any]], top_sections: list[dict[str, Any]
     if not hits:
         lines.append(
             "No evidence cleared the bridge thresholds. Install the standalone APM bridge, run "
-            "`APM bridge DeepMode` + load (`7dtd-apm scenario run`), re-capture, re-run this tool."
+            "`APM bridge DeepMode` + load (`7dtd-server-apm scenario run`), re-capture, re-run this tool."
         )
         if top_sections:
             lines.append(
@@ -724,7 +724,7 @@ def analyze(session: Path, snapshot: Path | None = None) -> dict[str, Any]:
             "1": "Read bridges[] ordered by inference.priority",
             "2": "Check evidence/derived to see exactly why each bridge fired",
             "3": "Run the suggested experiment and compare compatible APM sessions",
-            "4": "For exact method bodies see 7dtd-research/il/<Type>.txt or ILSpy Assembly-CSharp",
+            "4": "For exact method bodies see 7dtd-engine-research/il/<Type>.txt or ILSpy Assembly-CSharp",
         },
     }
     atomic_json(session / "csharp_bridge.json", out)

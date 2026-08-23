@@ -4,8 +4,8 @@ User-facing changes for the two shipped artifacts. They version independently:
 
 | Artifact | Version source | Distributed via |
 |---|---|---|
-| `seven-dtd-apm` host CLI | `pyproject.toml` = `tools/apm_suite/__init__.py` (gated by `scripts/check_version.py`) | local `uv sync`; printed by `uv run 7dtd-apm --version` |
-| `7dtd-apm-bridge` server mod | `ModInfo.xml` = `BridgeMod.cs` const = `bridge/README.md` claim (same gate) | zip from `make package`, named after the newest git tag |
+| `seven-dtd-apm` host CLI | `pyproject.toml` = `tools/apm_suite/__init__.py` (gated by `scripts/check_version.py`) | local `uv sync`; printed by `uv run 7dtd-server-apm --version` |
+| `7dtd-server-apm-bridge` server mod | `ModInfo.xml` = `BridgeMod.cs` const = `bridge/README.md` claim (same gate) | zip from `make package`, named after the newest git tag |
 
 Git tags `vX.Y.Z` mirror the **bridge** version and carry annotated release
 notes (`git show v2.2.3`). This de facto policy is inferred from history:

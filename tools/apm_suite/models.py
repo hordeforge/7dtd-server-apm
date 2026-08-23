@@ -176,7 +176,7 @@ class BridgeSnapshotV3(BaseModel):
 
     model_config = ConfigDict(extra="allow")
     schema_: Literal["7dtd.apm.app.v3"] = Field(alias="schema")
-    provider: Literal["7dtd-apm-bridge"]
+    provider: Literal["7dtd-server-apm-bridge"]
     providerVersion: str
     utc: datetime
     sections: list[ManagedSectionV3]

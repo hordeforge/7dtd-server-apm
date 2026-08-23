@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Build the bridge and package dist/7dtd-apm-bridge into a distributable zip.
+# Build the bridge and package dist/7dtd-server-apm-bridge into a distributable zip.
 #
-# The zip contains the 7dtd-apm-bridge/ mod folder at its top level, so
-# unzipping it inside <server>/Mods installs the mod (Mods/7dtd-apm-bridge/).
+# The zip contains the 7dtd-server-apm-bridge/ mod folder at its top level, so
+# unzipping it inside <server>/Mods installs the mod (Mods/7dtd-server-apm-bridge/).
 #
 # Version: taken from the newest git tag (vX.Y.Z -> X.Y.Z), or overridden
 # with VERSION=x.y.z. A clean-tag build must match the mod version declared
@@ -11,7 +11,7 @@
 # Requires a local game install: build_bridge.sh compiles
 # against the shipped Assembly-CSharp.dll, which this repo does not
 # redistribute (see ../MODDING_BEST_PRACTICES.md / AGENTS.md). Same pattern as
-# ../7dtd-optimizer/scripts/package.sh.
+# ../7dtd-server-optimizer/scripts/package.sh.
 set -euo pipefail
 # Pin locale and timezone: zip stores member times as MS-DOS local time, so an
 # unpinned TZ would leak the build host's zone into the artifact bytes.
@@ -42,15 +42,15 @@ if [[ -z "$VERSION" || "$VERSION" == *-* ]]; then
   VERSION="$(git -C "$ROOT" rev-parse --short HEAD)"
 fi
 
-OUT="$ROOT/dist/7dtd-apm-bridge-$VERSION.zip"
+OUT="$ROOT/dist/7dtd-server-apm-bridge-$VERSION.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp -a "$ROOT/dist/7dtd-apm-bridge" "$STAGE/"
+cp -a "$ROOT/dist/7dtd-server-apm-bridge" "$STAGE/"
 # Debug symbols never ship: the release zip carries the DLL, ModInfo, the
 # example Config, and WebMod only. The live config name is excluded too, so a
 # future staging change cannot silently reintroduce upgrade resets of user
 # settings (unzipping over Mods/ overwrites every archive member).
-rm -f "$STAGE"/7dtd-apm-bridge/*.pdb "$STAGE"/7dtd-apm-bridge/Config/apmbridge.json
+rm -f "$STAGE"/7dtd-server-apm-bridge/*.pdb "$STAGE"/7dtd-server-apm-bridge/Config/apmbridge.json
 # Reproducible archive: pin every member's mtime to a source-derived epoch,
 # strip uid/gid and extended-timestamp extra fields (-X), and add members in
 # LC_ALL=C sort order instead of readdir order. Without this, cp -a mtimes and
@@ -69,7 +69,7 @@ find "$STAGE" -exec touch -h -d "@$EPOCH" {} +
 rm -f "$OUT"
 (
   cd "$STAGE" &&
-    find 7dtd-apm-bridge -mindepth 1 -print0 |
+    find 7dtd-server-apm-bridge -mindepth 1 -print0 |
     LC_ALL=C sort -z |
     xargs -0 zip -X -q "$OUT"
 )

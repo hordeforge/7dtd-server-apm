@@ -1,6 +1,6 @@
 # Optional in-game instrumentation bridge
 
-`7dtd-apm-bridge.dll` is an instrumentation-only 7DTD server mod. Host-only
+`7dtd-server-apm-bridge.dll` is an instrumentation-only 7DTD server mod. Host-only
 capture remains supported without it. The bridge adds managed subsystem timings,
 world/runtime gauges, spike records, capability reporting, periodic atomic JSON,
 and the `apm` console/telnet command.
@@ -76,7 +76,7 @@ make bridge-install
 
 Restart the dedicated server, then run `apm capabilities`, `apm status`, or
 `apm dump`. JSON is written under
-`Mods/7dtd-apm-bridge/telemetry/` using `7dtd.apm.app.v3`.
+`Mods/7dtd-server-apm-bridge/telemetry/` using `7dtd.apm.app.v3`.
 
 Hooks are resolved by type and method name at startup. Missing hooks are marked
 `unavailable` and do not prevent other instrumentation from loading. Deep AI and

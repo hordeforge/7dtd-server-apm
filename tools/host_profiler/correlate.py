@@ -3,7 +3,7 @@
 
 Usage:
   uv run python tools/host_profiler/correlate.py \
-    --capture ~/.local/share/7dtd-apm/session_... \
+    --capture ~/.local/share/7dtd-server-apm/session_... \
     --game-log /path/to/server/output_log.txt
 
 Prefers APM session dirs (proc.jsonl). Legacy EfficientServer SPIKE lines still parse if present.

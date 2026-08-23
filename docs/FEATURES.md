@@ -3,7 +3,7 @@
 **Owns:** APM product surface (what the CLI/suite does).  
 **Not:** evidence model detail ([APM](APM.md)), bridge correlation ([APM_CS_BRIDGE](APM_CS_BRIDGE.md)), roadmap tickets ([ROADMAP](ROADMAP.md)).
 
-The canonical product surface is the `7dtd-apm` CLI.
+The canonical product surface is the `7dtd-server-apm` CLI.
 
 ## Capability groups
 
@@ -24,7 +24,7 @@ Lag diagnosis covers GC gross-allocation churn, stop-the-world pause timing, all
 | Not APM | Owner |
 |---|---|
 | Generated LiteNetLib clients | Sibling `7dtd-loadgen` |
-| Runtime Harmony optim patches | Sibling `7dtd-optimizer` |
+| Runtime Harmony optim patches | Sibling `7dtd-server-optimizer` |
 | Historical optimizer load/profiler commands | Removed |
 | Automatic Harmony patch generation | Removed (unsafe) |
 | Raw eBPF/perf scripts as public API | Private collector backends |

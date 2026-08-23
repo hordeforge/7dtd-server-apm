@@ -31,6 +31,7 @@ from .session import (
     list_sessions,
     prune_grace_hours,
     purge_expired_trash,
+    purge_stale_scenario_runs,
     remove_sessions,
     sessions_beyond_budget,
 )
@@ -598,7 +599,7 @@ def monitor(
     process = psutil.Process(pid)
     bridge_latest = (
         Path(os.path.realpath(f"/proc/{pid}/exe")).parent
-        / "Mods/7dtd-apm-bridge/telemetry/apm_app_latest.json"
+        / "Mods/7dtd-server-apm-bridge/telemetry/apm_app_latest.json"
     )
     taken = 0
     previous_late: int | None = None
@@ -733,6 +734,9 @@ def prune_sessions(
         if error is not None:
             err_console.print(f"[red]could not remove {old}: {error}[/red]")
     for entry, error in purge_expired_trash(apm_root(), grace):
+        if error is not None:
+            err_console.print(f"[red]could not purge {entry}: {error}[/red]")
+    for entry, error in purge_stale_scenario_runs(apm_root(), grace):
         if error is not None:
             err_console.print(f"[red]could not purge {entry}: {error}[/red]")
     if doomed:

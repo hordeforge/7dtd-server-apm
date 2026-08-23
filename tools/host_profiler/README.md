@@ -1,6 +1,6 @@
 # Host perf / bpftrace helpers
 
-Private backends invoked by `uv run 7dtd-apm capture` and the flame commands.
+Private backends invoked by `uv run 7dtd-server-apm capture` and the flame commands.
 Complements the optional
 managed bridge (`bridge/README.md`, `docs/APM_CS_BRIDGE.md`). Host samples show
 native CPU, GC, IO, scheduler, and syscalls; C# method names require the bridge.
@@ -11,12 +11,12 @@ native CPU, GC, IO, scheduler, and syscalls; C# method names require the bridge.
 # dedicated server must be running
 ./tools/host_profiler/find_server.sh
 
-uv run 7dtd-apm capture --seconds 30
-uv run 7dtd-apm capture --only cpu,gc --seconds 45
-uv run 7dtd-apm doctor
+uv run 7dtd-server-apm capture --seconds 30
+uv run 7dtd-server-apm capture --only cpu,gc --seconds 45
+uv run 7dtd-server-apm doctor
 ```
 
-Sessions land under `~/.local/share/7dtd-apm/session_*` (override with
+Sessions land under `~/.local/share/7dtd-server-apm/session_*` (override with
 `SEVENDTD_APM_DIR`). Do not write captures into the git tree.
 
 ## Modules (collector adapters)
@@ -47,12 +47,12 @@ sudo -n bpftrace -D TARGET_PID=$(./tools/host_profiler/find_server.sh) \
 
 ```bash
 # Prefer structured session analysis:
-uv run 7dtd-apm audit SESSION
-uv run 7dtd-apm bridge SESSION
+uv run 7dtd-server-apm audit SESSION
+uv run 7dtd-server-apm bridge SESSION
 
 # Low-level helper (expects a capture dir with proc.jsonl):
 uv run python tools/host_profiler/correlate.py \
-  --capture ~/.local/share/7dtd-apm/session_... \
+  --capture ~/.local/share/7dtd-server-apm/session_... \
   --game-log /path/to/server/output_log.txt
 ```
 

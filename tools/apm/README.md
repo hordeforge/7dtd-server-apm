@@ -12,4 +12,4 @@ budgets, compare, index) lives in the `apm_suite.analysis` package and runs
 in-process from `apm_suite.finalize`; there are no analysis scripts here.
 Missing collector artifacts are unavailable evidence, not zero values.
 
-Use the root README and `uv run 7dtd-apm --help` for supported commands.
+Use the root README and `uv run 7dtd-server-apm --help` for supported commands.

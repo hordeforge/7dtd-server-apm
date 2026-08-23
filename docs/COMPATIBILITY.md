@@ -3,8 +3,8 @@
 **Owns:** supported game/kernel/tool versions for APM collectors.  
 **Not:** how to capture ([APM](APM.md)), feature list ([FEATURES](FEATURES.md)).
 
-What 7dtd-apm is developed and verified against. Anything outside these ranges
-may work but is unsupported; `7dtd-apm doctor` reports the effective
+What 7dtd-server-apm is developed and verified against. Anything outside these ranges
+may work but is unsupported; `7dtd-server-apm doctor` reports the effective
 availability of each layer on your host, and `make check-bt` compile-checks
 every bpftrace probe against your installed toolchain.
 

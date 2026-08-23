@@ -1,6 +1,6 @@
 # Internal backends
 
-The supported interface is `uv run 7dtd-apm ...`. This directory contains its
+The supported interface is `uv run 7dtd-server-apm ...`. This directory contains its
 implementation and collector backends:
 
 - `apm_suite/` - packaged CLI, typed schemas, session audit, reports, and tests

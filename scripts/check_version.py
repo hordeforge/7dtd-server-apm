@@ -4,7 +4,7 @@
 Bridge mod: bridge/ApmBridge/ModInfo.xml, the Version const in
 bridge/ApmBridge/BridgeMod.cs, and the "mod version" claim in
 bridge/README.md must carry the same version. Same convention as
-../7dtd-optimizer/scripts/check_version.py.
+../7dtd-server-optimizer/scripts/check_version.py.
 
 Host CLI: pyproject.toml and tools/apm_suite/__init__.py must carry the
 same package version (the analyzer/session version derives from it).

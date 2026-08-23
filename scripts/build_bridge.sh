@@ -25,7 +25,7 @@ else
   echo "ERROR: no client or dedicated game assemblies found" >&2; exit 1
 fi
 [[ -f "$HARMONY" ]] || { echo "ERROR: Harmony not found: $HARMONY" >&2; exit 1; }
-OUT="$ROOT/dist/7dtd-apm-bridge"
+OUT="$ROOT/dist/7dtd-server-apm-bridge"
 # Rebuild the output dir from scratch so dist mirrors current sources exactly;
 # a stale member left by a removed or renamed file would ship in the package.
 rm -rf "$OUT"
@@ -33,7 +33,7 @@ mkdir -p "$OUT/Config" "$OUT/WebMod"
 dotnet build "$ROOT/bridge/ApmBridge/ApmBridge.csproj" -c Release \
   -p:GameManagedDir="$MANAGED" -p:HarmonyPath="$HARMONY" -p:BridgeOutput="$OUT/"
 # WebMod: compile the TypeScript source (WebMod/bundle.ts) to bundle.js, the
-# exact path the dashboard loads (/webmods/7dtd-apm-bridge/bundle.js).
+# exact path the dashboard loads (/webmods/7dtd-server-apm-bridge/bundle.js).
 command -v npx >/dev/null 2>&1 || { echo "ERROR: npx (Node.js/npm) not found; cannot build WebMod" >&2; exit 1; }
 npx --yes -p "typescript@$TSC_VERSION" tsc -p "$ROOT/bridge/ApmBridge/WebMod/tsconfig.json"
 cp "$ROOT/bridge/ApmBridge/ModInfo.xml" "$OUT/ModInfo.xml"

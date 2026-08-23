@@ -170,6 +170,9 @@ def sessions_beyond_budget(
 
 
 TRASH_DIRNAME = ".trash"
+# Per-run loadgen manifests/stats written by `scenario run`; each experiment
+# leaves two small files behind that nothing else ever deletes.
+SCENARIO_DIRNAME = ".scenario"
 
 
 def prune_grace_hours() -> float:
@@ -295,6 +298,41 @@ def purge_expired_trash(
             if entry.stat().st_mtime > cutoff:
                 continue
             shutil.rmtree(entry)
+        except OSError as error:
+            yield entry, error
+        else:
+            yield entry, None
+
+
+def _scenario_dir(store: Path) -> Path:
+    return store / SCENARIO_DIRNAME
+
+
+def purge_stale_scenario_runs(
+    store: Path, grace_hours: float | None = None
+) -> Iterator[tuple[Path, OSError | None]]:
+    """Delete loadgen manifests and stats under `<store>/.scenario` whose grace
+    window has elapsed.
+
+    `scenario run` claims a fresh manifest per invocation (and its stats twin
+    lands beside it), so periodic captures on a 24/7 host accumulate files
+    forever: unlike session_* directories nothing pruned this run directory.
+    The same soft-delete clock as the trash applies (APM_PRUNE_GRACE_HOURS);
+    with grace 0 every stale file drops immediately. Only the `loadgen_*`
+    family is touched; anything else an operator placed there stays.
+    """
+    grace = prune_grace_hours() if grace_hours is None else grace_hours
+    cutoff = time.time() - max(0.0, grace) * 3600
+    scenario = _scenario_dir(store)
+    if not scenario.is_dir():
+        return
+    for entry in sorted(scenario.glob("loadgen_*")):
+        if not entry.is_file():
+            continue
+        try:
+            if entry.stat().st_mtime > cutoff:
+                continue
+            entry.unlink()
         except OSError as error:
             yield entry, error
         else:

@@ -4,11 +4,11 @@ Systemic view of what this repository's tooling can be attacked through, what
 it costs, and which controls exist. Point vulnerabilities and fixes belong to
 sec-review; this document is the map that aims those passes.
 
-- **Scope:** host-only measurement CLI (`7dtd-apm`, `tools/apm_suite/`), shell
+- **Scope:** host-only measurement CLI (`7dtd-server-apm`, `tools/apm_suite/`), shell
   and bpftrace collectors (`tools/apm/`, `tools/host_profiler/`), and the
   optional in-server bridge DLL (`bridge/ApmBridge/`). The game server itself,
   its stock WebDashboard implementation, and sibling projects
-  (`7dtd-loadgen`, `7dtd-optimizer`) are outside this model; only the
+  (`7dtd-loadgen`, `7dtd-server-optimizer`) are outside this model; only the
   interfaces between them and this repo are modeled.
 - **Last reviewed:** 2026-08-23 (from commit e29d4d4). Owner and review
   cadence: not yet assigned.
@@ -34,9 +34,9 @@ sec-review; this document is the map that aims those passes.
 | Telnet password (`SEVENDTD_TELNET_PASSWORD`) | env of operator + child scrapers | Full console control of the game server (kick/ban/spawn/shutdown) |
 | Raw telnet drain `app/bridge.jsonl` | session store, owner-only | Player names, IPs, Steam IDs disclosed |
 | Host/user identifiers in perf artifacts | perf.script, folded stacks, flame SVGs | Username/host paths leaked on sharing (home prefix scrubbed at export) |
-| Session store evidence | `~/.local/share/7dtd-apm` (`SEVENDTD_APM_DIR`), `tools/apm_suite/paths.py:25` | Forged or destroyed measurement history |
+| Session store evidence | `~/.local/share/7dtd-server-apm` (`SEVENDTD_APM_DIR`), `tools/apm_suite/paths.py:25` | Forged or destroyed measurement history |
 | Game server availability | restarted by `POST /api/perf` (`bridge/ApmBridge/WebApi.cs:270-278`) | Downtime per flip |
-| Bridge telemetry dir | `Mods/7dtd-apm-bridge/telemetry/` inside the server install (`bridge/ApmBridge/BridgeMod.cs:29`) | JIT map files readable by anything with install-dir access |
+| Bridge telemetry dir | `Mods/7dtd-server-apm-bridge/telemetry/` inside the server install (`bridge/ApmBridge/BridgeMod.cs:29`) | JIT map files readable by anything with install-dir access |
 
 ## Trust boundaries
 
@@ -53,7 +53,7 @@ sec-review; this document is the map that aims those passes.
 
 | Entry point | Kind | File |
 |---|---|---|
-| `7dtd-apm capture/scenario run/scenario matrix/monitor/audit/compare/budget/export/import/prune/doctor` | CLI arguments | `tools/apm_suite/cli.py` |
+| `7dtd-server-apm capture/scenario run/scenario matrix/monitor/audit/compare/budget/export/import/prune/doctor` | CLI arguments | `tools/apm_suite/cli.py` |
 | `--telnet-password`, `--pid`, `SEVENDTD_*`, `LOADGEN_*`, `APM_*` env vars | argv/env input | `cli.py:120,806,938`, `paths.py`, `doctor.py:164` |
 | Telnet client actions (`apm dump/reset/jitmap`, `listplayers`, teleport/rally) | outbound network client | `capture.py:434-530`, `cli.py:882,987` |
 | Bridge `GET /api/apm` | HTTP GET, admin-gated | `WebApi.cs:18-41` |

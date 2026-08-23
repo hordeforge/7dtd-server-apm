@@ -140,7 +140,7 @@ def html_index(rows: list[dict[str, Any]]) -> str:
     if not rows:
         body.append(
             '<tr><td colspan="10">No sessions yet. Capture one with '
-            "<code>uv run 7dtd-apm capture --seconds 45 --only all</code>, "
+            "<code>uv run 7dtd-server-apm capture --seconds 45 --only all</code>, "
             "then reload this page.</td></tr>"
         )
     return f"""<!DOCTYPE html>

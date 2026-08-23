@@ -28,11 +28,11 @@ oxlint_standards_version="${OXLINT_STANDARDS_VERSION:-0.8.1}"
 oxlint_tsgolint_version="${OXLINT_TSGOLINT_VERSION:-7.0.2001}"
 oxlint_plugins_version="${OXLINT_PLUGINS_VERSION:-1.78.0}"
 anti_slop_sha="${ANTI_SLOP_SHA:-6d538555cb151d4121ed51a27db81890eacf8ae9}"
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-apm/oxlint-standards"
+cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-server-apm/oxlint-standards"
 webmod_dir="$root/bridge/ApmBridge/WebMod"
 
 command -v npx >/dev/null 2>&1 || {
-  echo "7dtd-apm: lint-webui: npx (Node.js/npm) not found; tsc/oxlint run through pinned npx packages" >&2
+  echo "7dtd-server-apm: lint-webui: npx (Node.js/npm) not found; tsc/oxlint run through pinned npx packages" >&2
   exit 1
 }
 
@@ -59,7 +59,7 @@ npm install --prefix "$cache_dir" --no-audit --no-fund --no-save --no-package-lo
   "@rikalabs/oxlint-standards@$oxlint_standards_version" \
   "oxlint-tsgolint@$oxlint_tsgolint_version" \
   "@oxlint/plugins@$oxlint_plugins_version" >/dev/null 2>&1 || {
-  echo "7dtd-apm: lint-webui: could not install @rikalabs/oxlint-standards@$oxlint_standards_version + oxlint-tsgolint@$oxlint_tsgolint_version + @oxlint/plugins@$oxlint_plugins_version into $cache_dir (offline?)" >&2
+  echo "7dtd-server-apm: lint-webui: could not install @rikalabs/oxlint-standards@$oxlint_standards_version + oxlint-tsgolint@$oxlint_tsgolint_version + @oxlint/plugins@$oxlint_plugins_version into $cache_dir (offline?)" >&2
   exit 1
 }
 cp "$root/.oxlintrc.jsonc" "$cache_dir/oxlintrc.jsonc"
@@ -78,7 +78,7 @@ trap 'rm -rf "$tmp"' EXIT
 npx --yes -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --outDir "$tmp" >/dev/null
 if ! diff -q <(sed '1{/^"use strict";$/d}' "$tmp/bundle.js") \
              <(sed '1{/^"use strict";$/d}' "$webmod_dir/bundle.js") >/dev/null; then
-  echo "7dtd-apm: lint-webui: committed bundle.js is stale (bundle.ts changed without regeneration). Run: make bridge-build" >&2
+  echo "7dtd-server-apm: lint-webui: committed bundle.js is stale (bundle.ts changed without regeneration). Run: make bridge-build" >&2
   exit 1
 fi
-echo "7dtd-apm: lint-webui: tsc type-check, oxlint, and bundle freshness ok"
+echo "7dtd-server-apm: lint-webui: tsc type-check, oxlint, and bundle freshness ok"

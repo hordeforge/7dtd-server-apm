@@ -11,7 +11,12 @@ namespace DtdApmBridge
     public sealed class BridgeMod : IModApi
     {
         public const string Version = "2.2.3";
-        static readonly Dictionary<string, string> Status = new Dictionary<string, string>();
+        // Written by InitMod while Capabilities() reads the same table from the
+        // export ThreadPool thread, web API threads (/api/apm), and the telnet
+        // console (`apm capabilities`); unsynchronized enumeration during a
+        // plain Dictionary write can throw or corrupt, so use a concurrent type.
+        static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> Status
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, string>();
         // SectionPrefix/SectionPostfix consult these on game threads for every
         // instrumented call, including while InitMod is still inserting entries
         // for later patch sites; unsynchronized reads during a plain
@@ -88,7 +93,7 @@ namespace DtdApmBridge
                 // Per-tick world systems visible in load-test stacks.
                 "WaterSplashCubes:Update", "World:LetBlocksFall", "World:GroupFallingBlocks",
                 // Sim hot path: entity work is spread across frames via slices
-                // (see 7dtd-research/docs/loop-gmupdate.md gmUpdate phase order);
+                // (see 7dtd-engine-research/docs/loop-gmupdate.md gmUpdate phase order);
                 // TickEntities alone
                 // only prepares the list.
                 "World:TickEntitiesSlice:System.Int32", "World:TickEntitiesFlush",
@@ -250,13 +255,13 @@ namespace DtdApmBridge
             Config = BridgeConfig.Load(Path.Combine(ModDir, "Config", "apmbridge.json"));
             if (priorDeep != Config.DeepMode) Log("DeepMode changed; restart required to change installed deep hooks");
         }
-        public static void Log(string text) { try { global::Log.Out("[7dtd-apm] " + text); } catch { Console.WriteLine("[7dtd-apm] " + text); } }
+        public static void Log(string text) { try { global::Log.Out("[7dtd-server-apm] " + text); } catch { Console.WriteLine("[7dtd-server-apm] " + text); } }
     }
 
     public sealed class ConsoleCmdApm : ConsoleCmdAbstract
     {
         public override string[] getCommands() => new[] { "apm", "apmbridge" };
-        public override string getDescription() => "7dtd-apm instrumentation bridge";
+        public override string getDescription() => "7dtd-server-apm instrumentation bridge";
         public override string getHelp() => "apm [status|dump|reset|reload|capabilities|jitmap|benchmark [iterations]]";
         public override void Execute(List<string> args, CommandSenderInfo sender)
         {

@@ -32,6 +32,7 @@ from .session import (
     list_sessions,
     prune_grace_hours,
     purge_expired_trash,
+    purge_stale_scenario_runs,
     remove_sessions,
     sessions_beyond_budget,
 )
@@ -786,7 +787,7 @@ def run_capture(
         # JIT burst can take tens of seconds; poll until the file stops growing.
         map_source = (
             Path(os.path.realpath(f"/proc/{pid}/exe")).parent
-            / f"Mods/7dtd-apm-bridge/telemetry/perf-{pid}.map"
+            / f"Mods/7dtd-server-apm-bridge/telemetry/perf-{pid}.map"
         )
         deadline = time.monotonic() + 90
         last_size = -1
@@ -945,6 +946,12 @@ def _auto_prune_sessions() -> None:
     for entry, error in purge_expired_trash(apm_root(), grace):
         if error is not None:
             print(f"WARNING: trash purge failed for {entry.name}: {error}", file=sys.stderr)
+    # scenario run leaves its loadgen manifests behind every invocation; sweep
+    # them on the same retention clock so a cron-driven capture host does not
+    # accumulate .scenario entries forever.
+    for entry, error in purge_stale_scenario_runs(apm_root(), grace):
+        if error is not None:
+            print(f"WARNING: scenario purge failed for {entry.name}: {error}", file=sys.stderr)
 
 
 def _launch_collectors(
@@ -1024,7 +1031,7 @@ def _ingest_bridge_snapshot(
         exe = Path(os.path.realpath(f"/proc/{pid}/exe"))
     except OSError:
         return
-    latest = exe.parent / "Mods/7dtd-apm-bridge/telemetry/apm_app_latest.json"
+    latest = exe.parent / "Mods/7dtd-server-apm-bridge/telemetry/apm_app_latest.json"
     if not latest.is_file():
         return
     try:

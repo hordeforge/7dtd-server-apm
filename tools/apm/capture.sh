@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Compatibility launcher: capture orchestration lives in the Python CLI.
-# Usage mirrors `7dtd-apm capture`:
+# Usage mirrors `7dtd-server-apm capture`:
 #   ./tools/apm/capture.sh --seconds 45
 #   ./tools/apm/capture.sh --seconds 60 --no-app
 #   ./tools/apm/capture.sh --only hw,threads,futex,cpu

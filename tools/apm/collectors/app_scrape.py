@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Optional application-layer scrape of the 7dtd-apm bridge via telnet.
+"""Optional application-layer scrape of the 7dtd-server-apm bridge via telnet.
 
 Writes app_metrics.jsonl snapshots for APM correlation.
 """

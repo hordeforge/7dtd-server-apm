@@ -3,7 +3,7 @@
   <Name value="7dtd-apm-bridge" />
   <DisplayName value="7dtd-apm Instrumentation Bridge" />
   <Description value="Optional instrumentation-only telemetry provider for the host 7dtd-apm suite." />
-  <Author value="7dtd-apm" />
+  <Author value="HordeForge" />
   <Version value="2.2.3" />
   <Website value="https://github.com/hordeforge/7dtd-server-apm" />
   <SkipWithAntiCheat value="true" />

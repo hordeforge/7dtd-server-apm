@@ -1066,7 +1066,7 @@ def test_app_scrape_events_withhold_raw_console_text(tmp_path: Path) -> None:
     # carry player names, IPs, and Steam IDs; events must not echo them.
     pii = "Player 'Alice' joined [203.0.113.7:26900] steamid=76561198000000001"
     records = [
-        {"t": 1.0, "ok": True, "text": f"[7dtd-apm] SPIKE gmUpdateDuration=250.00ms\n{pii}\n"},
+        {"t": 1.0, "ok": True, "text": f"[7dtd-server-apm] SPIKE gmUpdateDuration=250.00ms\n{pii}\n"},
         {"t": 2.0, "ok": True, "text": f"spike counter bumped\n{pii}\n"},
     ]
     (session / "app/bridge.jsonl").write_text(
@@ -1558,7 +1558,7 @@ def test_index_html_navigation_and_empty_state(tmp_path: Path) -> None:
     # instead of showing an empty table with no guidance.
     empty = html_index([])
     assert "No sessions yet" in empty
-    assert "7dtd-apm capture" in empty
+    assert "7dtd-server-apm capture" in empty
 
     # A session without rendered pages must not link to a nonexistent file.
     bare_dir = tmp_path / "session_bare"
@@ -2692,6 +2692,41 @@ def test_list_sessions_breaks_mtime_ties_by_name(tmp_path: Path) -> None:
     ]
 
 
+def test_scenario_runs_expire_on_the_prune_clock(tmp_path: Path) -> None:
+    """`scenario run` leaves one manifest + stats pair per invocation under
+    .scenario; nothing else ever deletes them, so periodic captures on a 24/7
+    host would accumulate files forever. The purge must follow the shared
+    grace clock, touch only the loadgen_* family, and report failures."""
+    from apm_suite.session import purge_stale_scenario_runs
+
+    scenario = tmp_path / ".scenario"
+    scenario.mkdir()
+    stale = scenario / "loadgen_1000.json"
+    stale_stats = scenario / "loadgen_1000_stats.json"
+    fresh = scenario / "loadgen_9000.json"
+    foreign = scenario / "exp1_workload.json"
+    for path in (stale, stale_stats, fresh, foreign):
+        path.write_text("{}")
+    old = time.time() - 48 * 3600
+    os.utime(stale, (old, old))
+    os.utime(stale_stats, (old, old))
+
+    removed = {entry.name for entry, error in purge_stale_scenario_runs(tmp_path, 24.0)}
+    assert removed == {"loadgen_1000.json", "loadgen_1000_stats.json"}
+    assert not stale.exists() and not stale_stats.exists()
+    assert fresh.exists() and foreign.exists()
+
+    # Grace 0 hard-deletes everything whose mtime precedes the purge call.
+    removed = {entry.name for entry, error in purge_stale_scenario_runs(tmp_path, 0.0)}
+    assert removed == {"loadgen_9000.json"}
+    assert not fresh.exists()
+
+    # Missing .scenario dir is a no-op, not an error.
+    empty = tmp_path / "nowhere"
+    empty.mkdir()
+    assert list(purge_stale_scenario_runs(empty)) == []
+
+
 def test_run_capture_resolves_session_dir_through_claim_dir() -> None:
     """The capture session directory must go through claim_dir so two captures
     started in the same second cannot interleave evidence in one directory."""
@@ -2711,7 +2746,7 @@ def test_path_env_overrides_treat_empty_as_unset(
     monkeypatch.setenv("SEVENDTD_APM_DIR", "")
     monkeypatch.setenv("SEVENDTD_DS_DIR", " ")
     # whitespace-only counts as unset too
-    assert paths.apm_root() == Path.home() / ".local/share/7dtd-apm"
+    assert paths.apm_root() == Path.home() / ".local/share/7dtd-server-apm"
     assert paths.dedicated_dir() == paths.DEFAULT_DS
 
     monkeypatch.setenv("SEVENDTD_APM_DIR", str(tmp_path))

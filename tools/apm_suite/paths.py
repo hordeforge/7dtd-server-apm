@@ -24,7 +24,7 @@ def dedicated_dir() -> Path:
 
 def apm_root() -> Path:
     """Session data root. Sessions are data, not source; keep them out of the repo."""
-    return _env_path("SEVENDTD_APM_DIR", Path.home() / ".local/share/7dtd-apm")
+    return _env_path("SEVENDTD_APM_DIR", Path.home() / ".local/share/7dtd-server-apm")
 
 
 def require_backends() -> None:
@@ -38,5 +38,5 @@ def require_backends() -> None:
     if not (APM_BACKENDS / "collectors").is_dir():
         raise RuntimeError(
             f"collector backends missing at {APM_BACKENDS}; this command needs a "
-            "repository checkout (`uv sync && uv run 7dtd-apm ...`)"
+            "repository checkout (`uv sync && uv run 7dtd-server-apm ...`)"
         )

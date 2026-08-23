@@ -36,7 +36,7 @@ excluded from export bundles, and session directories are owner-only.
 ## Controlled scenarios
 
 ```bash
-uv run 7dtd-apm scenario run --seconds 60 --clients 6 --actions 500 --preset standard
+uv run 7dtd-server-apm scenario run --seconds 60 --clients 6 --actions 500 --preset standard
 ```
 
 The scenario command calls `../7dtd-loadgen/scripts/run_loadgen.sh`; it
@@ -121,14 +121,14 @@ itself discards the telnet banner and post-logon reply and persists only the
 requested `apm` command responses.
 
 ```bash
-uv run 7dtd-apm export SESSION -o support.zip
-uv run 7dtd-apm prune --keep 20 --dry-run
+uv run 7dtd-server-apm export SESSION -o support.zip
+uv run 7dtd-server-apm prune --keep 20 --dry-run
 ```
 
 ## Durability and recovery
 
 The only durable state this tool owns is the session store
-(`~/.local/share/7dtd-apm`, override `SEVENDTD_APM_DIR`): evidence directories
+(`~/.local/share/7dtd-server-apm`, override `SEVENDTD_APM_DIR`): evidence directories
 holding collector output, manifests, and reports. Everything else (repo,
 bridge DLL) is reproducible from source. The store lives on one host disk; the
 tool makes writes crash-safe (temp file + fsync + rename + directory fsync),
@@ -136,12 +136,12 @@ but it does not replicate or back up the store by itself.
 
 | Disaster | What is lost | Recovery |
 |---|---|---|
-| Bad `prune --keep` / runaway auto-prune | Nothing within the grace window | `mv ~/.local/share/7dtd-apm/.trash/session_X ~/.local/share/7dtd-apm/` |
+| Bad `prune --keep` / runaway auto-prune | Nothing within the grace window | `mv ~/.local/share/7dtd-server-apm/.trash/session_X ~/.local/share/7dtd-server-apm/` |
 | Accidental file deletion inside a session | Files not yet trashed | Re-export/import from a bundle copy, or restore from your host backup |
 | Host disk loss | Whole store unless copied out | Copy-back from off-host backups or shared support bundles |
 
 - **RPO:** unbounded for the local store unless an external copy exists.
-  Schedule one (`rsync -a ~/.local/share/7dtd-apm/ backup-host:/apm-store/`
+  Schedule one (`rsync -a ~/.local/share/7dtd-server-apm/ backup-host:/apm-store/`
   from cron/systemd timer); sessions are immutable after finalize, so rsync is
   incremental and safe to re-run. Bundles made with `export` are a second,
   sanitized copy; treat any bundle you keep as the recovery artifact for that
@@ -153,7 +153,7 @@ but it does not replicate or back up the store by itself.
   (`APM_PRUNE_GRACE_HOURS`, default 24, `0` disables). Auto-prune keeps the
   newest `APM_KEEP_SESSIONS` (default 40, `0` disables). Expired trash is purged
   on later prune runs; trash never appears in listings or indexes.
-- **Proven restore path:** `7dtd-apm import BUNDLE.zip` unpacks a sanitized
+- **Proven restore path:** `7dtd-server-apm import BUNDLE.zip` unpacks a sanitized
   export into the store, refuses unsafe archive members, runs the same audit
   as `finalize`, and writes a fresh integrity manifest. Exported bundles are
   lossy by design (no raw telnet drain, perf data, or stderr), so prefer
@@ -170,8 +170,8 @@ but it does not replicate or back up the store by itself.
 | [LOAD_PROFILE](LOAD_PROFILE.md) | Canonical compare workload |
 | [ROADMAP](ROADMAP.md) | Backlog |
 | Loadgen | [`../../7dtd-loadgen/docs/README.md`](../../7dtd-loadgen/docs/README.md) |
-| Host topology | [`../../7dtd-optimizer/docs/HOST_TUNING.md`](../../7dtd-optimizer/docs/HOST_TUNING.md) |
-| Measured scale laws | [`../../7dtd-optimizer/docs/measured-scaling.md`](../../7dtd-optimizer/docs/measured-scaling.md) |
+| Host topology | [`../../7dtd-server-optimizer/docs/HOST_TUNING.md`](../../7dtd-server-optimizer/docs/HOST_TUNING.md) |
+| Measured scale laws | [`../../7dtd-server-optimizer/docs/measured-scaling.md`](../../7dtd-server-optimizer/docs/measured-scaling.md) |
 
 ## Changelog
 

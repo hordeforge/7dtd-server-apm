@@ -45,7 +45,7 @@ Automatic Harmony source generation was removed because heuristic patch output w
 | [FEATURES](FEATURES.md) | CLI capabilities |
 | [COMPATIBILITY](COMPATIBILITY.md) | Game / kernel / probe matrix |
 | [LOAD_PROFILE](LOAD_PROFILE.md) | Canonical compare workload |
-| Research loop | [`../../7dtd-research/docs/loop.md`](../../7dtd-research/docs/loop.md) |
+| Research loop | [`../../7dtd-engine-research/docs/loop.md`](../../7dtd-engine-research/docs/loop.md) |
 
 ## Changelog
 

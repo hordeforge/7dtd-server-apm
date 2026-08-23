@@ -50,7 +50,7 @@ Reproducibility needs deterministic inputs **and** a clean starting world. Run:
 # 1. pristine world (deletes the playthrough save; deterministic RWG terrain kept)
 ../7dtd-loadgen/scripts/reset_world.sh --start     # stops, wipes save, relaunches
 #    wait for the server telnet/READY, then:
-uv run 7dtd-apm scenario matrix plans/profile.canonical.json
+uv run 7dtd-server-apm scenario matrix plans/profile.canonical.json
 ```
 
 What makes it reproducible:
@@ -178,7 +178,7 @@ spawn-manager and freeze behaviour.
 Every field is a `scenario run` option, so a one-off variant is a single command:
 
 ```bash
-uv run 7dtd-apm scenario run --preset forensic --clients 60 --warmup 60 \
+uv run 7dtd-server-apm scenario run --preset forensic --clients 60 --warmup 60 \
   --bot-mix "traverse:40,combat:30,demolition:30" \
   --spawn-entity "zombieBoe,animalDireWolf,zombieDemolition" \
   --spawn-per-player 5 --spawn-every-ms 12000 \
@@ -192,7 +192,7 @@ uv run 7dtd-apm scenario run --preset forensic --clients 60 --warmup 60 \
 | [APM](APM.md) | Evidence model |
 | [FEATURES](FEATURES.md) | CLI surface |
 | Loadgen README | [`../../7dtd-loadgen/docs/README.md`](../../7dtd-loadgen/docs/README.md) |
-| Measured scaling | [`../../7dtd-optimizer/docs/measured-scaling.md`](../../7dtd-optimizer/docs/measured-scaling.md) |
+| Measured scaling | [`../../7dtd-server-optimizer/docs/measured-scaling.md`](../../7dtd-server-optimizer/docs/measured-scaling.md) |
 
 ## Changelog
 

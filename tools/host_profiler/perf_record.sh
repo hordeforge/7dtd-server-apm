@@ -12,7 +12,7 @@ fi
 if [[ -z "$OUTDIR" ]]; then
   # Never write captures into the git tree (see README); default to the shared
   # APM data dir alongside sessions.
-  OUTDIR="${SEVENDTD_APM_DIR:-$HOME/.local/share/7dtd-apm}/perf_$(date -u +%Y%m%d_%H%M%S)"
+  OUTDIR="${SEVENDTD_APM_DIR:-$HOME/.local/share/7dtd-server-apm}/perf_$(date -u +%Y%m%d_%H%M%S)"
 fi
 mkdir -p "$OUTDIR"
 

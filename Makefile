@@ -12,7 +12,7 @@ UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --locked --project $(ROOT)
 
 .PHONY: help test lint lint-shell check-bt format format-check typecheck check check-ci lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package sbom
 help:
-	@echo "7dtd-apm contributor targets (requires: Python 3.11+, uv, Linux):"
+	@echo "7dtd-server-apm contributor targets (requires: Python 3.11+, uv, Linux):"
 	@echo "  make test           pytest suite + version gate (~3s)"
 	@echo "                      single test: uv run pytest tools/apm_suite/tests/test_core.py -k name"
 	@echo "  make lint           ruff over tools/, scripts/, plans/"
@@ -62,7 +62,7 @@ bridge-install:
 	chmod +x scripts/build_bridge.sh scripts/install_bridge.sh
 	SEVENDTD_DS_DIR="$(DS)" ./scripts/install_bridge.sh
 bridge-uninstall:
-	rm -rf "$(DS)/Mods/7dtd-apm-bridge"
+	rm -rf "$(DS)/Mods/7dtd-server-apm-bridge"
 package:
 	chmod +x scripts/build_bridge.sh scripts/package.sh
 	./scripts/package.sh

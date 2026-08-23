@@ -68,8 +68,8 @@ def _existing_ancestor(path: Path) -> Path:
 
 def _bridge_status() -> dict[str, Any]:
     """Installed bridge vs local build: stale DLLs measure with old hooks."""
-    installed = dedicated_dir() / "Mods/7dtd-apm-bridge/7dtd-apm-bridge.dll"
-    built = REPO / "dist/7dtd-apm-bridge/7dtd-apm-bridge.dll"
+    installed = dedicated_dir() / "Mods/7dtd-server-apm-bridge/7dtd-server-apm-bridge.dll"
+    built = REPO / "dist/7dtd-server-apm-bridge/7dtd-server-apm-bridge.dll"
     if not installed.is_file():
         return {"ok": False, "fix": "make bridge-install (bridge not installed)"}
     result: dict[str, Any] = {"ok": True, "fix": None}
@@ -81,7 +81,7 @@ def _bridge_status() -> dict[str, Any]:
                 "ok": False,
                 "fix": "installed bridge differs from dist build; make bridge-install + restart server",
             }
-    config = dedicated_dir() / "Mods/7dtd-apm-bridge/Config/apmbridge.json"
+    config = dedicated_dir() / "Mods/7dtd-server-apm-bridge/Config/apmbridge.json"
     with suppress(OSError, json.JSONDecodeError, ValueError):
         settings = json.loads(config.read_text(encoding="utf-8"))
         result["deep_mode"] = bool(settings.get("DeepMode"))

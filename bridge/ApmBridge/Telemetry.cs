@@ -301,7 +301,7 @@ namespace DtdApmBridge
             var sections = new object[copies.Length];
             for (int i = 0; i < copies.Length; i++) sections[i] = Metric.Build(copies[i]);
             return new {
-                schema = "7dtd.apm.app.v3", provider = "7dtd-apm-bridge", providerVersion = BridgeMod.Version,
+                schema = "7dtd.apm.app.v3", provider = "7dtd-server-apm-bridge", providerVersion = BridgeMod.Version,
                 utc = DateTime.UtcNow.ToString("o"), capabilities = BridgeMod.Capabilities(),
                 measurement = new { updateDurationName = "GameManager.gmUpdate", durationUnit = "ms", deepSampleRate = BridgeMod.Config.DeepSampleRate },
                 update, health,

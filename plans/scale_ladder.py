@@ -4,7 +4,7 @@ signals can be read off csharp_bridge.json attribution.
 
 Assumes a bot cohort is already joined (7dtd-loadgen --join, no self-spawn) on
 a FRESH world save (accumulated ghosts / spawn-drift break spawning; see
-7dtd-apm TODO R21). Spawns via AIDirector scouts, which find their own ground
+7dtd-server-apm TODO R21). Spawns via AIDirector scouts, which find their own ground
 near each player.
 """
 
@@ -16,13 +16,13 @@ import subprocess
 import time
 from pathlib import Path
 
-APM = Path(__file__).resolve().parent.parent  # 7dtd-apm repo root (plans/..)
+APM = Path(__file__).resolve().parent.parent  # 7dtd-server-apm repo root (plans/..)
 HOST, PORT = "127.0.0.1", 8081
 PASSWORD = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
 TIERS = [100, 300, 600, 1000]
 SNAPSHOT = Path.home() / (
     ".local/share/Steam/steamapps/common/7 Days to Die Dedicated Server"
-    "/Mods/7dtd-apm-bridge/telemetry/apm_app_latest.json"
+    "/Mods/7dtd-server-apm-bridge/telemetry/apm_app_latest.json"
 )
 
 
@@ -95,7 +95,7 @@ def spawn_to(target: int) -> int:
 
 
 def newest_session() -> Path:
-    root = Path.home() / ".local/share/7dtd-apm"
+    root = Path.home() / ".local/share/7dtd-server-apm"
     return max(root.glob("session_*"), key=lambda p: p.stat().st_mtime)
 
 
@@ -117,7 +117,7 @@ def main() -> int:
             [
                 "uv",
                 "run",
-                "7dtd-apm",
+                "7dtd-server-apm",
                 "capture",
                 "--seconds",
                 "90",

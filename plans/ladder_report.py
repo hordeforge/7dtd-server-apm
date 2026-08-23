@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-root = Path.home() / ".local/share/7dtd-apm"
+root = Path.home() / ".local/share/7dtd-server-apm"
 rows = []
 for session in sorted(root.glob("session_*")):
     workload = session / "workload.json"
