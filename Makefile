@@ -10,7 +10,7 @@ UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --locked --project $(ROOT)
 
 .DEFAULT_GOAL := help
 
-.PHONY: help test lint lint-shell check-bt format format-check typecheck check check-ci lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package sbom
+.PHONY: help test coverage lint lint-shell check-bt format format-check typecheck check check-ci lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package sbom
 help:
 	@echo "7dtd-server-apm contributor targets (requires: Python 3.11+, uv, Linux):"
 	@echo "  make test           pytest suite + version gate (~3s)"
@@ -33,6 +33,11 @@ help:
 test:
 	$(UV) pytest
 	$(UV) python scripts/check_version.py
+
+# Line coverage of apm_suite under the pytest suite. Writes .coverage in the
+# repo root; CI renders it into the README badge with scripts/coverage_badge.py.
+coverage:
+	$(UV) pytest --cov=apm_suite --cov-report=term-missing
 lint:
 	$(UV) ruff check tools scripts plans
 lint-shell:

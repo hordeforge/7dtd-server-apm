@@ -21,3 +21,7 @@ htmlcov/
 .DS_Store
 .idea/
 .vscode/
+.coverage.json
+
+# Local scratch (benchmarks, throwaway probes)
+.scratch/

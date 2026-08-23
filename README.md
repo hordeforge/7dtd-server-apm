@@ -2,6 +2,13 @@
 
 > **Part of [HordeForge](https://github.com/hordeforge)** — High-Performance Systems Engineering for 7 Days to Die.
 
+![CI](https://github.com/hordeforge/7dtd-server-apm/actions/workflows/ci.yml/badge.svg)
+![coverage](https://raw.githubusercontent.com/hordeforge/7dtd-server-apm/badges/coverage.svg)
+![license](https://img.shields.io/github/license/hordeforge/7dtd-server-apm)
+![release](https://img.shields.io/github/v/release/hordeforge/7dtd-server-apm)
+![languages](https://img.shields.io/github/languages/count/hordeforge/7dtd-server-apm)
+![top language](https://img.shields.io/github/languages/top/hordeforge/7dtd-server-apm)
+
 Observability and performance analysis for Linux 7 Days to Die dedicated servers. The host tool captures process, CPU, scheduler, synchronization, runtime, memory, filesystem, block, and network evidence. The optional `HordeForge_Geiger` bridge adds managed game-method timing without optimization or load-generation behavior.
 
 Project boundaries are deliberate:
