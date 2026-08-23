@@ -8,6 +8,10 @@ import json
 import sys
 from pathlib import Path
 
+# Every script in this directory runs under a bare python3 (make_flames.sh,
+# perf_record.sh); keep that contract here by resolving apm_suite from the
+# repository checkout when it is not installed in the interpreter's venv.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.analysis.flame_delta import delta, load_weights
 
 

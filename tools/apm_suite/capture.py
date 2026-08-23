@@ -36,7 +36,7 @@ from .session import (
     sessions_beyond_budget,
 )
 
-EBPF = TOOLS / "host_profiler"
+HOST_PROFILER = TOOLS / "host_profiler"
 # Single source of truth for the analyzer version is the package version
 # (pyproject.toml / __init__.py); compare gates session compatibility on it.
 ANALYZER_VERSION = __version__
@@ -78,7 +78,7 @@ def _bt(spec_name: str, script: Path) -> Callable[[CaptureContext], list[str] | 
         prepared = ctx.session / "bt" / f"{spec_name}.bt"
         cmd = [
             sys.executable,
-            str(EBPF / "preprocess_bt.py"),
+            str(HOST_PROFILER / "preprocess_bt.py"),
             str(script),
             "-o",
             str(prepared),
@@ -110,7 +110,7 @@ def _bt(spec_name: str, script: Path) -> Callable[[CaptureContext], list[str] | 
 def _mono_gc(ctx: CaptureContext) -> list[str] | None:
     if ctx.mono_so is None:
         return None
-    return _bt("mono_gc", EBPF / "scripts/mono_gc.bt")(ctx)
+    return _bt("mono_gc", HOST_PROFILER / "scripts/mono_gc.bt")(ctx)
 
 
 def _mono_alloc(ctx: CaptureContext) -> list[str] | None:
@@ -170,7 +170,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         aliases=frozenset({"threads", "memory", "hw", "cache"}),
         build=lambda ctx: [
             sys.executable,
-            str(EBPF / "proc_sample.py"),
+            str(HOST_PROFILER / "proc_sample.py"),
             "--pid",
             str(ctx.pid),
             "--seconds",
@@ -205,7 +205,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         aliases=frozenset({"cpu"}),
         build=lambda ctx: [
             "bash",
-            str(EBPF / "perf_record.sh"),
+            str(HOST_PROFILER / "perf_record.sh"),
             str(ctx.session / "cpu/perf"),
             str(ctx.seconds),
             str(ctx.pid),
@@ -218,7 +218,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         artifact="cpu/oncpu.bt.out",
         tool="bpftrace",
         aliases=frozenset({"cpu"}),
-        build=_bt("oncpu", EBPF / "scripts/cpu_profile.bt"),
+        build=_bt("oncpu", HOST_PROFILER / "scripts/cpu_profile.bt"),
         needs_sudo=True,
     ),
     CollectorSpec(
@@ -227,7 +227,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         artifact="scheduler/runqlat.bt.out",
         tool="bpftrace",
         aliases=frozenset({"scheduler", "sched"}),
-        build=_bt("runqlat", EBPF / "scripts/runqlat.bt"),
+        build=_bt("runqlat", HOST_PROFILER / "scripts/runqlat.bt"),
         needs_sudo=True,
     ),
     CollectorSpec(
@@ -236,7 +236,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         artifact="scheduler/offcpu.bt.out",
         tool="bpftrace",
         aliases=frozenset({"scheduler", "sched"}),
-        build=_bt("offcpu", EBPF / "scripts/offcpu.bt"),
+        build=_bt("offcpu", HOST_PROFILER / "scripts/offcpu.bt"),
         needs_sudo=True,
     ),
     CollectorSpec(
@@ -281,7 +281,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         artifact="io/io_net.bt.out",
         tool="bpftrace",
         aliases=frozenset({"io", "net"}),
-        build=_bt("io_net", EBPF / "scripts/io_net.bt"),
+        build=_bt("io_net", HOST_PROFILER / "scripts/io_net.bt"),
         needs_sudo=True,
     ),
     CollectorSpec(
@@ -885,7 +885,7 @@ def run_capture(
             subprocess.run(
                 [
                     "bash",
-                    str(EBPF / "make_flames.sh"),
+                    str(HOST_PROFILER / "make_flames.sh"),
                     str(session / "cpu/perf"),
                     f"7DTD APM pid={pid}",
                 ],
