@@ -625,8 +625,7 @@
         const spikes = listOrEmpty(snapshot.spikes);
         const g = grade(update);
         const perf = unwrapSnap(perfQ.data);
-        const perfEnabled = perf.enabled === true;
-        const perfAvailable = perf.available === true;
+        const perfEnabled = perf.enabled === true, perfAvailable = perf.available === true;
         const toggleFreeze = () => freezeHandler({ frozen, setFrozen, live, frozenSnap });
         // Restarting the server kicks every player for a couple of minutes, so the
         // toggle needs one explicit confirm click before it fires.
@@ -634,7 +633,7 @@
             togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled });
         });
         const setSortKey = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
-        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus), host !== null ? renderHostStrip(h, host) : null, renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf), renderTrendsChart(h, React, hist.current), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
+        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf), renderTrendsChart(h, React, hist.current), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
     }
     // Staged-apply helpers for the Efficiency panel: feature-group toggles are
     // staged locally (pending), not applied per click; the Apply button commits

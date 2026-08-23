@@ -269,8 +269,8 @@ function hostStatOf(candidate: unknown): HostStat | null {
 
 function fmtUptime(uptimeS: number): string {
   const s = Math.floor(uptimeS);
-  const d = Math.floor(s / 86400);
-  const h = Math.floor((s % 86400) / 3600);
+  const d = Math.floor(s / 86_400);
+  const h = Math.floor((s % 86_400) / 3600);
   const m = Math.floor((s % 3600) / 60);
   if (d > 0) {
     return `${d}d ${h}h`;
@@ -917,8 +917,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const spikes = listOrEmpty<SpikeRecord>(snapshot.spikes);
   const g = grade(update);
   const perf = unwrapSnap(perfQ.data);
-  const perfEnabled = perf.enabled === true;
-  const perfAvailable = perf.available === true;
+  const perfEnabled = perf.enabled === true, perfAvailable = perf.available === true;
 
   const toggleFreeze = (): void => freezeHandler({ frozen, setFrozen, live, frozenSnap });
   // Restarting the server kicks every player for a couple of minutes, so the
@@ -931,7 +930,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   return h("div", { className: "seven-dtd-apm" },
     renderHead(h, g, frozen, toggleFreeze, (): void => copySnapshot(snapshot, setCopyStatus), gc, update),
     h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus),
-    host !== null ? renderHostStrip(h, host) : null,
+    host === null ? null : renderHostStrip(h, host),
     renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf),
     renderTrendsChart(h, React, hist.current),
     h("div", { className: "apm-charts-row" },
