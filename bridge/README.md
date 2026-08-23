@@ -19,6 +19,26 @@ The panel also hosts an admin switch for the sibling EfficientServer perf mod:
 server (container restart policy reloads it). The edited path defaults to
 `/mods/EfficientServer/Config/efficientserver.json` (bridge config
 `PerfModConfigPath`); the server mounts `mods/` rw so the toggle can write it.
+
+### Web authorization matrix
+
+| Endpoint | Verbs | Required level | Notes |
+|---|---|---|---|
+| `/api/apm` | GET | 0 (admin) | read-only telemetry snapshot |
+| `/api/apm` | POST/PUT/DELETE | 0 + not implemented | base handler answers 405 |
+| `/api/perf` | GET | 0 (admin) | perf-mod config state |
+| `/api/perf` | POST | 0 (admin) | flips allowlisted feature groups only, then restarts the server |
+
+Enforcement is not per-handler code: every `AbsRestApi` subclass registers its
+per-method required levels in `AdminWebModules` at construction, and the
+dashboard's API host checks them centrally before any handler runs (403
+otherwise). Both endpoints declare `{0,0,0,0,0}`: every verb requires level 0,
+and HEAD/OPTIONS are denied outright by the framework's array padding. Neither
+endpoint accepts object identifiers, so there is no object-level access surface;
+the perf POST body is limited to fixed feature-group names with boolean values.
+Every bridge REST class must keep an explicit all-zero
+`DefaultMethodPermissionLevels` override; `test_bridge_build_surface.py` fails
+otherwise so widening access cannot happen by silently dropping a default.
 The panel JS is TypeScript (`WebMod/bundle.ts`), compiled to `bundle.js` by
 the version-pinned `npx` TypeScript path inside `make bridge-build`; do not
 hand-edit the generated bundle. Node.js/npm is required, but no global `tsc`
