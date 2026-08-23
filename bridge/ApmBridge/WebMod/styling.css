@@ -91,6 +91,8 @@ a[data-for="tooltip-Efficiency"]::before {
 .apm-chart { background: rgba(127,127,127,.08); border: 1px solid rgba(127,127,127,.22); border-radius: 8px; padding: .75rem; }
 .apm-trends { margin-top: .75rem; }
 .apm-trends svg { display: block; width: 100%; height: auto; }
+.apm-chart-head { display: flex; align-items: center; gap: .6rem; margin-bottom: .4rem; flex-wrap: wrap; }
+.apm-vgrid { stroke: rgba(127,127,127,.12); }
 .apm-gauge-title { opacity: .7; font-size: .85rem; margin-bottom: .25rem; }
 .apm-gauge text { font-family: inherit; }
 .apm-gauge-value { fill: #fff; font-size: 21px; font-weight: 700; }

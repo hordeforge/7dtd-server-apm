@@ -333,18 +333,56 @@ function niceMax(value: number): number {
   return nice * base;
 }
 
-function seriesPaths(values: Array<number>, width: number, height: number, max: number): { points: string; areaD: string } {
+// x-axis timescale for the trends chart. Uniform mode gives every sample an
+// equal pixel width. Compressed mode shrinks each step going back by
+// TREND_DECAY, so the recent window keeps full detail while older history
+// tapers toward the left edge; the vertical grid (one line per TREND_GRID_S
+// of real time) bunches up toward the left to visualize the taper.
+const TREND_DECAY = 0.93;
+const TREND_GRID_S = 30;
+const TREND_SAMPLE_S = 2;
+
+// Pixel width of the newest step (samples get narrower going back by decay).
+function trendStep0(innerW: number, n: number, compressed: boolean): number {
+  if (!compressed) {
+    return innerW / (n - 1);
+  }
+  return (innerW * (1 - TREND_DECAY)) / (1 - Math.pow(TREND_DECAY, n));
+}
+
+// x (0..innerW) of the sample that is `age` samples old (0 = newest).
+function trendX(innerW: number, n: number, age: number, compressed: boolean): number {
+  const step0 = trendStep0(innerW, n, compressed);
+  if (!compressed) {
+    return innerW - age * step0;
+  }
+  return innerW - (step0 * (1 - Math.pow(TREND_DECAY, age))) / (1 - TREND_DECAY);
+}
+
+// Inverse of trendX: the sample age (float, samples) at inner-area x.
+function trendAgeOf(innerW: number, n: number, x: number, compressed: boolean): number {
+  const step0 = trendStep0(innerW, n, compressed);
+  if (!compressed) {
+    return (innerW - x) / step0;
+  }
+  const d = Math.max(0, Math.min(innerW, innerW - x));
+  const ratio = 1 - (d * (1 - TREND_DECAY)) / step0;
+  if (ratio <= 0) {
+    return n - 1;
+  }
+  return Math.log(ratio) / Math.log(TREND_DECAY);
+}
+
+function seriesPaths(values: Array<number>, innerW: number, innerH: number, max: number, xOf: (i: number) => number): { points: string; areaD: string } {
   const span = max > 0 ? max : 1;
-  const n = values.length;
-  const step = n > 1 ? width / (n - 1) : 0;
   const points = values
     .map((v, i): string => {
-      const x = Math.round(i * step * 100) / 100;
-      const y = Math.round((height - (v / span) * height) * 100) / 100;
+      const x = Math.round(xOf(i) * 100) / 100;
+      const y = Math.round((innerH - (v / span) * innerH) * 100) / 100;
       return `${x},${y}`;
     })
     .join(" ");
-  return { points, areaD: `M ${points} L ${width},${height} L 0,${height} Z` };
+  return { points, areaD: `M ${points} L ${innerW},${innerH} L 0,${innerH} Z` };
 }
 
 function arcPath(cx: number, cy: number, r: number, start: number, end: number): string {
@@ -386,11 +424,11 @@ function trendGrid(h: CreateElement, width: number, padLeft: number, padTop: num
   }));
 }
 
-function trendSeriesSvg(h: CreateElement, s: TrendSeries, innerW: number, innerH: number, max: number, yOf: (v: number) => number, hoverIdx: number): unknown {
-  const paths = seriesPaths(s.values, innerW, innerH, max);
+function trendSeriesSvg(h: CreateElement, s: TrendSeries, innerW: number, innerH: number, max: number, yOf: (v: number) => number, xOf: (i: number) => number, hoverIdx: number): unknown {
+  const paths = seriesPaths(s.values, innerW, innerH, max, xOf);
   const gradId = `apg-${s.key}`;
   const hoverCircle = hoverIdx >= 0
-    ? h("circle", { cx: (hoverIdx * innerW) / (s.values.length - 1), cy: yOf(s.values[hoverIdx]), r: 3, fill: s.color })
+    ? h("circle", { cx: xOf(hoverIdx), cy: yOf(s.values[hoverIdx]), r: 3, fill: s.color })
     : null;
   return h("g", { key: s.key },
     h("defs", null,
@@ -400,6 +438,19 @@ function trendSeriesSvg(h: CreateElement, s: TrendSeries, innerW: number, innerH
     h("polygon", { points: `0,${innerH} ${paths.points} ${innerW},${innerH}`, fill: `url(#${gradId})` }),
     h("polyline", { points: paths.points, fill: "none", stroke: s.color, strokeWidth: 1.5 }),
     hoverCircle);
+}
+
+// Faint vertical grid: one line per TREND_GRID_S of real time, drawn behind
+// the series. Uniform mode spaces them evenly; compressed mode bunches them
+// toward the left edge, which is what makes the timescale taper visible.
+function trendVGrid(h: CreateElement, innerW: number, n: number, padLeft: number, padTop: number, innerH: number, compressed: boolean): unknown {
+  const maxAgeS = (n - 1) * TREND_SAMPLE_S;
+  const lines: Array<unknown> = [];
+  for (let t = TREND_GRID_S; t < maxAgeS; t += TREND_GRID_S) {
+    const x = padLeft + trendX(innerW, n, t / TREND_SAMPLE_S, compressed);
+    lines.push(h("line", { key: t, className: "apm-vgrid", x1: x, y1: padTop, x2: x, y2: padTop + innerH }));
+  }
+  return h("g", null, lines);
 }
 
 function trendLegend(h: CreateElement, series: Array<TrendSeries>, hoverIdx: number, secondsPerSample: number): unknown {
@@ -415,6 +466,7 @@ function trendLegend(h: CreateElement, series: Array<TrendSeries>, hoverIdx: num
 
 function renderTrendsChart(h: CreateElement, React: PanelProps["React"], H: SparkHistory): unknown {
   const [hoverIdx, setHoverIdx] = React.useState(-1);
+  const [compressed, setCompressed] = React.useState(true);
   const width = 600;
   const height = 150;
   const padLeft = 36;
@@ -428,30 +480,36 @@ function renderTrendsChart(h: CreateElement, React: PanelProps["React"], H: Spar
   }
   const series = trendSeriesOf(H);
   const max = niceMax(Math.max(...series.reduce<Array<number>>((acc, s) => [...acc, ...s.values], []), 1));
-  const step = innerW / (n - 1);
+  const xOf = (i: number): number => trendX(innerW, n, n - 1 - i, compressed);
   const yOf = (v: number): number => padTop + innerH - (v / max) * innerH;
-  const crossX = hoverIdx >= 0 ? padLeft + hoverIdx * step : -1;
+  const crossX = hoverIdx >= 0 ? padLeft + xOf(hoverIdx) : -1;
   const onMove = (e: MouseEvent): void => {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the chart svg is the handler target
     const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-    const idx = Math.round((e.clientX - rect.left - padLeft) / step);
-    setHoverIdx(Math.max(0, Math.min(n - 1, idx)));
+    const x = Math.max(0, Math.min(innerW, e.clientX - rect.left - padLeft));
+    const age = trendAgeOf(innerW, n, x, compressed);
+    setHoverIdx(Math.max(0, Math.min(n - 1, Math.round(n - 1 - age))));
   };
   return h("div", { className: "apm-chart apm-trends" },
+    h("div", { className: "apm-chart-head" },
+      h("button", { type: "button", className: "apm-btn", onClick: (): void => setCompressed(!compressed), "aria-pressed": compressed },
+        `Timescale: ${compressed ? "compressed" : "uniform"}`),
+      h("span", { className: "apm-axis-label" }, "older history tapers left · grid lines are 30s apart")),
     h("svg", {
       width, height, viewBox: `0 0 ${width} ${height}`, onMouseMove: onMove,
       onMouseLeave: (): void => setHoverIdx(-1),
       role: "img",
       // The hover crosshair is pointer-driven; keyboard and screen-reader
       // users get the series values from the text legend below the chart.
-      "aria-label": `Line chart: TPS and gmUpdate ms over the last ${Math.round(n * 2)} seconds; latest values are listed in the legend below.`
+      "aria-label": `Line chart: TPS and gmUpdate ms over the last ${Math.round(n * TREND_SAMPLE_S)} seconds, timescale ${compressed ? "compressed (recent detail, older history tapers left)" : "uniform"}; latest values are listed in the legend below.`
     },
       trendGrid(h, width, padLeft, padTop, innerH, max, yOf),
-      h("g", null, series.map((s): unknown => trendSeriesSvg(h, s, innerW, innerH, max, yOf, hoverIdx))),
+      trendVGrid(h, innerW, n, padLeft, padTop, innerH, compressed),
+      h("g", null, series.map((s): unknown => trendSeriesSvg(h, s, innerW, innerH, max, yOf, xOf, hoverIdx))),
       crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null,
-      h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * 2)}s ago`),
+      h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * TREND_SAMPLE_S)}s ago`),
       h("text", { className: "apm-axis-label", x: width - 4, y: height - 4, textAnchor: "end" }, "now")),
-    trendLegend(h, series, hoverIdx, 2));
+    trendLegend(h, series, hoverIdx, TREND_SAMPLE_S));
 }
 
 function renderBudgetGauge(h: CreateElement, update: Record<string, unknown>): unknown {
