@@ -27,7 +27,13 @@ from . import __version__
 from .io import atomic_json, unique_path
 from .models import BridgeSnapshotV3, CollectorResult, MetaV2, schema_dict
 from .paths import APM_BACKENDS, TOOLS, apm_root
-from .session import list_sessions, remove_sessions, sessions_beyond_budget
+from .session import (
+    list_sessions,
+    prune_grace_hours,
+    purge_expired_trash,
+    remove_sessions,
+    sessions_beyond_budget,
+)
 
 EBPF = TOOLS / "host_profiler"
 # Single source of truth for the analyzer version is the package version
@@ -838,11 +844,17 @@ def _auto_prune_sessions() -> None:
         keep = 40
     if keep <= 0:
         return
-    for old, error in remove_sessions(sessions_beyond_budget(list_sessions(apm_root()), keep)):
+    grace = prune_grace_hours()
+    for old, error in remove_sessions(
+        sessions_beyond_budget(list_sessions(apm_root()), keep), grace
+    ):
         if error is None:
             print(f"pruned old session {old.name} (APM_KEEP_SESSIONS={keep})", file=sys.stderr)
         else:
             print(f"WARNING: prune failed for {old.name}: {error}", file=sys.stderr)
+    for entry, error in purge_expired_trash(apm_root(), grace):
+        if error is not None:
+            print(f"WARNING: trash purge failed for {entry.name}: {error}", file=sys.stderr)
 
 
 def _launch_collectors(

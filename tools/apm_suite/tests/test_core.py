@@ -3,7 +3,6 @@ from __future__ import annotations
 import io
 import json
 import os
-import shutil
 import subprocess
 import sys
 import time
@@ -110,6 +109,7 @@ def test_cli_version_flag_works_without_subcommand() -> None:
         "audit",
         "index",
         "export",
+        "import",
         "scaling",
         "prometheus",
         "monitor",
@@ -303,6 +303,81 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
     assert f"openat {home}" not in vfs and "openat ~/steamapps/common" in vfs
     assert "~/libgame.so" in svg
     assert "app/bridge.jsonl" not in names
+
+
+def test_import_bundle_round_trip_restores_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Export must have a working inverse: a sanitized bundle restores back into
+    the store as an auditable session (the restore path is proven, not assumed)."""
+    session = tmp_path / "session_roundtrip"
+    (session / "io").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "events.jsonl").write_text('{"t": 1.0, "message": "tick"}\n')
+    (session / "io/vfs.bt.out").write_text("openat /steamapps/common\n")
+
+    bundle = tmp_path / "session_roundtrip.zip"
+    exported = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert exported.exit_code == 0, exported.output
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+    result = runner.invoke(app, ["import", str(bundle)])
+    assert result.exit_code == 0, result.output
+
+    restored = store / "session_roundtrip"
+    assert (restored / "meta.json").is_file()
+    assert (restored / "events.jsonl").read_text() == '{"t": 1.0, "message": "tick"}\n'
+    assert (restored / "io/vfs.bt.out").read_text() == "openat /steamapps/common\n"
+    # audit_session ran during import and recorded the integrity manifest.
+    assert (restored / "manifest.json").is_file()
+    assert load_json(restored / "manifest.json")["session_id"] == "session_roundtrip"
+
+
+def test_import_bundle_without_session_prefix_lands_in_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zipfile
+
+    bundle = tmp_path / "evidence.zip"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("meta.json", "{}\n")
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+    result = runner.invoke(app, ["import", str(bundle)])
+    assert result.exit_code == 0, result.output
+    assert (store / "session_evidence").is_dir()
+
+
+def test_import_rejects_zip_slip_and_corrupt_bundles(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A crafted bundle must never write outside the restore target."""
+    import zipfile
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+
+    evil = tmp_path / "evil.zip"
+    with zipfile.ZipFile(evil, "w") as archive:
+        archive.writestr("../escape.txt", "nope")
+        archive.writestr("/abs.txt", "nope")
+    result = runner.invoke(app, ["import", str(evil)])
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert not (tmp_path / "escape.txt").exists()
+    assert not list(store.glob("session_*"))
+
+    corrupt = tmp_path / "corrupt.zip"
+    corrupt.write_bytes(b"not a zip file")
+    result = runner.invoke(app, ["import", str(corrupt)])
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert not list(store.glob("session_*"))
 
 
 def test_models_emit_v2_schema() -> None:
@@ -1804,21 +1879,73 @@ def test_prune_continues_past_undeletable_session(
     _prune_store(root, 4)
     stuck = root / "session_1"
 
-    real_rmtree = shutil.rmtree
+    real_replace = os.replace
 
-    def failing_rmtree(path: Any, **kwargs: Any) -> None:
-        if Path(path) == stuck:
+    def failing_replace(src: Any, dst: Any, **kwargs: Any) -> None:
+        if Path(src) == stuck:
             raise OSError(16, "Device or resource busy")
-        real_rmtree(path, **kwargs)
+        real_replace(src, dst, **kwargs)
 
-    monkeypatch.setattr(shutil, "rmtree", failing_rmtree)
+    monkeypatch.setattr(os, "replace", failing_replace)
     result = runner.invoke(app, ["prune", "--keep", "2"])
 
     assert result.exit_code == 0
-    # session_1 (stuck) survives; the other doomed session is still removed.
+    # session_1 (stuck) survives at the root; the other doomed session is
+    # parked in the recovery trash.
     assert sorted(p.name for p in root.glob("session_*")) == ["session_1", "session_2", "session_3"]
+    assert (root / ".trash" / "session_0").is_dir()
     assert "could not remove" in result.stderr
     assert str(stuck) in result.stderr
+
+
+def test_prune_trash_keeps_sessions_recoverable_until_purge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Pruning is a mass-destruction path, so removed sessions must stay
+    recoverable from the store's trash until the grace window elapses."""
+    import time as time_mod
+
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    _prune_store(root, 5)
+
+    first = runner.invoke(app, ["prune", "--keep", "2"])
+    assert first.exit_code == 0
+    assert sorted(p.name for p in root.glob("session_*")) == ["session_3", "session_4"]
+    trash = root / ".trash"
+    assert sorted(p.name for p in trash.glob("session_*")) == [
+        "session_0",
+        "session_1",
+        "session_2",
+    ]
+    # Recoverable means intact: a plain mv back restores usable evidence.
+    assert (trash / "session_0" / "summary.json").read_text() == "x"
+
+    # Entries inside the grace window survive the next prune run; expired ones
+    # (and only those) are unlinked even when nothing new is pruned.
+    stale = time_mod.time() - 25 * 3600
+    os.utime(trash / "session_0", (stale, stale))
+    second = runner.invoke(app, ["prune", "--keep", "2"])
+    assert second.exit_code == 0
+    assert not (trash / "session_0").exists()
+    assert (trash / "session_1").is_dir() and (trash / "session_2").is_dir()
+
+
+def test_prune_grace_zero_restores_hard_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """APM_PRUNE_GRACE_HOURS=0 opts out of the recovery window entirely."""
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    monkeypatch.setenv("APM_PRUNE_GRACE_HOURS", "0")
+    _prune_store(root, 4)
+
+    result = runner.invoke(app, ["prune", "--keep", "2"])
+    assert result.exit_code == 0
+    assert sorted(p.name for p in root.glob("session_*")) == ["session_2", "session_3"]
+    assert not (root / ".trash").exists()
 
 
 # --- resource lifecycle ------------------------------------------------------------

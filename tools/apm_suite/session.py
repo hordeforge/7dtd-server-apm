@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import shutil
+import time
 from collections.abc import Iterator
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -9,7 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
-from .io import atomic_json, file_sha256, load_json
+from .io import _sync_parent_directory, atomic_json, file_sha256, load_json
 from .models import (
     Artifact,
     BridgeSnapshotV3,
@@ -162,21 +164,107 @@ def sessions_beyond_budget(
     return doomed
 
 
-def remove_sessions(doomed: list[Path]) -> Iterator[tuple[Path, OSError | None]]:
-    """Delete sessions past retention; one implementation for the CLI `prune`
-    command and post-capture auto-prune so their failure behavior cannot drift.
+TRASH_DIRNAME = ".trash"
 
-    Yields each session with None on success or the OSError on failure: a single
-    undeletable session (e.g. EBUSY from a leaked mono bind mount) must not abort
-    the whole prune and strand the remaining deletions.
+
+def prune_grace_hours() -> float:
+    """Soft-delete window for pruned sessions, in hours.
+
+    Pruning is the one mass-destruction path in this tool (a wrong --keep or a
+    runaway auto-prune deletes evidence irreversibly), so deletions land in the
+    store's trash first and only expire from there. APM_PRUNE_GRACE_HOURS
+    overrides; 0 restores immediate hard deletes for space-constrained hosts.
     """
+    try:
+        return max(0.0, float(os.environ.get("APM_PRUNE_GRACE_HOURS", "24")))
+    except ValueError:
+        return 24.0
+
+
+def _trash_dir(store: Path) -> Path:
+    return store / TRASH_DIRNAME
+
+
+def _free_trash_target(trash: Path, name: str) -> Path:
+    candidate = trash / name
+    suffix = 1
+    while candidate.exists():
+        candidate = trash / f"{name}_{suffix}"
+        suffix += 1
+    return candidate
+
+
+def remove_sessions(
+    doomed: list[Path], grace_hours: float | None = None
+) -> Iterator[tuple[Path, OSError | None]]:
+    """Retire sessions past retention via the store's trash directory.
+
+    One implementation for the CLI `prune` command and post-capture auto-prune
+    so their failure behavior cannot drift. Sessions are renamed into
+    `<store>/.trash/` (same filesystem) and only purge_expired_trash unlinks
+    them once the grace window passes, so a bad retention value stays
+    recoverable with a plain `mv`. Yields each session with None on success or
+    the OSError on failure: a single undeletable session (e.g. EBUSY from a
+    leaked mono bind mount) must not abort the whole prune and strand the
+    remaining deletions. grace_hours == 0 hard-deletes immediately.
+    """
+    if not doomed:
+        return
+    grace = prune_grace_hours() if grace_hours is None else grace_hours
+    if grace <= 0:
+        for session in doomed:
+            try:
+                shutil.rmtree(session)
+            except OSError as error:
+                yield session, error
+            else:
+                yield session, None
+        return
+    trash = _trash_dir(doomed[0].parent)
+    try:
+        trash.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        yield doomed[0], error
+        return
     for session in doomed:
         try:
-            shutil.rmtree(session)
+            target = _free_trash_target(trash, session.name)
+            os.replace(session, target)
+            # Stamp the grace clock at trash time: the directory mtime is the
+            # capture date, which would expire long-lived evidence the moment
+            # it is trashed.
+            os.utime(target, None)
+            # The rename itself must survive power loss like every write.
+            _sync_parent_directory(target)
         except OSError as error:
             yield session, error
         else:
             yield session, None
+
+
+def purge_expired_trash(
+    store: Path, grace_hours: float | None = None
+) -> Iterator[tuple[Path, OSError | None]]:
+    """Unlink trashed sessions whose grace window has elapsed.
+
+    Yields each removed entry (or the failure); callers decide how to report.
+    With grace disabled (0) any legacy trash is dropped outright so the
+    setting cannot leak unbounded disk use.
+    """
+    grace = prune_grace_hours() if grace_hours is None else grace_hours
+    cutoff = time.time() - max(0.0, grace) * 3600
+    trash = _trash_dir(store)
+    if not trash.is_dir():
+        return
+    for entry in sorted(trash.glob("session_*")):
+        try:
+            if entry.stat().st_mtime > cutoff:
+                continue
+            shutil.rmtree(entry)
+        except OSError as error:
+            yield entry, error
+        else:
+            yield entry, None
 
 
 def audit_session(session: Path) -> tuple[ManifestV2, bool]:

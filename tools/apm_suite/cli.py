@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import time
 import zipfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Annotated
 
 import typer
@@ -25,7 +25,14 @@ from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, load_json, unique_path
 from .paths import REPO, apm_root
 from .runner import backend_python, run, terminate_tree
-from .session import audit_session, list_sessions, remove_sessions, sessions_beyond_budget
+from .session import (
+    audit_session,
+    list_sessions,
+    prune_grace_hours,
+    purge_expired_trash,
+    remove_sessions,
+    sessions_beyond_budget,
+)
 
 app = typer.Typer(help="Host-only APM for 7 Days to Die dedicated servers.", no_args_is_help=True)
 flame_app = typer.Typer(help="Build and compare flame profiles.", no_args_is_help=True)
@@ -295,6 +302,47 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
     finally:
         tmp_zip_path.unlink(missing_ok=True)
     console.print(f"sanitized bundle: {output}")
+
+
+def _member_is_safe(name: str) -> bool:
+    # Zip-slip guard: bundle members must stay inside the restore target.
+    candidate = PurePosixPath(name)
+    return not candidate.is_absolute() and ".." not in candidate.parts
+
+
+@app.command("import")
+def import_bundle(
+    bundle: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
+    store: Annotated[
+        Path | None,
+        typer.Option("--store", help="Session store root (default: the APM session store)."),
+    ] = None,
+) -> None:
+    """Restore an exported support bundle into the session store and audit it."""
+    stem = "".join(c if c.isalnum() or c in "._-" else "_" for c in bundle.stem).strip("._")
+    if not stem.startswith("session_"):
+        stem = f"session_{stem}"
+    target = unique_path((store or apm_root()) / stem)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with zipfile.ZipFile(bundle) as archive:
+            unsafe = [m for m in archive.namelist() if not _member_is_safe(m)]
+            if unsafe:
+                err_console.print(
+                    f"[red]refusing bundle with unsafe member path(s): {', '.join(unsafe)}[/red]"
+                )
+                raise typer.Exit(2)
+            archive.extractall(target)
+    except zipfile.BadZipFile as error:
+        err_console.print(f"[red]{bundle} is not a readable zip bundle: {error}[/red]")
+        raise typer.Exit(2) from None
+    manifest, valid = audit_session(target)
+    outcome = (
+        "audit passed"
+        if valid
+        else f"{len(manifest.errors)} error(s), {len(manifest.warnings)} warning(s)"
+    )
+    console.print(f"restored {target} ({outcome})")
 
 
 @app.command("scaling")
@@ -606,10 +654,20 @@ def prune_sessions(
         console.print(("would remove " if dry_run else "removing ") + str(old))
     if dry_run:
         return
-    for old, error in remove_sessions(doomed):
+    grace = prune_grace_hours()
+    for old, error in remove_sessions(doomed, grace):
         # One stuck session must not strand the rest: report and keep going.
         if error is not None:
             err_console.print(f"[red]could not remove {old}: {error}[/red]")
+    for entry, error in purge_expired_trash(apm_root(), grace):
+        if error is not None:
+            err_console.print(f"[red]could not purge {entry}: {error}[/red]")
+    if doomed:
+        trash = apm_root() / ".trash"
+        window = f"for {grace:g}h" if grace > 0 else "disabled (APM_PRUNE_GRACE_HOURS=0)"
+        console.print(
+            f"removed sessions stay recoverable under {trash} ({window}); restore with mv"
+        )
 
 
 @app.command()
