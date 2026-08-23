@@ -7,6 +7,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any
 
 # Every script in this directory runs under a bare python3 (make_flames.sh,
 # perf_record.sh); keep that contract here by resolving apm_suite from the
@@ -26,7 +27,7 @@ def flame_path(session: Path) -> Path | None:
     return None
 
 
-def build_html(a: Path, b: Path, rows: list[dict]) -> str:
+def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
     tr = []
     max_abs = max((abs(r["delta"]) for r in rows), default=1) or 1
     for r in rows:

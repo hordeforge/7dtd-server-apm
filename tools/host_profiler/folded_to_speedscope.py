@@ -13,6 +13,7 @@ import argparse
 import json
 import math
 from pathlib import Path
+from typing import Any
 
 # Folded files can come from outside this pipeline (imported evidence bundles),
 # where a single row may claim thousands of frames. Bound per-stack growth to
@@ -47,9 +48,9 @@ def load_folded(path: Path) -> list[tuple[list[str], int]]:
     return rows
 
 
-def to_speedscope(rows: list[tuple[list[str], int]], name: str = "CPU") -> dict:
+def to_speedscope(rows: list[tuple[list[str], int]], name: str = "CPU") -> dict[str, Any]:
     frame_index: dict[str, int] = {}
-    frames: list[dict] = []
+    frames: list[dict[str, str]] = []
 
     def idx(name: str) -> int:
         if name not in frame_index:
@@ -85,12 +86,12 @@ def to_speedscope(rows: list[tuple[list[str], int]], name: str = "CPU") -> dict:
     }
 
 
-def to_d3_tree(rows: list[tuple[list[str], int]], root_name: str = "all") -> dict:
+def to_d3_tree(rows: list[tuple[list[str], int]], root_name: str = "all") -> dict[str, Any]:
     """Hierarchical tree for d3-flame-graph / our interactive HTML."""
-    root: dict = {"name": root_name, "value": 0, "children": {}}
+    root: dict[str, Any] = {"name": root_name, "value": 0, "children": {}}
 
-    def ensure(node: dict, name: str) -> dict:
-        ch = node["children"]
+    def ensure(node: dict[str, Any], name: str) -> dict[str, Any]:
+        ch: dict[str, dict[str, Any]] = node["children"]
         if name not in ch:
             ch[name] = {"name": name, "value": 0, "children": {}}
         return ch[name]
@@ -105,12 +106,12 @@ def to_d3_tree(rows: list[tuple[list[str], int]], root_name: str = "all") -> dic
     # Post-order freeze with an explicit worklist: tree depth equals stack
     # depth (bounded only by MAX_STACK_DEPTH), far past the interpreter's
     # recursion limit, so the recursive form crashed on deep folded rows.
-    frozen: dict[int, dict] = {}
-    work: list[tuple[dict, bool]] = [(root, False)]
+    frozen: dict[int, dict[str, Any]] = {}
+    work: list[tuple[dict[str, Any], bool]] = [(root, False)]
     while work:
         node, expanded = work.pop()
         if expanded:
-            out = {"name": node["name"], "value": node["value"]}
+            out: dict[str, Any] = {"name": node["name"], "value": node["value"]}
             kids = node["children"]
             if kids:
                 ordered = sorted(kids.keys(), key=lambda x: -kids[x]["value"])

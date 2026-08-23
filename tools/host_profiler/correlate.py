@@ -17,6 +17,7 @@ import re
 from bisect import bisect_left
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 RE_SPIKE = re.compile(
     r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}).*\[EfficientServer\]\s+SPIKE\s+"
@@ -37,7 +38,7 @@ def parse_ts(s: str) -> float:
         return 0.0
 
 
-def load_proc(capture: Path) -> list[dict]:
+def load_proc(capture: Path) -> list[dict[str, Any]]:
     p = capture / "proc.jsonl"
     if not p.exists():
         return []
@@ -48,7 +49,7 @@ def load_proc(capture: Path) -> list[dict]:
     ]
 
 
-def nearest_proc(times: list[float], rows: list[dict], t: float) -> dict | None:
+def nearest_proc(times: list[float], rows: list[dict[str, Any]], t: float) -> dict[str, Any] | None:
     """Sample with the smallest |t - stamp|; ties prefer the EARLIER sample.
 
     `rows` must be sorted by their "t" ascending with the parallel `times` list
@@ -59,7 +60,7 @@ def nearest_proc(times: list[float], rows: list[dict], t: float) -> dict | None:
     if not rows:
         return None
     index = bisect_left(times, t)
-    candidates: list[dict] = []
+    candidates: list[dict[str, Any]] = []
     if index > 0:
         candidates.append(rows[index - 1])
     if index < len(rows):
@@ -78,7 +79,7 @@ def main() -> int:
     proc.sort(key=lambda r: r["t"])
     proc_times = [r["t"] for r in proc]
     text = args.game_log.read_text(encoding="utf-8", errors="replace")
-    spikes = []
+    spikes: list[dict[str, Any]] = []
     for m in RE_SPIKE.finditer(text):
         spikes.append(
             {

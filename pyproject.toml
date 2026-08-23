@@ -53,7 +53,9 @@ files = [
   "tools/apm_suite",
   "tools/apm/collectors/app_scrape.py",
   "tools/apm/collectors/threads.py",
+  "tools/host_profiler",
   "scripts/check_version.py",
+  "scripts/coverage_badge.py",
   "plans/ladder_report.py",
   "plans/scale_ladder.py",
 ]
