@@ -148,7 +148,7 @@ def test_capture_rejects_unknown_only_tokens_even_dry_run() -> None:
     bad = runner.invoke(app, ["capture", "--only", "cpu,memry", "--dry-run"])
     assert bad.exit_code == 2
     assert "memry" in bad.stderr and "cpu" not in bad.stderr.split("unknown")[1]
-    for good in ("all", "alloc", "app_sim,futex", "cpu , memory"):
+    for good in ("all", "alloc", "app_sim,futex", "cpu , memory", "net", ""):
         assert runner.invoke(app, ["capture", "--only", good, "--dry-run"]).exit_code == 0
 
 
@@ -173,8 +173,10 @@ def test_budget_rejects_unparseable_budget_file_cleanly(tmp_path: Path) -> None:
     bad.write_text('{"max_layer_scores": ')
     result = runner.invoke(app, ["budget", str(session), "--budget", str(bad)])
     assert result.exit_code == 2
-    assert str(bad) in result.stderr
-    assert "not valid JSON" in result.stderr
+    # Rich wraps stderr at console width (even mid-word); compare squashed.
+    squashed = _squashed(result.stderr)
+    assert str(bad) in squashed
+    assert "notvalidJSON" in squashed
     with pytest.raises(ValueError, match="not valid JSON"):
         check_budget(session, bad)
 
@@ -1537,6 +1539,72 @@ def test_layer_requested_shared_alias_table() -> None:
     assert not layer_requested("io", {"cpu"})
 
 
+def test_only_tokens_resolve_identically_for_planning_and_audit() -> None:
+    """The capture plan and the audit must agree on every (token, collector)
+    pair: a disagreement surfaces as false "requested collector produced no
+    usable evidence" warnings (or silently missing ones) in every manifest."""
+    from apm_suite.capture import SPECS, wanted
+    from apm_suite.models import LAYER_ALIASES
+    from apm_suite.session import _requested
+
+    tokens = [
+        "all",
+        *(spec.name for spec in SPECS),
+        *(alias for aliases in LAYER_ALIASES.values() for alias in aliases),
+        "alloc",
+        "allocsites",
+        "nonsense",
+    ]
+    for token in tokens:
+        for spec in SPECS:
+            assert wanted(spec, token) == _requested(spec.name, spec.layer, {token}), (
+                f"plan/audit drift for --only {token!r} on collector {spec.name!r}"
+            )
+
+
+def test_optin_collector_is_not_flagged_by_audit_under_all(tmp_path: Path) -> None:
+    """mono_alloc is deliberately excluded from default plans; the audit must
+    not warn about it as if it were requested evidence that went missing."""
+    from apm_suite.capture import SPECS, wanted
+
+    session = _session(tmp_path / "session_optin_audit")
+    alloc = next(spec for spec in SPECS if spec.name == "mono_alloc")
+    assert not wanted(alloc, "all")  # never planned under a default capture
+    atomic_json(
+        session / "runtime" / "mono_alloc.result.json",
+        {
+            "schema": "7dtd.apm.collector-result.v1",
+            "name": "mono_alloc",
+            "layer": "runtime_gc",
+            "status": "skipped",
+            "message": "collector not requested",
+        },
+    )
+    manifest, valid = audit_session(session)
+    assert not any("mono_alloc" in warning for warning in manifest.warnings)
+    assert valid
+
+
+def test_layer_alias_token_selects_whole_layer_in_the_plan() -> None:
+    """--only net means the io layer everywhere: plan, audit, and summary all
+    treat it as requesting vfs/block/io_net, not io_net alone."""
+    from apm_suite.capture import SPECS, wanted
+
+    planned = {spec.name for spec in SPECS if wanted(spec, "net")}
+    assert planned == {"vfs", "block", "io_net"}
+
+
+def test_threads_token_keeps_proc_ridealong_in_plan_and_audit() -> None:
+    """--only threads also samples /proc thread stats by design; both sides
+    must count proc as requested so a failed scrape is audited as a gap."""
+    from apm_suite.capture import SPECS, wanted
+    from apm_suite.session import _requested
+
+    proc = next(spec for spec in SPECS if spec.name == "proc")
+    assert wanted(proc, "threads")
+    assert _requested(proc.name, proc.layer, {"threads"})
+
+
 def test_build_summary_marks_only_requested_layers_collected(tmp_path: Path) -> None:
     from apm_suite.analysis.report import build_summary
 
@@ -2599,7 +2667,6 @@ def _boom_spec() -> CollectorSpec:
         layer="threads",
         artifact="threads/out.jsonl",
         tool="sh",  # must pass the shutil.which gate on any Linux host
-        aliases=frozenset({"boom"}),
         build=lambda ctx: [sys.executable, "-c", "pass"],
         stdout_to="threads/out.txt",
     )
@@ -3017,6 +3084,158 @@ def test_capture_sudo_probe_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/sudo")
     monkeypatch.setattr(sp, "run", fake_run)
     assert capture._sudo_available() is False
+
+
+# --- error-path surfacing ---------------------------------------------------
+
+
+def _squashed(text: str) -> str:
+    """Console output wraps mid-word at terminal width and Typer's rich error
+    panels add '│' gutters; containment checks run against both removed."""
+    return "".join(text.split()).replace("│", "")
+
+
+def test_rally_players_failed_teleports_are_not_counted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A telnet send failure must shrink the moved count instead of reporting
+    phantom rallies (an unrallied cohort presented as a valid cluster)."""
+    commands: list[str] = []
+
+    def fake_telnet_exec(*_args: object) -> str:
+        return _LISTPLAYERS
+
+    def fake_telnet_command(_h: str, _p: int, _pw: str, command: str) -> bool:
+        commands.append(command)
+        return False
+
+    monkeypatch.setattr(capture, "telnet_exec", fake_telnet_exec)
+    monkeypatch.setattr(capture, "telnet_command", fake_telnet_command)
+    moved = capture.rally_players("127.0.0.1", 8081, "pw", at=(500, 900))
+    assert moved == 0
+    assert len(commands) == 3  # every player was still attempted
+
+
+def test_warn_survives_unwritable_warn_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """_warn runs inside error handlers: an unwritable WARN.txt must reach the
+    operator on stderr, never abort the flow that was reporting a problem."""
+    (tmp_path / "WARN.txt").mkdir()
+    capture._warn(tmp_path, "probe message")
+    err = capsys.readouterr().err
+    assert "WARN: probe message" in err
+    assert "could not append" in err
+
+
+def test_budget_names_corrupt_bridge_file(tmp_path: Path) -> None:
+    """A torn csharp_bridge.json must fail the gate naming the file, not with a
+    bare 'Expecting value' that leaves the operator guessing which artifact."""
+    session = _session(tmp_path / "session_corrupt_bridge")
+    (session / "csharp_bridge.json").write_text('{"top_managed_sections": ')
+    result = runner.invoke(app, ["budget", str(session)])
+    assert result.exit_code == 2
+    squashed = _squashed(result.stderr)
+    assert str(session / "csharp_bridge.json") in squashed
+    assert "cannotparse" in squashed
+
+
+def test_compare_names_corrupt_bridge_file(tmp_path: Path) -> None:
+    base = _cmp_session(tmp_path, "cmp_base")
+    candidate = _cmp_session(tmp_path, "cmp_cand")
+    (candidate / "csharp_bridge.json").write_text("[torn")
+    result = runner.invoke(app, ["compare", str(base), str(candidate)])
+    assert result.exit_code == 1
+    squashed = _squashed(result.stderr)
+    assert "cannotparse" in squashed
+    assert str(candidate / "csharp_bridge.json") in squashed
+
+
+def test_prometheus_rejects_corrupt_health_json_cleanly(tmp_path: Path) -> None:
+    """A hand-mangled health.json must produce a named-path CLI error like the
+    guarded summary read above it, never a raw traceback."""
+    session = _session(tmp_path / "session_corrupt_health")
+    (session / "health.json").write_text("{oops")
+    out = tmp_path / "metrics.txt"
+    result = runner.invoke(app, ["prometheus", str(session), "--output", str(out)])
+    assert result.exit_code == 2
+    assert str(session / "health.json") in _squashed(result.stderr)
+
+
+def test_ingest_bridge_snapshot_copy_failure_warns_not_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A failed snapshot copy (disk full, perms) degrades to WARN.txt; the
+    post-capture pipeline (finalize/audit/prune) still runs."""
+    from datetime import UTC
+    from datetime import datetime as dt
+
+    pid = 4242
+    exe = tmp_path / "server"
+    telemetry = exe.parent / "Mods/7dtd-server-apm-bridge/telemetry"
+    telemetry.mkdir(parents=True)
+    # The capture window opens before the snapshot is stamped, else the
+    # freshness gate rejects the file before the copy is ever attempted.
+    started = dt.now(UTC)
+    snapshot = {
+        "schema": "7dtd.apm.app.v3",
+        "provider": "7dtd-server-apm-bridge",
+        "providerVersion": "0.0.0",
+        "utc": dt.now(UTC).isoformat(),
+        "sections": [
+            {
+                "name": "World.TickEntities",
+                "calls": 10,
+                "avgMs": 1.0,
+                "lastMs": 1.0,
+                "maxMs": 2.0,
+                "p50Ms": 1.0,
+                "p95Ms": 2.0,
+                "p99Ms": 2.0,
+                "totalMs": 10.0,
+            }
+        ],
+    }
+    (telemetry / "apm_app_latest.json").write_text(json.dumps(snapshot))
+
+    real_realpath = os.path.realpath
+
+    def fake_realpath(path: object) -> str:
+        return str(exe) if str(path) == f"/proc/{pid}/exe" else real_realpath(str(path))
+
+    monkeypatch.setattr("apm_suite.capture.os.path.realpath", fake_realpath)
+
+    def failing_copy2(*args: object, **kwargs: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("apm_suite.capture.shutil.copy2", failing_copy2)
+
+    session = tmp_path / "session"
+    (session / "app").mkdir(parents=True)
+    capture._ingest_bridge_snapshot(session, pid, False, started, 60)
+    err = capsys.readouterr().err
+    assert "copy failed" in err
+    assert "not ingested" in (session / "WARN.txt").read_text()
+
+
+def test_scaling_skips_unreadable_summaries_like_missing_ones(tmp_path: Path) -> None:
+    """One torn summary must not crash the ladder fit; it is dropped exactly
+    like a session without summary.json and the rest still fit."""
+    from apm_suite.analysis.scaling import analyze_scaling
+
+    sessions: list[Path] = []
+    for index, players in enumerate((5, 10, 20)):
+        session = tmp_path / f"scale_{index}"
+        session.mkdir()
+        meta = _meta(seconds=30)
+        meta["analyzer_version"] = "2.1.0"
+        atomic_json(session / "meta.json", meta)
+        summary = _summary(session.name, [{"layer": "cpu", "score": 10, "state": "collected"}])
+        summary["metadata"] = {"world": {"entities": players * 100, "players": players}}
+        atomic_json(session / "summary.json", summary)
+        sessions.append(session)
+    (sessions[1] / "summary.json").write_text("{torn")
+
+    result = analyze_scaling(sessions, scale_key="players")
+    assert result["scales"] == [5.0, 20.0]  # torn session excluded, fit survives
 
 
 # --- live server (opt-in) ----------------------------------------------------------

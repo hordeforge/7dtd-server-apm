@@ -14,7 +14,6 @@ import signal
 import subprocess
 import sys
 import time
-from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -24,9 +23,17 @@ from typing import BinaryIO
 from pydantic import ValidationError
 
 from . import __version__
+from .collectors import (
+    HOST_PROFILER,
+    SPECS,
+    CaptureContext,
+    CollectorSpec,
+    unknown_only_tokens,
+    wanted,
+)
 from .io import atomic_json, claim_dir
 from .models import BridgeSnapshotV3, CollectorResult, MetaV2, schema_dict
-from .paths import APM_BACKENDS, TOOLS, apm_root, require_backends
+from .paths import apm_root, require_backends
 from .session import (
     keep_sessions_budget,
     list_sessions,
@@ -37,7 +44,6 @@ from .session import (
     sessions_beyond_budget,
 )
 
-HOST_PROFILER = TOOLS / "host_profiler"
 # Single source of truth for the analyzer version is the package version
 # (pyproject.toml / __init__.py); compare gates session compatibility on it.
 ANALYZER_VERSION = __version__
@@ -48,282 +54,11 @@ GRACE_SECONDS = 60
 
 
 @dataclass
-class CaptureContext:
+class CaptureOutcome:
     session: Path
-    pid: int
-    comm: str
-    seconds: int
-    telnet_host: str = "127.0.0.1"
-    telnet_port: int = 8081
-    telnet_password: str = ""
-    mono_so: Path | None = None
-    sudo_ok: bool = False
-
-
-@dataclass(frozen=True)
-class CollectorSpec:
-    name: str
-    layer: str
-    artifact: str  # session-relative primary artifact
-    tool: str  # binary whose version is recorded
-    aliases: frozenset[str]
-    build: Callable[[CaptureContext], list[str] | None]  # None => unavailable
-    needs_sudo: bool = False
-    env: Callable[[CaptureContext], dict[str, str]] | None = None
-    stdout_to: str | None = None  # session-relative stdout tee target
-    optin: bool = False  # skipped by "all"; runs only when named/aliased explicitly
-
-
-def _bt(spec_name: str, script: Path) -> Callable[[CaptureContext], list[str] | None]:
-    def build(ctx: CaptureContext) -> list[str] | None:
-        prepared = ctx.session / "bt" / f"{spec_name}.bt"
-        cmd = [
-            sys.executable,
-            str(HOST_PROFILER / "preprocess_bt.py"),
-            str(script),
-            "-o",
-            str(prepared),
-            "--pid",
-            str(ctx.pid),
-            "--comm",
-            ctx.comm,
-            "--mono-so",
-            str(ctx.mono_so or ""),
-        ]
-        try:
-            if subprocess.run(cmd, check=False, timeout=30).returncode:
-                return None
-        except (subprocess.TimeoutExpired, OSError):
-            return None  # a hung preprocessor must not block the collector pipeline
-        return [
-            "sudo",
-            "-n",
-            "timeout",
-            "--signal=INT",
-            f"{ctx.seconds}s",
-            "bpftrace",
-            str(prepared),
-        ]
-
-    return build
-
-
-def _mono_gc(ctx: CaptureContext) -> list[str] | None:
-    if ctx.mono_so is None:
-        return None
-    return _bt("mono_gc", HOST_PROFILER / "scripts/mono_gc.bt")(ctx)
-
-
-def _mono_alloc(ctx: CaptureContext) -> list[str] | None:
-    if ctx.mono_so is None:
-        return None
-    return _bt("mono_alloc", APM_BACKENDS / "collectors/mono_alloc.bt")(ctx)
-
-
-SPECS: tuple[CollectorSpec, ...] = (
-    CollectorSpec(
-        name="app",
-        layer="app_sim",
-        artifact="app/bridge.jsonl",
-        tool="python3",
-        aliases=frozenset({"app"}),
-        build=lambda ctx: [
-            sys.executable,
-            str(APM_BACKENDS / "collectors/app_scrape.py"),
-            "--host",
-            ctx.telnet_host,
-            "--port",
-            str(ctx.telnet_port),
-            "--seconds",
-            str(ctx.seconds),
-            "--interval",
-            str(ctx.seconds // 3 if ctx.seconds > 20 else 10),
-            "--out",
-            str(ctx.session / "app/bridge.jsonl"),
-        ],
-        env=lambda ctx: {"SEVENDTD_TELNET_PASSWORD": ctx.telnet_password},
-    ),
-    CollectorSpec(
-        name="threads",
-        layer="threads",
-        artifact="threads/threads.jsonl",
-        tool="python3",
-        aliases=frozenset({"threads"}),
-        build=lambda ctx: [
-            sys.executable,
-            str(APM_BACKENDS / "collectors/threads.py"),
-            "--pid",
-            str(ctx.pid),
-            "--seconds",
-            str(ctx.seconds),
-            "--interval",
-            "1",
-            "--jsonl",
-            str(ctx.session / "threads/threads.jsonl"),
-        ],
-        stdout_to="threads/threads.txt",
-    ),
-    CollectorSpec(
-        name="proc",
-        layer="memory_cache",
-        artifact="memory/proc.jsonl",
-        tool="python3",
-        aliases=frozenset({"threads", "memory", "hw", "cache"}),
-        build=lambda ctx: [
-            sys.executable,
-            str(HOST_PROFILER / "proc_sample.py"),
-            "--pid",
-            str(ctx.pid),
-            "--seconds",
-            str(ctx.seconds),
-            "--interval",
-            "1",
-            "--json",
-            str(ctx.session / "memory/proc.jsonl"),
-            "--threads",
-        ],
-        stdout_to="memory/proc.txt",
-    ),
-    CollectorSpec(
-        name="hw",
-        layer="memory_cache",
-        artifact="memory/hw_stat.txt",
-        tool="perf",
-        aliases=frozenset({"memory", "hw", "cache"}),
-        build=lambda ctx: [
-            "bash",
-            str(APM_BACKENDS / "collectors/hw_perf.sh"),
-            str(ctx.pid),
-            str(ctx.seconds),
-            str(ctx.session / "memory"),
-        ],
-    ),
-    CollectorSpec(
-        name="perf",
-        layer="cpu",
-        artifact="cpu/perf/stacks.folded",
-        tool="perf",
-        aliases=frozenset({"cpu"}),
-        build=lambda ctx: [
-            "bash",
-            str(HOST_PROFILER / "perf_record.sh"),
-            str(ctx.session / "cpu/perf"),
-            str(ctx.seconds),
-            str(ctx.pid),
-        ],
-        stdout_to="cpu/perf_launcher.log",
-    ),
-    CollectorSpec(
-        name="oncpu",
-        layer="cpu",
-        artifact="cpu/oncpu.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"cpu"}),
-        build=_bt("oncpu", HOST_PROFILER / "scripts/cpu_profile.bt"),
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="runqlat",
-        layer="scheduler",
-        artifact="scheduler/runqlat.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"scheduler", "sched"}),
-        build=_bt("runqlat", HOST_PROFILER / "scripts/runqlat.bt"),
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="offcpu",
-        layer="scheduler",
-        artifact="scheduler/offcpu.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"scheduler", "sched"}),
-        build=_bt("offcpu", HOST_PROFILER / "scripts/offcpu.bt"),
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="states",
-        layer="scheduler",
-        artifact="scheduler/states.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"scheduler", "sched"}),
-        build=_bt("states", APM_BACKENDS / "collectors/sched_states.bt"),
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="futex",
-        layer="sync_locks",
-        artifact="sync/futex.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"sync", "locks", "futex"}),
-        build=_bt("futex", APM_BACKENDS / "collectors/futex.bt"),
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="vfs",
-        layer="io",
-        artifact="io/vfs.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"io"}),
-        build=_bt("vfs", APM_BACKENDS / "collectors/vfs_lat.bt"),
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="block",
-        layer="io",
-        artifact="io/block.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"io"}),
-        build=_bt("block", APM_BACKENDS / "collectors/block_lat.bt"),
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="io_net",
-        layer="io",
-        artifact="io/io_net.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"io", "net"}),
-        build=_bt("io_net", HOST_PROFILER / "scripts/io_net.bt"),
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="mono_gc",
-        layer="runtime_gc",
-        artifact="runtime/mono_gc.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"runtime", "gc"}),
-        build=_mono_gc,
-        needs_sudo=True,
-    ),
-    CollectorSpec(
-        name="mono_alloc",
-        layer="runtime_gc",
-        artifact="runtime/mono_alloc.bt.out",
-        tool="bpftrace",
-        aliases=frozenset({"alloc", "allocsites"}),
-        build=_mono_alloc,
-        needs_sudo=True,
-        optin=True,  # high overhead: opt in with --only alloc (forensic)
-    ),
-)
-
-
-def wanted(spec: CollectorSpec, only: str) -> bool:
-    requested = {token.strip() for token in only.split(",") if token.strip()}
-    explicit = bool({spec.name, spec.layer} & requested or spec.aliases & requested)
-    if spec.optin:
-        return explicit  # opt-in collectors never run under "all"
-    return bool("all" in requested or explicit)
-
-
-def unknown_only_tokens(only: str) -> list[str]:
-    """--only tokens that match no collector name, layer, or alias (typos would
-    otherwise silently resolve to an empty plan)."""
-    known = {"all"}
-    for spec in SPECS:
-        known |= {spec.name, spec.layer} | set(spec.aliases)
-    return [
-        token.strip() for token in only.split(",") if token.strip() and token.strip() not in known
-    ]
+    results: list[CollectorResult] = field(default_factory=list)
+    interrupted: bool = False
+    exit_code: int = 0
 
 
 def find_server_pid() -> int | None:
@@ -578,12 +313,15 @@ def rally_players(host: str, port: int, password: str, at: tuple[int, int] | Non
     for pid, *_ in anchors:
         offset_x = base_x + (moved % 10) * 6 - 15
         offset_z = base_z + (moved // 10) * 6 - 15
-        telnet_command(
+        # Count only sends that did not fail: reporting players as rallied when
+        # telnet was down would present an unrallied cohort as a valid cluster.
+        if not telnet_command(
             host,
             port,
             password,
             f"teleportplayer {pid} {offset_x:.0f} {base_y:.0f} {offset_z:.0f}",
-        )
+        ):
+            continue
         moved += 1
     return moved
 
@@ -595,8 +333,14 @@ def reset_bridge_stats(host: str, port: int, password: str) -> bool:
 
 def _warn(session: Path, message: str) -> None:
     print(f"WARN: {message}", file=sys.stderr)
-    with (session / "WARN.txt").open("a", encoding="utf-8") as stream:
-        stream.write(message + "\n")
+    try:
+        with (session / "WARN.txt").open("a", encoding="utf-8") as stream:
+            stream.write(message + "\n")
+    except OSError as error:
+        # _warn runs inside error handlers and launch loops: a failing append
+        # (disk full, perms) must escalate to the operator, never abort the
+        # flow that was already reporting a problem.
+        print(f"WARNING: could not append to WARN.txt: {error}", file=sys.stderr)
 
 
 def _result(
@@ -633,14 +377,6 @@ class _Running:
     started: float
     streams: list[BinaryIO] = field(default_factory=list)
     finished: float | None = None
-
-
-@dataclass
-class CaptureOutcome:
-    session: Path
-    results: list[CollectorResult] = field(default_factory=list)
-    interrupted: bool = False
-    exit_code: int = 0
 
 
 def _terminate(running: list[_Running]) -> None:
@@ -1047,7 +783,13 @@ def _ingest_bridge_snapshot(
     if not snapshot.sections:
         _warn(session, "bridge snapshot has no managed sections; not ingested")
         return
-    shutil.copy2(latest, session / "app/apm_app.json")
+    try:
+        shutil.copy2(latest, session / "app/apm_app.json")
+    except OSError as error:
+        # Optional enrichment: a failed copy must not abort the pipeline here
+        # (finalize/audit/auto-prune still have to run for the collected layers).
+        _warn(session, f"bridge snapshot copy failed; not ingested: {error}")
+        return
     print(">> [app] ingested schema-validated bridge snapshot")
 
 

@@ -47,9 +47,14 @@ major version.
   stderr, and exits 1; newly attached files still verify clean.
 - Fixed: folded/speedscope/flamegraph loaders crashed on non-finite sample
   weights (`int(inf)`); inf/nan samples are skipped now.
-- Changed: `--only` layer aliases resolve through one shared table across
-  capture planning, summary scoring, and audit; `io/net` and
-  `memory_cache/proc` previously meant different things per stage.
+- Changed: `--only` token resolution is one shared rule (`models.collector_requested`
+  over the collector catalog in `apm_suite/collectors.py`) across capture planning,
+  summary scoring, and audit. Previously the plan and the audit used two different
+  alias tables: `--only net` planned only `io_net` while the audit and summary
+  treated it as the whole io layer (false "produced no usable evidence" warnings
+  for vfs/block), and deliberately opt-in `mono_alloc` was flagged as missing
+  evidence on every default capture. `--only net` now plans the full io layer;
+  opt-in collectors answer only their own tokens.
 - Fixed: budget, compare, and health scored collected layers through three
   drifting copies of the same logic; they share one helper now.
 - Fixed: finalize-time lag diagnosis and the bridge analyzer apply identical

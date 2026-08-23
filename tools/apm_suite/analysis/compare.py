@@ -34,7 +34,10 @@ def load_sections(session: Path) -> dict[str, float]:
     heat: dict[str, float] = {}
     bridge = session / "csharp_bridge.json"
     if bridge.is_file():
-        data = load_json(bridge)
+        try:
+            data = load_json(bridge)
+        except json.JSONDecodeError as error:
+            raise ValueError(f"cannot parse {bridge}: {error}") from None
         for section in data.get("top_managed_sections") or []:
             name = section.get("name")
             if not name:
@@ -81,7 +84,10 @@ def _attribution_totals(session: Path) -> dict[str, float]:
     bridge = session / "csharp_bridge.json"
     if not bridge.is_file():
         return {}
-    attribution = load_json(bridge).get("attribution") or {}
+    try:
+        attribution = load_json(bridge).get("attribution") or {}
+    except json.JSONDecodeError as error:
+        raise ValueError(f"cannot parse {bridge}: {error}") from None
     totals: dict[str, float] = {}
     for entry in attribution.get("subsystems") or []:
         if not isinstance(entry, dict):
@@ -129,10 +135,15 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
     if workload_a.is_file() != workload_b.is_file():
         raise ValueError("only one session has a workload manifest")
     if workload_a.is_file():
-        doc_a, doc_b = (
-            json.loads(workload_a.read_text(encoding="utf-8")),
-            json.loads(workload_b.read_text(encoding="utf-8")),
-        )
+        docs = []
+        for manifest in (workload_a, workload_b):
+            try:
+                docs.append(json.loads(manifest.read_text(encoding="utf-8")))
+            except json.JSONDecodeError as error:
+                # A torn manifest (loadgen killed mid-flush) must name its file,
+                # not surface as a bare "Expecting value" from the CLI.
+                raise ValueError(f"cannot parse {manifest}: {error}") from None
+        doc_a, doc_b = docs
         keys = ("mode", "target", "workload")
         if {k: doc_a.get(k) for k in keys} != {k: doc_b.get(k) for k in keys}:
             raise ValueError("workload manifests are not equivalent")

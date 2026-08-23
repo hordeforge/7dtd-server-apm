@@ -187,9 +187,10 @@ def schema_dict(model: BaseModel) -> dict[str, Any]:
 
 
 # Request tokens accepted for each canonical layer beyond the layer name itself.
-# One table shared by capture planning (capture.wanted), summary scoring
-# (report.layer_scores), and the audit (session._requested) so they cannot
-# drift into disagreeing about what a `--only` token means.
+# One table consumed by capture planning and the audit through
+# collector_requested() over the shared catalog (collectors.SPECS), and by
+# summary scoring (report.layer_scores), so they cannot drift into disagreeing
+# about what an --only token means.
 LAYER_ALIASES: dict[str, frozenset[str]] = {
     "app_sim": frozenset({"app"}),
     "io": frozenset({"net"}),
@@ -207,6 +208,30 @@ def layer_requested(layer: str, requested: set[str]) -> bool:
         or layer in requested
         or LAYER_ALIASES.get(layer, frozenset()) & requested
     )
+
+
+def collector_requested(
+    name: str,
+    layer: str,
+    requested: set[str],
+    *,
+    extra_aliases: frozenset[str] = frozenset(),
+    optin: bool = False,
+) -> bool:
+    """Single resolution rule for --only tokens against one collector.
+
+    Shared by capture planning and the session audit so the two cannot drift
+    into disagreeing about what a token means (the audit flips unplanned
+    collectors to "skipped" and flags planned-but-empty ones; a disagreement
+    here surfaces as false or missing warnings in every manifest). A collector
+    is requested when the token names it directly (collector name or an
+    extra_alias) or names its layer (layer name or a LAYER_ALIASES entry).
+    Opt-in collectors answer only their own name/alias: never "all" nor a
+    layer token, because they are deliberately excluded from standard plans.
+    """
+    if optin:
+        return bool(name in requested or extra_aliases & requested)
+    return bool(layer_requested(layer, requested) or name in requested or extra_aliases & requested)
 
 
 def collected_layer_scores(summary: Mapping[str, Any]) -> dict[str, float]:

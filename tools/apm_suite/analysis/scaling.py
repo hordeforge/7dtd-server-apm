@@ -59,8 +59,14 @@ def _sections(session: Path) -> dict[str, dict[str, float]]:
     bridge = session / "csharp_bridge.json"
     if not bridge.is_file():
         return {}
+    try:
+        doc = load_json(bridge)
+    except ValueError:
+        # Corrupt section heat is skipped like a missing file; the ladder fit
+        # uses whatever sessions remain readable.
+        return {}
     out: dict[str, dict[str, float]] = {}
-    for s in load_json(bridge).get("top_managed_sections") or []:
+    for s in doc.get("top_managed_sections") or []:
         name = s.get("name")
         avg = as_number(s.get("avgMs"))
         total = as_number(s.get("totalMs"))
@@ -77,7 +83,11 @@ def analyze_scaling(sessions: list[Path], scale_key: str = "players") -> dict[st
         summary_path = session / "summary.json"
         if not summary_path.is_file():
             continue
-        scale = _scale_of(load_json(summary_path), scale_key)
+        try:
+            summary = load_json(summary_path)
+        except ValueError:
+            continue  # unreadable summary: skipped exactly like a missing one
+        scale = _scale_of(summary, scale_key)
         if scale > 0:
             points.append((scale, _sections(session)))
     points.sort(key=lambda p: p[0])

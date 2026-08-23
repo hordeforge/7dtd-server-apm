@@ -43,14 +43,23 @@ DEFAULT_BUDGET: dict[str, Any] = {
 
 
 def load_layers(session: Path) -> dict[str, float]:
-    return collected_layer_scores(load_json(session / "summary.json"))
+    path = session / "summary.json"
+    try:
+        return collected_layer_scores(load_json(path))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"cannot parse {path}: {error}") from None
 
 
 def load_sections(session: Path) -> dict[str, float]:
     heat: dict[str, float] = {}
     bridge = session / "csharp_bridge.json"
     if bridge.is_file():
-        data = load_json(bridge)
+        try:
+            data = load_json(bridge)
+        except json.JSONDecodeError as error:
+            # Name the file: a bare "Expecting value" leaves the operator
+            # guessing which session artifact was malformed.
+            raise ValueError(f"cannot parse {bridge}: {error}") from None
         for section in data.get("top_managed_sections") or []:
             name = section.get("name")
             if name:

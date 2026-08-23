@@ -9,7 +9,7 @@ import time
 import unicodedata
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -479,7 +479,14 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
             name = _prom_label(layer.get("layer", "unknown"))
             lines.append(f'sevendtd_apm_layer_pressure{{layer="{name}"}} {score:.6f}')
     health_path = session / "health.json"
-    health = load_json(health_path) if health_path.is_file() else summary.get("health") or {}
+    health: dict[str, object] = {}
+    if health_path.is_file():
+        try:
+            health = load_json(health_path)
+        except ValueError as error:
+            raise typer.BadParameter(f"unreadable {health_path}: {error}") from None
+    if not health:
+        health = summary.get("health") or {}
     coverage = as_number(health.get("coverage"))
     if coverage is not None:
         lines += [
@@ -487,21 +494,25 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
             f"sevendtd_apm_coverage {coverage:.6f}",
         ]
     bridge_path = session / "csharp_bridge.json"
+    attribution: dict[str, Any] = {}
     if bridge_path.is_file():
-        attribution = load_json(bridge_path).get("attribution") or {}
-        subsystems = attribution.get("subsystems") or []
-        if subsystems:
-            lines += [
-                "# HELP sevendtd_apm_subsystem_ms Window-scoped managed time per subsystem.",
-                "# TYPE sevendtd_apm_subsystem_ms gauge",
-            ]
-            for entry in subsystems:
-                subsystem = entry.get("subsystem")
-                scaled = as_number(entry.get("scaled_total_ms"))
-                if subsystem is None or scaled is None:
-                    continue
-                name = _prom_label(subsystem)
-                lines.append(f'sevendtd_apm_subsystem_ms{{subsystem="{name}"}} {scaled:.3f}')
+        try:
+            attribution = load_json(bridge_path).get("attribution") or {}
+        except ValueError as error:
+            raise typer.BadParameter(f"unreadable {bridge_path}: {error}") from None
+    subsystems = attribution.get("subsystems") or []
+    if subsystems:
+        lines += [
+            "# HELP sevendtd_apm_subsystem_ms Window-scoped managed time per subsystem.",
+            "# TYPE sevendtd_apm_subsystem_ms gauge",
+        ]
+        for entry in subsystems:
+            subsystem = entry.get("subsystem")
+            scaled = as_number(entry.get("scaled_total_ms"))
+            if subsystem is None or scaled is None:
+                continue
+            name = _prom_label(subsystem)
+            lines.append(f'sevendtd_apm_subsystem_ms{{subsystem="{name}"}} {scaled:.3f}')
     lag = (summary.get("metadata") or {}).get("lag_diagnosis") or {}
     if lag:
         lines += [
@@ -1070,7 +1081,13 @@ def scenario_matrix(
             raise typer.Exit(2)
         label = str(entry.get("label") or f"experiment-{position}")
         if cleanup:
-            telnet_command("127.0.0.1", 8081, telnet_password, cleanup)
+            # A failed cleanup must be visible: leftover entities from one
+            # experiment silently inflate the next one's measurements.
+            if not telnet_command("127.0.0.1", 8081, telnet_password, cleanup):
+                err_console.print(
+                    f"[yellow]cleanup '{cleanup}' failed (telnet); "
+                    "leftover entities may contaminate the next experiment[/yellow]"
+                )
             time.sleep(8)
         console.print(f"[bold]=== matrix {position}/{len(entries)}: {label}[/bold]")
         code = 0

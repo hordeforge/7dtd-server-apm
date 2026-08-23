@@ -12,6 +12,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
+from .collectors import SPEC_BY_NAME
 from .io import _sync_parent_directory, atomic_json, file_sha256, load_json
 from .models import (
     Artifact,
@@ -130,7 +131,15 @@ def _legacy_results(session: Path) -> list[CollectorResult]:
 
 
 def _requested(name: str, layer: str, requested_set: set[str]) -> bool:
-    return bool({name, layer} & requested_set) or layer_requested(layer, requested_set)
+    """Same --only resolution the capture plan used (models.collector_requested
+    over the shared collector catalog), so a collector the plan deliberately
+    skipped is never flagged here as "requested but produced no evidence".
+    Names missing from the catalog (legacy sessions) fall back to plain
+    name/layer/alias matching."""
+    spec = SPEC_BY_NAME.get(name)
+    if spec is None:
+        return bool({name, layer} & requested_set) or layer_requested(layer, requested_set)
+    return spec.requested(requested_set)
 
 
 def list_sessions(root: Path) -> list[Path]:
