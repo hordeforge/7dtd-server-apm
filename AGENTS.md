@@ -89,6 +89,7 @@ scripts/               bridge build/install, checks
 | Path | Role |
 |---|---|
 | `docs/APM.md` | Capture lifecycle, validity, operations |
+| `docs/THREAT_MODEL.md` | Attack surface, trust boundaries, risk ranking |
 | `docs/APM_CS_BRIDGE.md` | Native ↔ managed correlation |
 | `docs/COMPATIBILITY.md` | Game / kernel / perf / bpftrace / Mono matrix |
 | `bridge/README.md` | DLL design, schema, overhead controls |

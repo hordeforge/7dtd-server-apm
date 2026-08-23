@@ -104,7 +104,10 @@ Inspect a bundle before sharing because game-derived artifacts may still
 contain player or world data.
 
 Raw sessions keep the full telnet drain in `app/bridge.jsonl` as owner-only
-evidence (sessions are chmod 0700); it never enters export bundles. The scrape
+evidence (captured sessions and their store root are chmod 0700 at capture
+time; `import`-restored sessions keep the default umask permissions, so
+restrict a shared store yourself); raw evidence never enters export bundles.
+The scrape
 itself discards the telnet banner and post-logon reply and persists only the
 requested `apm` command responses.
 
@@ -154,6 +157,7 @@ but it does not replicate or back up the store by itself.
 | [FEATURES](FEATURES.md) | Capability surface |
 | [APM_CS_BRIDGE](APM_CS_BRIDGE.md) | Managed correlation |
 | [COMPATIBILITY](COMPATIBILITY.md) | Supported matrix |
+| [THREAT_MODEL](THREAT_MODEL.md) | Attack surface, trust boundaries, controls |
 | [LOAD_PROFILE](LOAD_PROFILE.md) | Canonical compare workload |
 | [ROADMAP](ROADMAP.md) | Backlog |
 | Loadgen | [`../../7dtd-loadgen/docs/README.md`](../../7dtd-loadgen/docs/README.md) |
