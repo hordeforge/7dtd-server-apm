@@ -50,20 +50,48 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def unique_path(base: Path) -> Path:
-    """First non-existing path among base, base_1, base_2, ...
+def _next_candidate(base: Path, suffix: int) -> tuple[Path, int]:
+    return base.with_name(f"{base.name}_{suffix}"), suffix + 1
+
+
+def claim_dir(base: Path) -> Path:
+    """Create base, or the first free base_1, base_2, ..., and return it.
 
     Second-resolution timestamps are not unique identity: two captures started
     in the same second must not share one session directory and interleave
-    their evidence. (A second-level race between the existence check and the
-    later mkdir remains possible; it is far narrower than the same-second case.)
+    their evidence. A probe-then-create loop cannot guarantee that - both runs
+    can observe "free" between the existence check and their mkdir - so the
+    claim IS the creation: mkdir fails under a concurrent taker and only that
+    loser advances to the next suffix.
     """
     candidate = base
     suffix = 1
-    while candidate.exists():
-        candidate = base.with_name(f"{base.name}_{suffix}")
-        suffix += 1
-    return candidate
+    while True:
+        try:
+            candidate.mkdir(parents=True)
+            return candidate
+        except FileExistsError:
+            candidate, suffix = _next_candidate(base, suffix)
+
+
+def claim_file(base: Path) -> Path:
+    """Exclusive-create twin of claim_dir for file paths (manifests, markers).
+
+    The returned path exists as an empty file the moment this returns, so a
+    duplicate run of the same second is assigned a different name instead of
+    silently sharing one output path.
+    """
+    base.parent.mkdir(parents=True, exist_ok=True)
+    candidate = base
+    suffix = 1
+    while True:
+        try:
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            candidate, suffix = _next_candidate(base, suffix)
+        else:
+            os.close(fd)
+            return candidate
 
 
 def file_sha256(path: Path) -> str:

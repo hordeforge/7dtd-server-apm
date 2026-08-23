@@ -22,7 +22,7 @@ from .analysis.index import write_index
 from .capture import find_server_pid, run_capture, unknown_only_tokens, write_plan_text
 from .doctor import inspect
 from .finalize import finalize as finalize_session
-from .io import atomic_json, atomic_text, load_json, unique_path
+from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json
 from .paths import REPO, apm_root
 from .runner import backend_python, run, terminate_tree
 from .session import (
@@ -322,8 +322,6 @@ def import_bundle(
     stem = "".join(c if c.isalnum() or c in "._-" else "_" for c in bundle.stem).strip("._")
     if not stem.startswith("session_"):
         stem = f"session_{stem}"
-    target = unique_path((store or apm_root()) / stem)
-    target.parent.mkdir(parents=True, exist_ok=True)
     try:
         with zipfile.ZipFile(bundle) as archive:
             unsafe = [m for m in archive.namelist() if not _member_is_safe(m)]
@@ -332,6 +330,11 @@ def import_bundle(
                     f"[red]refusing bundle with unsafe member path(s): {', '.join(unsafe)}[/red]"
                 )
                 raise typer.Exit(2)
+            # Exclusive-create claim, made only after the bundle is proven safe,
+            # so a rejected import never litters the store with an empty session
+            # dir; a concurrent duplicate import of the same bundle gets its own
+            # target instead of merging into this one mid-extract.
+            target = claim_dir((store or apm_root()) / stem)
             archive.extractall(target)
     except zipfile.BadZipFile as error:
         err_console.print(f"[red]{bundle} is not a readable zip bundle: {error}[/red]")
@@ -808,7 +811,9 @@ def scenario_run(
     run_dir = apm_root() / ".scenario"
     run_dir.mkdir(parents=True, exist_ok=True)
     stamp = int(time.time())
-    workload = unique_path(run_dir / f"loadgen_{stamp}.json")
+    # Exclusive-create claim: a same-second duplicate invocation must not point
+    # both loadgen runs at one manifest path.
+    workload = claim_file(run_dir / f"loadgen_{stamp}.json")
     stats = workload.with_name(f"{workload.stem}_stats.json")
     env = os.environ.copy()
     env.update(
@@ -897,7 +902,9 @@ def scenario_run(
             reaped = terminate_tree(load_process)
             if reaped is not None:
                 load_rc = reaped
-    if session is not None and workload.is_file():
+    # The claim pre-creates the manifest path, so only content proves the
+    # loadgen actually wrote it (an empty marker must not crash the attach).
+    if session is not None and workload.stat().st_size > 0:
         doc = json.loads(workload.read_text())
         if label:
             doc["label"] = label

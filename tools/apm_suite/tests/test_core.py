@@ -352,6 +352,38 @@ def test_import_bundle_without_session_prefix_lands_in_store(
     assert (store / "session_evidence").is_dir()
 
 
+def test_import_bundle_twice_keeps_runs_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-running an import (double-click, script retry) must not merge the
+    second bundle into the first restore target: each run claims its own
+    directory and the first copy stays byte-identical."""
+    session = tmp_path / "session_retry"
+    (session / "io").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "io/vfs.bt.out").write_text("openat /steamapps/common\n")
+
+    bundle = tmp_path / "session_retry.zip"
+    exported = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert exported.exit_code == 0, exported.output
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+    first = runner.invoke(app, ["import", str(bundle)])
+    assert first.exit_code == 0, first.output
+    second = runner.invoke(app, ["import", str(bundle)])
+    assert second.exit_code == 0, second.output
+
+    original = store / "session_retry"
+    duplicate = store / "session_retry_1"
+    assert original.is_dir() and duplicate.is_dir()
+    # First copy untouched by the rerun.
+    assert (original / "io/vfs.bt.out").read_text() == "openat /steamapps/common\n"
+    assert load_json(original / "manifest.json")["artifacts"]
+    assert (duplicate / "meta.json").is_file()
+
+
 def test_import_rejects_zip_slip_and_corrupt_bundles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2062,15 +2094,32 @@ def test_launch_collectors_closes_opened_streams_on_open_error(
 # --- unit: identity + retention policy --------------------------------------------
 
 
-def test_unique_path_yields_unused_sibling(tmp_path: Path) -> None:
-    from apm_suite.io import unique_path
+def test_claim_dir_returns_fresh_directory_per_call(tmp_path: Path) -> None:
+    """Claiming is exclusive creation: every call returns its own directory even
+    when nothing has been written into the earlier ones yet (the probe-then-create
+    variant let two same-second runs both 'win' the free path and interleave
+    their evidence in one session)."""
+    from apm_suite.io import claim_dir
 
     base = tmp_path / "session_20260101_000000_pid1"
-    assert unique_path(base) == base  # nothing exists yet
-    base.mkdir()
-    assert unique_path(base) == tmp_path / f"{base.name}_1"
-    (tmp_path / f"{base.name}_1").mkdir()
-    assert unique_path(base) == tmp_path / f"{base.name}_2"
+    assert claim_dir(base) == base
+    assert base.is_dir()  # claimed = exists immediately, before any content
+    assert claim_dir(base) == tmp_path / f"{base.name}_1"
+    assert (tmp_path / f"{base.name}_1").is_dir()
+    assert claim_dir(base) == tmp_path / f"{base.name}_2"
+
+
+def test_claim_file_creates_exclusive_empty_marker(tmp_path: Path) -> None:
+    from apm_suite.io import claim_file
+
+    base = tmp_path / "nested" / "loadgen_123.json"
+    assert claim_file(base) == base
+    assert base.is_file() and base.read_bytes() == b""
+    assert claim_file(base) == tmp_path / "nested" / f"{base.name}_1"
+    # A directory squatting on the name forces the next suffix too.
+    blocked = tmp_path / "nested" / "blocked.json"
+    blocked.mkdir()
+    assert claim_file(blocked) == tmp_path / "nested" / f"{blocked.name}_1"
 
 
 def test_retention_policy_shared_by_prune_and_auto_prune(tmp_path: Path) -> None:
@@ -2106,13 +2155,13 @@ def test_retention_policy_shared_by_prune_and_auto_prune(tmp_path: Path) -> None
     ]
 
 
-def test_run_capture_resolves_session_dir_through_unique_path() -> None:
-    """The capture session directory must go through unique_path so two captures
+def test_run_capture_resolves_session_dir_through_claim_dir() -> None:
+    """The capture session directory must go through claim_dir so two captures
     started in the same second cannot interleave evidence in one directory."""
     import inspect
 
     source = inspect.getsource(capture.run_capture)
-    assert "unique_path(" in source
+    assert "claim_dir(" in source
 
 
 def test_path_env_overrides_treat_empty_as_unset(

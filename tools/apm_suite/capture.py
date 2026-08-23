@@ -24,7 +24,7 @@ from typing import BinaryIO
 from pydantic import ValidationError
 
 from . import __version__
-from .io import atomic_json, unique_path
+from .io import atomic_json, claim_dir
 from .models import BridgeSnapshotV3, CollectorResult, MetaV2, schema_dict
 from .paths import APM_BACKENDS, TOOLS, apm_root
 from .session import (
@@ -643,7 +643,10 @@ def run_capture(
 
     root = apm_root()
     stamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
-    session = unique_path(root / f"session_{stamp}_pid{pid}")
+    # Exclusive-create claim: an overlapping duplicate capture (retry after a
+    # hung first attempt, cron overlap) in the same second must get its own
+    # directory instead of interleaving collectors' output into this one.
+    session = claim_dir(root / f"session_{stamp}_pid{pid}")
     for sub in ("app", "runtime", "threads", "sync", "scheduler", "cpu", "memory", "io", "bt"):
         (session / sub).mkdir(parents=True, exist_ok=True)
     # Raw sessions capture the server log stream (player names/IPs/SteamIDs via the

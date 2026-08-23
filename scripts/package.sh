@@ -42,5 +42,8 @@ OUT="$ROOT/dist/7dtd-apm-bridge-$VERSION.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp -a "$ROOT/dist/7dtd-apm-bridge" "$STAGE/"
+# zip updates archives in place, so a rerun over an old zip would keep stale
+# members that vanished from dist; rebuild the artifact from scratch instead.
+rm -f "$OUT"
 ( cd "$STAGE" && zip -qr "$OUT" 7dtd-apm-bridge )
 echo "Packaged -> $OUT"
