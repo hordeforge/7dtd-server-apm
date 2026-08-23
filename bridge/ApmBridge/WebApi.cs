@@ -72,6 +72,12 @@ namespace DtdApmBridge
 
         static string StatusFor(string name) => ExperimentalGroups.Contains(name) ? "experimental" : "safe";
 
+        // Serializes read-modify-write of the perf config between admin
+        // requests: without it two POSTs interleave read-modify-write and lose
+        // updates, and a GET can read the file mid-write (truncated JSON ->
+        // intermittent available=false).
+        static readonly object ConfigFileLock = new object();
+
         static JObject ReadRoot()
         {
             if (!File.Exists(ConfigPath)) return null;
@@ -131,7 +137,8 @@ namespace DtdApmBridge
         public override void HandleRestGet(RequestContext context)
         {
             PrepareEnvelopedResult(out JsonWriter writer);
-            JObject root = ReadRoot();
+            JObject root;
+            lock (ConfigFileLock) root = ReadRoot();
             var payload = Encoding.UTF8.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(
                 new
                 {
@@ -161,55 +168,49 @@ namespace DtdApmBridge
                 SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_BODY", null);
                 return;
             }
-            JObject root = ReadRoot();
-            if (root == null)
-            {
-                SendEmptyResponse(context, HttpStatusCode.InternalServerError, null, "WRITE_FAILED", null);
-                return;
-            }
+            // Read, validate, mutate, and write under one lock so concurrent
+            // admin requests cannot interleave the file RMW; responses are sent
+            // after the lock is released.
+            string errorCode = null;
             int changed = 0;
-            // Single top-level toggle: {"enabled": bool}
-            if (body["enabled"] is JValue top && top.Type == JTokenType.Boolean)
+            lock (ConfigFileLock)
             {
-                root["Enabled"] = (bool)top;
-                changed++;
-            }
-            // Single group toggle: {"group": "...", "enabled": bool}
-            if (body["group"] is JValue gv && body["enabled"] is JValue ev && ev.Type == JTokenType.Boolean)
-            {
-                if (!SetGroup(root, Convert.ToString(gv), (bool)ev))
+                JObject root = ReadRoot();
+                if (root == null)
                 {
-                    SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_GROUP", null);
-                    return;
+                    errorCode = "WRITE_FAILED";
                 }
-                changed++;
-            }
-            // Batch: {"groups": {"AiLod": false, "SkipOnDedicated.WaterSplashParticles": true, ...}}
-            if (body["groups"] is JObject batch)
-            {
-                foreach (var kv in batch)
+                else
                 {
-                    if (!(kv.Value is JValue bv) || bv.Type != JTokenType.Boolean)
+                    // Single top-level toggle: {"enabled": bool}
+                    if (body["enabled"] is JValue top && top.Type == JTokenType.Boolean)
                     {
-                        SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_BODY", null);
-                        return;
+                        root["Enabled"] = (bool)top;
+                        changed++;
                     }
-                    if (!SetGroup(root, kv.Key, (bool)bv))
+                    // Single group toggle: {"group": "...", "enabled": bool}
+                    if (errorCode == null && body["group"] is JValue gv && body["enabled"] is JValue ev && ev.Type == JTokenType.Boolean)
                     {
-                        SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_GROUP", null);
-                        return;
+                        if (!SetGroup(root, Convert.ToString(gv), (bool)ev)) errorCode = "INVALID_GROUP";
+                        else changed++;
                     }
-                    changed++;
+                    // Batch: {"groups": {"AiLod": false, "SkipOnDedicated.WaterSplashParticles": true, ...}}
+                    if (errorCode == null && body["groups"] is JObject batch)
+                        foreach (var kv in batch)
+                        {
+                            if (!(kv.Value is JValue bv) || bv.Type != JTokenType.Boolean) { errorCode = "INVALID_BODY"; break; }
+                            if (!SetGroup(root, kv.Key, (bool)bv)) { errorCode = "INVALID_GROUP"; break; }
+                            changed++;
+                        }
+                    if (errorCode == null && changed == 0) errorCode = "INVALID_BODY";
+                    if (errorCode == null && !WriteRoot(root)) errorCode = "WRITE_FAILED";
                 }
             }
-            if (changed == 0)
+            if (errorCode != null)
             {
-                SendEmptyResponse(context, HttpStatusCode.BadRequest, null, "INVALID_BODY", null);
-                return;
-            }
-            if (!WriteRoot(root))
-            {
-                SendEmptyResponse(context, HttpStatusCode.InternalServerError, null, "WRITE_FAILED", null);
+                SendEmptyResponse(context,
+                    errorCode == "WRITE_FAILED" ? HttpStatusCode.InternalServerError : HttpStatusCode.BadRequest,
+                    null, errorCode, null);
                 return;
             }
             BridgeMod.Log("perf config applied " + changed + " change(s)");

@@ -136,6 +136,10 @@ namespace DtdApmBridge
         // barrier (reference assignment is already atomic, so no torn value).
         static volatile string _lastExportError = "";
         static readonly Dictionary<string, TransferCounter> Transfers = new Dictionary<string, TransferCounter>();
+        // Serializes the latest.json swap between the export ThreadPool thread
+        // and a console `apm dump`; without it both threads can pass the
+        // File.Exists check and the loser's Move/Replace throws intermittently.
+        static readonly object ExportSwapLock = new object();
 
         public static int Register(string name, bool deep)
         {
@@ -194,8 +198,12 @@ namespace DtdApmBridge
         }
         public static void EndFrame()
         {
-            if (_updateStart == 0) return;
-            double ms = (Stopwatch.GetTimestamp() - _updateStart) * 1000.0 / Stopwatch.Frequency;
+            // Local copy: Reset() zeroes _updateStart from the console thread
+            // between the check and the math below would turn ms into
+            // time-since-boot and fire a bogus spike + export.
+            long updateStart = _updateStart;
+            if (updateStart == 0) return;
+            double ms = (Stopwatch.GetTimestamp() - updateStart) * 1000.0 / Stopwatch.Frequency;
             bool spike = ms >= BridgeMod.Config.SpikeThresholdMs;
             double now = UnityEngine.Time.realtimeSinceStartup;
             bool export; double lastTick;
@@ -332,9 +340,20 @@ namespace DtdApmBridge
             // consumers (scrapers/dashboards read it continuously in production).
             Directory.CreateDirectory(BridgeMod.OutputDir);
             string temp = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
-            File.WriteAllText(temp, JsonConvert.SerializeObject(Snapshot(), Formatting.Indented));
-            if (File.Exists(path)) File.Replace(temp, path, null);
-            else File.Move(temp, path);
+            try
+            {
+                File.WriteAllText(temp, JsonConvert.SerializeObject(Snapshot(), Formatting.Indented));
+                lock (ExportSwapLock)
+                {
+                    if (File.Exists(path)) File.Replace(temp, path, null);
+                    else File.Move(temp, path);
+                }
+            }
+            catch
+            {
+                try { File.Delete(temp); } catch { }
+                throw;
+            }
             _lastExportError = "";
         }
         public static void QueueLatest()
