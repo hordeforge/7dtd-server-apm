@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import time
 from collections.abc import Iterator
 from contextlib import suppress
@@ -174,11 +175,40 @@ def prune_grace_hours() -> float:
     runaway auto-prune deletes evidence irreversibly), so deletions land in the
     store's trash first and only expire from there. APM_PRUNE_GRACE_HOURS
     overrides; 0 restores immediate hard deletes for space-constrained hosts.
+    A non-numeric value warns and falls back to 24h instead of silently
+    pretending the operator's setting was read.
     """
-    try:
-        return max(0.0, float(os.environ.get("APM_PRUNE_GRACE_HOURS", "24")))
-    except ValueError:
+    raw = os.environ.get("APM_PRUNE_GRACE_HOURS", "")
+    if not raw.strip():
         return 24.0
+    try:
+        return max(0.0, float(raw))
+    except ValueError:
+        print(
+            f"WARNING: APM_PRUNE_GRACE_HOURS={raw!r} is not a number; using 24",
+            file=sys.stderr,
+        )
+        return 24.0
+
+
+def keep_sessions_budget() -> int:
+    """Retention budget for post-capture auto-prune: keep the newest N sessions.
+
+    APM_KEEP_SESSIONS overrides; <= 0 disables auto-prune. A non-numeric value
+    warns and falls back to 40 so a typo cannot silently disable or explode
+    retention. Single implementation for capture-time auto-prune and doctor.
+    """
+    raw = os.environ.get("APM_KEEP_SESSIONS", "")
+    if not raw.strip():
+        return 40
+    try:
+        return int(raw)
+    except ValueError:
+        print(
+            f"WARNING: APM_KEEP_SESSIONS={raw!r} is not an integer; using 40",
+            file=sys.stderr,
+        )
+        return 40
 
 
 def _trash_dir(store: Path) -> Path:

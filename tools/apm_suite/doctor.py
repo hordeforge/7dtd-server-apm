@@ -13,6 +13,7 @@ from typing import Any
 import psutil
 
 from .paths import REPO, apm_root, dedicated_dir
+from .session import keep_sessions_budget, prune_grace_hours
 
 
 def _command(name: str) -> dict[str, Any]:
@@ -146,11 +147,22 @@ def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
     # Captures land under apm_root(), not the cwd; measure the volume that will
     # actually hold the session data.
     disk_free = shutil.disk_usage(_existing_ancestor(apm_root())).free
+    # Active runtime configuration so a misread env override is visible without
+    # shell archaeology. Resolved through the same helpers capture/prune use so
+    # this report cannot drift from actual behavior. The telnet secret is shown
+    # only as set/unset - never its value.
     return {
         "schema": "7dtd.apm.doctor.v2",
         "ready": all(layers.values()),
         "available_layers": layers,
         "checks": checks,
+        "environment": {
+            "apm_root": str(apm_root()),
+            "dedicated_dir": str(dedicated_dir()),
+            "keep_sessions": keep_sessions_budget(),
+            "prune_grace_hours": prune_grace_hours(),
+            "telnet_password_set": bool(os.environ.get("SEVENDTD_TELNET_PASSWORD", "")),
+        },
         "perf_event_paranoid": paranoid,
         "disk_free_bytes": disk_free,
         "disk_low": disk_free < 5 * 1024**3,  # perf.data can be GBs

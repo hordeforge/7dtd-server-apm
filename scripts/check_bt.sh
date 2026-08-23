@@ -7,6 +7,8 @@
 # the rest of `make check` stays usable on hosts without eBPF tooling.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/ds_paths.sh"
 PRE="$ROOT/tools/host_profiler/preprocess_bt.py"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
@@ -23,7 +25,7 @@ fi
 # Mono uprobe scripts need a real libmonobdwgc to resolve symbols.
 MONO_SO="${CHECK_BT_MONO_SO:-}"
 if [[ -z "$MONO_SO" ]]; then
-  MONO_SO="$(find "${SEVENDTD_DS_DIR:-$HOME/.local/share/Steam/steamapps/common/7 Days to Die Dedicated Server}" \
+  MONO_SO="$(find "$SEVENDTD_DS_DIR" \
     -name 'libmonobdwgc-2.0.so' -print -quit 2>/dev/null || true)"
 fi
 if [[ "$MONO_SO" == *" "* ]]; then

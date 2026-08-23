@@ -11,7 +11,9 @@ elif [[ -x "$HOME/.dotnet/dotnet" ]]; then
   export PATH="$DOTNET_ROOT:$PATH"
 fi
 dotnet --list-sdks 2>/dev/null | grep -q . || { echo "ERROR: .NET SDK not found" >&2; exit 1; }
-DS="${SEVENDTD_DS_DIR:-$HOME/.local/share/Steam/steamapps/common/7 Days to Die Dedicated Server}"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/ds_paths.sh"
+DS="$SEVENDTD_DS_DIR"
 CLIENT="${SEVENDTD_GAME_DIR:-$HOME/.local/share/Steam/steamapps/common/7 Days To Die}"
 if [[ -f "$DS/7DaysToDieServer_Data/Managed/Assembly-CSharp.dll" ]]; then
   MANAGED="$DS/7DaysToDieServer_Data/Managed"; HARMONY="$DS/Mods/0_TFP_Harmony/0Harmony.dll"

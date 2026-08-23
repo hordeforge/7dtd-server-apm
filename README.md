@@ -192,6 +192,22 @@ Sessions live under `~/.local/share/7dtd-apm/session_*` (override with
 structured summaries, collector states, coverage/confidence, a workload
 manifest when run as a scenario, offline HTML, and an integrity manifest.
 
+## Environment variables
+
+All configuration is environment-based; there are no config files on the Python
+side. `uv run 7dtd-apm doctor` reports the resolved values (the telnet secret
+appears only as set/unset). An exported-but-empty variable is treated as unset.
+
+| Variable | Default | Valid values | Purpose |
+|---|---|---|---|
+| `SEVENDTD_TELNET_PASSWORD` | unset | server telnet password | Secret for the app-layer scrape and telnet actions. Supply via the environment or Typer's `envvar` wiring, never as argv. Required for the `app` collector to authenticate. |
+| `SEVENDTD_APM_DIR` | `~/.local/share/7dtd-apm` | writable directory | Session store root (`session_*`, `.scenario`, `.trash`). |
+| `SEVENDTD_DS_DIR` | Steam default dedicated-server path | existing directory | Dedicated install used by `doctor`, bridge build/install scripts, and probe helpers. |
+| `SEVENDTD_GAME_DIR` | Steam default client path | existing directory | Client install fallback for `make bridge-build` when the dedicated Managed assemblies are absent. Build-time only; no runtime code reads it. |
+| `APM_KEEP_SESSIONS` | `40` | integer >= 0 | Newest sessions kept by post-capture auto-prune; `0` (or any value <= 0) disables auto-prune. Non-integers warn and fall back to `40`. |
+| `APM_PRUNE_GRACE_HOURS` | `24` | float >= 0 | Soft-delete window in `<store>/.trash/`; `0` hard-deletes immediately. Non-numeric values warn and fall back to `24`. |
+| `SEVENDTD_LIVE` | unset | `1` enables | Test gate only (`pytest`): opts into live-server tests that need a running dedicated server. Never read at runtime. |
+
 ## Repository map
 
 - [`bridge/README.md`](bridge/README.md) - DLL design, installation, schema, and overhead controls

@@ -138,7 +138,8 @@ but it does not replicate or back up the store by itself.
   restart, migration, or schema step is involved in recovery.
 - **Soft-delete window:** prune and post-capture auto-prune move removed
   sessions into `<store>/.trash/` before unlinking them
-  (`APM_PRUNE_GRACE_HOURS`, default 24, `0` disables). Expired trash is purged
+  (`APM_PRUNE_GRACE_HOURS`, default 24, `0` disables). Auto-prune keeps the
+  newest `APM_KEEP_SESSIONS` (default 40, `0` disables). Expired trash is purged
   on later prune runs; trash never appears in listings or indexes.
 - **Proven restore path:** `7dtd-apm import BUNDLE.zip` unpacks a sanitized
   export into the store, refuses unsafe archive members, runs the same audit

@@ -2115,6 +2115,89 @@ def test_run_capture_resolves_session_dir_through_unique_path() -> None:
     assert "unique_path(" in source
 
 
+def test_path_env_overrides_treat_empty_as_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An exported-but-empty override must not collapse to Path("") == cwd,
+    which would point the session store (and its prune scans) at the repo."""
+    from apm_suite import paths
+
+    monkeypatch.setenv("SEVENDTD_APM_DIR", "")
+    monkeypatch.setenv("SEVENDTD_DS_DIR", " ")
+    # whitespace-only counts as unset too
+    assert paths.apm_root() == Path.home() / ".local/share/7dtd-apm"
+    assert paths.dedicated_dir() == paths.DEFAULT_DS
+
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(tmp_path))
+    monkeypatch.setenv("SEVENDTD_DS_DIR", str(tmp_path / "ds"))
+    assert paths.apm_root() == tmp_path
+    assert paths.dedicated_dir() == tmp_path / "ds"
+
+
+def test_retention_env_values_warn_and_fall_back_on_garbage(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A typo'd retention value must warn instead of silently pretending the
+    operator's setting was read (auto-prune deleting evidence is destructive)."""
+    from apm_suite.session import keep_sessions_budget, prune_grace_hours
+
+    monkeypatch.delenv("APM_KEEP_SESSIONS", raising=False)
+    monkeypatch.delenv("APM_PRUNE_GRACE_HOURS", raising=False)
+    assert keep_sessions_budget() == 40
+    assert prune_grace_hours() == 24.0
+    assert capsys.readouterr().err == ""
+
+    # Explicit values are honored, including the documented opt-outs.
+    monkeypatch.setenv("APM_KEEP_SESSIONS", "0")
+    monkeypatch.setenv("APM_PRUNE_GRACE_HOURS", "0")
+    assert keep_sessions_budget() == 0
+    assert prune_grace_hours() == 0.0
+    assert capsys.readouterr().err == ""
+
+    # Empty = unset (no warning); garbage warns and uses the default.
+    for name, getter, default in (
+        ("APM_KEEP_SESSIONS", keep_sessions_budget, 40),
+        ("APM_PRUNE_GRACE_HOURS", prune_grace_hours, 24.0),
+    ):
+        monkeypatch.setenv(name, "")
+        assert getter() == default
+        monkeypatch.setenv(name, "not-a-number")
+        assert getter() == default
+        assert "WARNING" in capsys.readouterr().err
+
+
+def test_telnet_password_warning_scopes_to_app_layer_requests() -> None:
+    """Missing-password warning fires only when the app collector will run."""
+    message = capture._telnet_password_warning("all", no_app=False, telnet_password="")
+    assert message is not None and "SEVENDTD_TELNET_PASSWORD" in message
+    assert capture._telnet_password_warning("app", False, "") is not None
+    assert capture._telnet_password_warning("cpu,memory", False, "") is None
+    assert capture._telnet_password_warning("all", no_app=True, telnet_password="") is None
+    assert capture._telnet_password_warning("all", False, telnet_password="pw") is None
+
+
+def test_doctor_reports_resolved_environment_without_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """doctor exposes the active configuration so misread overrides surface;
+    the telnet secret must appear only as set/unset, never its value."""
+    from apm_suite.doctor import inspect
+
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(tmp_path))
+    monkeypatch.setenv("APM_PRUNE_GRACE_HOURS", "6")
+    monkeypatch.delenv("SEVENDTD_TELNET_PASSWORD", raising=False)
+    result = inspect(None, "127.0.0.1", 8081)
+    env = result["environment"]
+    assert env["apm_root"] == str(tmp_path)
+    assert env["prune_grace_hours"] == 6.0
+    assert env["keep_sessions"] == 40
+    assert env["telnet_password_set"] is False
+    assert "apm-root-secret" not in json.dumps(result)
+
+    monkeypatch.setenv("SEVENDTD_TELNET_PASSWORD", "apm-root-secret")
+    assert inspect(None, "127.0.0.1", 8081)["environment"]["telnet_password_set"] is True
+
+
 # --- live server (opt-in) ----------------------------------------------------------
 
 

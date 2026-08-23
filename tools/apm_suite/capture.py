@@ -28,6 +28,7 @@ from .io import atomic_json, unique_path
 from .models import BridgeSnapshotV3, CollectorResult, MetaV2, schema_dict
 from .paths import APM_BACKENDS, TOOLS, apm_root
 from .session import (
+    keep_sessions_budget,
     list_sessions,
     prune_grace_hours,
     purge_expired_trash,
@@ -608,6 +609,20 @@ def _terminate(running: list[_Running]) -> None:
             item.finished = time.monotonic()
 
 
+def _telnet_password_warning(only: str, no_app: bool, telnet_password: str) -> str | None:
+    """Fail loudly at start instead of after a full window of failed scrapes:
+    7dtd telnet requires the password from SEVENDTD_TELNET_PASSWORD, and
+    without it every app-layer record is an auth failure rather than bridge
+    telemetry. Host-only layers are unaffected, so this stays a warning."""
+    app_spec = next(spec for spec in SPECS if spec.name == "app")
+    if not no_app and wanted(app_spec, only) and not telnet_password:
+        return (
+            "SEVENDTD_TELNET_PASSWORD not set; telnet login will fail "
+            "(set it via the environment, never argv)"
+        )
+    return None
+
+
 def run_capture(
     *,
     seconds: int,
@@ -638,6 +653,9 @@ def run_capture(
         root.chmod(0o700)
         session.chmod(0o700)
     outcome = CaptureOutcome(session=session)
+
+    if message := _telnet_password_warning(only, no_app, telnet_password):
+        _warn(session, message)
 
     sudo_ok = (
         shutil.which("sudo") is not None
@@ -836,12 +854,9 @@ def run_capture(
 def _auto_prune_sessions() -> None:
     """Sessions accumulate tens of MB each and nothing pruned them automatically -
     a 24/7 host with periodic captures grows without bound. Keep the newest
-    APM_KEEP_SESSIONS (default 40; 0 disables) via the shared retention policy.
+    APM_KEEP_SESSIONS (default 40; <= 0 disables) via the shared retention policy.
     Never prunes the just-created session (it is the newest)."""
-    try:
-        keep = int(os.environ.get("APM_KEEP_SESSIONS", "40"))
-    except ValueError:
-        keep = 40
+    keep = keep_sessions_budget()
     if keep <= 0:
         return
     grace = prune_grace_hours()

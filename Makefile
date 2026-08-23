@@ -1,5 +1,8 @@
 ROOT := $(CURDIR)
-DS ?= $(HOME)/.local/share/Steam/steamapps/common/7 Days to Die Dedicated Server
+# Resolve the dedicated-server default through the shared shell fragment so
+# make targets, scripts, and doctor cannot disagree about the fallback path.
+# An environment SEVENDTD_DS_DIR or `make DS=/path ...` override still wins.
+DS ?= $(or $(SEVENDTD_DS_DIR),$(shell . "$(ROOT)/scripts/lib/ds_paths.sh" && printf '%s' "$$SEVENDTD_DS_DIR"))
 UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --project $(ROOT)
 
 .PHONY: test lint lint-shell check-bt format format-check typecheck check lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package

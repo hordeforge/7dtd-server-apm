@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # Print main PID of 7 Days to Die dedicated server, or exit 1.
 set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/ds_paths.sh"
 # Prefer exact binary path match
 SRV_BIN="${SEVENDTD_DS_BIN:-}"
 if [[ -z "$SRV_BIN" ]]; then
-  candidate="${SEVENDTD_DS_DIR:-$HOME/.local/share/Steam/steamapps/common/7 Days to Die Dedicated Server}/7DaysToDieServer.x86_64"
+  candidate="$SEVENDTD_DS_DIR/7DaysToDieServer.x86_64"
   [[ -x "$candidate" ]] && SRV_BIN="$candidate"
 fi
 
