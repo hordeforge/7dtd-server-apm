@@ -19,11 +19,17 @@ from .analysis.bridge import analyze
 from .analysis.budget import check_budget
 from .analysis.compare import run_compare
 from .analysis.index import write_index
-from .capture import find_server_pid, run_capture, unknown_only_tokens, write_plan_text
+from .capture import (
+    bridge_telemetry_file,
+    find_server_pid,
+    run_capture,
+    unknown_only_tokens,
+    write_plan_text,
+)
 from .doctor import inspect
 from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json
-from .models import as_number
+from .models import as_number, layer_signals
 from .paths import REPO, apm_root, require_backends
 from .runner import backend_python, run, terminate_tree
 from .session import (
@@ -550,14 +556,7 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
             "# TYPE sevendtd_apm_gross_alloc_mb_per_second gauge",
             f"sevendtd_apm_gross_alloc_mb_per_second {gross_rate:.3f}",
         ]
-    gc_layer = next(
-        (
-            layer.get("signals") or {}
-            for layer in (summary.get("layers") or [])
-            if layer.get("layer") == "runtime_gc"
-        ),
-        {},
-    )
+    gc_layer = layer_signals(summary, "runtime_gc")
     stw_worst = as_number(gc_layer.get("stw_pause_worst_ms"))
     if stw_worst is not None:
         stw_total = as_number(gc_layer.get("stw_pause_total_ms")) or 0.0
@@ -608,13 +607,13 @@ def monitor(
         err_console.print("[red]no unique running 7DaysToDieServe process; pass --pid[/red]")
         raise typer.Exit(2)
     process = psutil.Process(pid)
-    bridge_latest = (
-        Path(os.path.realpath(f"/proc/{pid}/exe")).parent
-        / "Mods/7dtd-server-apm-bridge/telemetry/apm_app_latest.json"
-    )
+    bridge_latest = bridge_telemetry_file(pid, "apm_app_latest.json")
     taken = 0
     previous_late: int | None = None
     previous_gc: int | None = None
+    # Read once, not per sample: a config re-read every interval would let an
+    # edit mid-run flip-flop the stale threshold between consecutive samples.
+    export_period = bridge_export_period(bridge_latest.parent)
     try:
         while count == 0 or taken < count:
             with process.oneshot():
@@ -670,7 +669,6 @@ def monitor(
             bridge_age = sample.get("bridge_age_s")
             # Older than one and a half export periods means the exporter
             # missed at least one expected refresh: a genuinely stale read.
-            export_period = bridge_export_period(bridge_latest.parent)
             stale = (
                 f"  [bridge {bridge_age}s old]"
                 if isinstance(bridge_age, float) and bridge_age > export_period * 1.5
@@ -684,8 +682,7 @@ def monitor(
             if isinstance(current_gc, int):
                 previous_gc = current_gc
 
-            tps = sample.get("tps")
-            tps_str = f"{tps:.1f}" if isinstance(tps, (int, float)) else "-"
+            tps_str = _ms(sample.get("tps"))
             console.print(
                 f"cpu={sample['cpu_pct']:6.1f}%  rss={sample['rss_mb']:8.1f}MB  "
                 f"threads={sample['threads']}  tps={tps_str}  "

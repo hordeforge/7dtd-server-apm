@@ -11,6 +11,7 @@ from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
 from ..models import as_number, collected_layer_scores
+from .bridge import ranked_section_heats
 
 DEFAULT_BUDGET: dict[str, Any] = {
     "schema": "7dtd.apm.budget.v2",
@@ -42,38 +43,26 @@ DEFAULT_BUDGET: dict[str, Any] = {
 }
 
 
-def load_layers(session: Path) -> dict[str, float]:
+def _summary(session: Path) -> dict[str, Any]:
     path = session / "summary.json"
     try:
-        return collected_layer_scores(load_json(path))
+        return load_json(path)
     except json.JSONDecodeError as error:
+        # Name the file: a bare "Expecting value" leaves the operator guessing
+        # which session artifact was malformed.
         raise ValueError(f"cannot parse {path}: {error}") from None
 
 
+def load_layers(session: Path) -> dict[str, float]:
+    return collected_layer_scores(_summary(session))
+
+
 def load_sections(session: Path) -> dict[str, float]:
-    heat: dict[str, float] = {}
-    bridge = session / "csharp_bridge.json"
-    if bridge.is_file():
-        try:
-            data = load_json(bridge)
-        except json.JSONDecodeError as error:
-            # Name the file: a bare "Expecting value" leaves the operator
-            # guessing which session artifact was malformed.
-            raise ValueError(f"cannot parse {bridge}: {error}") from None
-        for section in data.get("top_managed_sections") or []:
-            name = section.get("name")
-            if name:
-                # Explicit None checks: a legitimate score/avg of 0 must not fall
-                # through to the next field as if it were missing. A section with
-                # no heat at all is omitted (UNKNOWN), never recorded as a 0 that
-                # would silently pass the gate. Unparseable values (imported or
-                # hand-edited JSON) are treated the same as missing.
-                score = as_number(section.get("score"))
-                avg = as_number(section.get("avgMs"))
-                value = score if score is not None else avg
-                if value is not None:
-                    heat[str(name)] = value
-    return heat
+    """Section heat with UNKNOWN entries (no parseable duration) omitted, so
+    they surface as "skip ... no heat data" instead of passing as a zero."""
+    return {
+        name: value for name, value in ranked_section_heats(session).items() if value is not None
+    }
 
 
 def check(
@@ -81,8 +70,10 @@ def check(
 ) -> tuple[bool, list[str]]:
     lines: list[str] = []
     ok = True
-    layers = load_layers(session)
+    summary = _summary(session)
+    layers = collected_layer_scores(summary)
     sections = load_sections(session)
+    metadata = summary.get("metadata") or {}
 
     for name, limit in (budget.get("max_layer_scores") or {}).items():
         if name not in layers:
@@ -136,7 +127,6 @@ def check(
                     f"ok   regression {name}: baseline={base_value} now={value} Δ={regression:+.1f}"
                 )
 
-    rate_meta: dict[str, Any] | None = None
     for key, (block_name, field) in (
         ("max_gross_alloc_mb_per_second", ("gc", "grossAllocMBPerSecond")),
         ("max_udp_send_mb_per_second", ("net", "udp_send_mb_per_second")),
@@ -144,9 +134,7 @@ def check(
         limit = budget.get(key)
         if limit is None:
             continue
-        if rate_meta is None:
-            rate_meta = load_json(session / "summary.json").get("metadata") or {}
-        rate_value = (rate_meta.get(block_name) or {}).get(field)
+        rate_value = (metadata.get(block_name) or {}).get(field)
         if rate_value is None:
             lines.append(f"skip {key} (no data)")
             continue
@@ -164,8 +152,7 @@ def check(
 
     max_late = budget.get("max_late_tick_share")
     if max_late is not None:
-        summary = load_json(session / "summary.json")
-        frame = (summary.get("metadata") or {}).get("frame") or {}
+        frame = metadata.get("frame") or {}
         late_raw = frame.get("lateTicks")
         window_raw = frame.get("windowUpdates")
         late = as_number(late_raw)

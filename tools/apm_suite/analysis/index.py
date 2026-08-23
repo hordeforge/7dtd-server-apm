@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
+from ..models import layer_signals
 from ..paths import apm_root
 
 
@@ -54,14 +55,7 @@ def scan(root: Path) -> list[dict[str, Any]]:
         )
         world = (summary.get("metadata") or {}).get("world") or {}
         gc = (summary.get("metadata") or {}).get("gc") or {}
-        gc_layer = next(
-            (
-                layer.get("signals") or {}
-                for layer in summary.get("layers") or []
-                if layer.get("layer") == "runtime_gc"
-            ),
-            {},
-        )
+        gc_layer = layer_signals(summary, "runtime_gc")
         rows.append(
             {
                 "dir": directory.name,

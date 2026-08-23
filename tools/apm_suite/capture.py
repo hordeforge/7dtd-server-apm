@@ -326,6 +326,20 @@ def rally_players(host: str, port: int, password: str, at: tuple[int, int] | Non
     return moved
 
 
+def bridge_telemetry_file(pid: int, name: str) -> Path:
+    """A bridge telemetry artifact beside the running server's executable.
+
+    The mod writes under <server>/Mods/7dtd-server-apm-bridge/telemetry; every
+    reader must resolve that through /proc so an install moved between captures
+    is still found.
+    """
+    return (
+        Path(os.path.realpath(f"/proc/{pid}/exe")).parent
+        / "Mods/7dtd-server-apm-bridge/telemetry"
+        / name
+    )
+
+
 def reset_bridge_stats(host: str, port: int, password: str) -> bool:
     """Reset bridge stats so section totals cover exactly this capture window."""
     return telnet_command(host, port, password, "apm reset")
@@ -434,6 +448,48 @@ def _sudo_available() -> bool:
         return False
 
 
+def _export_jitmap(
+    session: Path, pid: int, telnet_host: str, telnet_port: int, telnet_password: str
+) -> None:
+    """Force-JIT hot methods and expose /tmp/perf-<pid>.map before the window.
+
+    Without the map, every ustack collector (alloc, futex, sched) resolves
+    managed frames to raw addresses, defeating the tool's core attribution
+    goal. The burst runs pre-window (off the measurement) so perf resolves
+    managed frames without paying for it inside the capture window.
+    """
+    telnet_command(telnet_host, telnet_port, telnet_password, "apm jitmap full")
+    # perf hardcodes /tmp/perf-<pid>.map; the bridge writes the map to its
+    # disk-backed telemetry dir, we place only a symlink in tmpfs. The full
+    # JIT burst can take tens of seconds; poll until the file stops growing.
+    map_source = bridge_telemetry_file(pid, f"perf-{pid}.map")
+    deadline = time.monotonic() + 90
+    last_size = -1
+    while time.monotonic() < deadline:
+        try:
+            size = map_source.stat().st_size
+        except OSError:
+            size = 0  # not written yet, or removed mid-poll
+        if size and size == last_size:
+            break
+        last_size = size
+        time.sleep(2)
+    if not (map_source.is_file() and map_source.stat().st_size):
+        _warn(session, "bridge jitmap export failed; managed perf frames stay [jit]")
+        return
+    map_link = Path(f"/tmp/perf-{pid}.map")
+    with suppress(OSError):
+        map_link.unlink(missing_ok=True)
+        map_link.symlink_to(map_source)
+    # Keep a copy in-session so finalize can annotate JIT addresses in
+    # any bpftrace output (allocation/stall sites), not just perf flames.
+    with suppress(OSError):
+        shutil.copy2(map_source, session / "runtime" / f"perf-{pid}.map")
+    with map_source.open(encoding="utf-8", errors="replace") as handle:
+        symbols = sum(1 for _ in handle)
+    print(f">> jitmap: {symbols} managed symbols mapped")
+
+
 def run_capture(
     *,
     seconds: int,
@@ -510,46 +566,9 @@ def run_capture(
     atomic_json(session / "meta.json", schema_dict(meta))
 
     if symbolize:
-        # Force-JIT hot methods and export /tmp/perf-<pid>.map before the
-        # window so perf resolves managed frames and the JIT burst stays
-        # outside the measurement. This is INDEPENDENT of reset_bridge: without
-        # the map, every ustack collector (alloc, futex, sched) resolves managed
-        # frames to raw addresses, defeating the tool's core attribution goal.
-        # The burst runs pre-window (off the measurement); disable with
-        # --no-symbolize only when you deliberately want a faster, unresolved run.
-        telnet_command(telnet_host, telnet_port, telnet_password, "apm jitmap full")
-        # perf hardcodes /tmp/perf-<pid>.map; the bridge writes the map to its
-        # disk-backed telemetry dir, we place only a symlink in tmpfs. The full
-        # JIT burst can take tens of seconds; poll until the file stops growing.
-        map_source = (
-            Path(os.path.realpath(f"/proc/{pid}/exe")).parent
-            / f"Mods/7dtd-server-apm-bridge/telemetry/perf-{pid}.map"
-        )
-        deadline = time.monotonic() + 90
-        last_size = -1
-        while time.monotonic() < deadline:
-            try:
-                size = map_source.stat().st_size
-            except OSError:
-                size = 0  # not written yet, or removed mid-poll
-            if size and size == last_size:
-                break
-            last_size = size
-            time.sleep(2)
-        if map_source.is_file() and map_source.stat().st_size:
-            map_link = Path(f"/tmp/perf-{pid}.map")
-            with suppress(OSError):
-                map_link.unlink(missing_ok=True)
-                map_link.symlink_to(map_source)
-            # Keep a copy in-session so finalize can annotate JIT addresses in
-            # any bpftrace output (allocation/stall sites), not just perf flames.
-            with suppress(OSError):
-                shutil.copy2(map_source, session / "runtime" / f"perf-{pid}.map")
-            with map_source.open(encoding="utf-8", errors="replace") as handle:
-                symbols = sum(1 for _ in handle)
-            print(f">> jitmap: {symbols} managed symbols mapped")
-        else:
-            _warn(session, "bridge jitmap export failed; managed perf frames stay [jit]")
+        # Independent of reset_bridge: managed-frame resolution is what makes
+        # perf flames and ustack probes attributable at all.
+        _export_jitmap(session, pid, telnet_host, telnet_port, telnet_password)
 
     if reset_bridge:
         # Reset section/GC totals so they cover only this window (vs server uptime).
@@ -763,11 +782,9 @@ def _ingest_bridge_snapshot(
     """
     if no_app:
         return
-    try:
-        exe = Path(os.path.realpath(f"/proc/{pid}/exe"))
-    except OSError:
-        return
-    latest = exe.parent / "Mods/7dtd-server-apm-bridge/telemetry/apm_app_latest.json"
+    # A dead target resolves to a non-existent telemetry dir, which the
+    # is_file() check below treats like any other missing snapshot.
+    latest = bridge_telemetry_file(pid, "apm_app_latest.json")
     if not latest.is_file():
         return
     try:
@@ -808,6 +825,7 @@ __all__ = [
     "CaptureContext",
     "CaptureOutcome",
     "CollectorSpec",
+    "bridge_telemetry_file",
     "find_server_pid",
     "run_capture",
     "unknown_only_tokens",

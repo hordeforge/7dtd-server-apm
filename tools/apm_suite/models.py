@@ -26,6 +26,25 @@ def as_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def first_number(*values: Any) -> float | None:
+    """First value coercible to a finite number, else None.
+
+    Unlike `a or b`, a legitimate 0 is kept rather than falling through to the
+    next field; an unparseable value (imported/hand-edited JSON) is skipped
+    like a missing one.
+    """
+    for value in values:
+        number = as_number(value)
+        if number is not None:
+            return number
+    return None
+
+
+def first_present(*values: Any) -> float:
+    """first_number with a 0.0 floor, for readers that need a number."""
+    return first_number(*values) or 0.0
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -250,3 +269,20 @@ def collected_layer_scores(summary: Mapping[str, Any]) -> dict[str, float]:
         if name and layer.get("state", "collected") == "collected" and pressure is not None:
             out[str(name)] = pressure
     return out
+
+
+def layer_signals(summary: Mapping[str, Any], layer_name: str) -> dict[str, Any]:
+    """signals mapping of one summary layer entry ({} when absent or malformed).
+
+    Unlike collected_layer_scores this ignores `state`: readers want the
+    recorded signals (e.g. runtime_gc STW pauses) even from a failed layer.
+    Summary JSON is re-read without schema guarantees (hand-edited, imported,
+    older writers), so the lookup tolerates any shape instead of assuming
+    layers[] entries are objects.
+    """
+    entries = summary.get("layers")
+    for layer in entries if isinstance(entries, list) else []:
+        if isinstance(layer, dict) and layer.get("layer") == layer_name:
+            signals = layer.get("signals")
+            return signals if isinstance(signals, dict) else {}
+    return {}

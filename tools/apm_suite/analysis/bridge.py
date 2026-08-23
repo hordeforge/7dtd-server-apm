@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
+from ..models import first_number
 from .catalog import RULES, SECTION_TO_CSHARP
 from .flame_delta import load_weights
 
@@ -310,6 +311,35 @@ def attribute_snapshot(session: Path) -> dict[str, Any] | None:
         # AttributeError: a "measurement"/"update"/"world" block that parsed as
         # a non-object (list/str) has no .get; treat the whole document as bad.
         return None
+
+
+def ranked_section_heats(session: Path) -> dict[str, float | None]:
+    """name -> per-call heat (ms) from csharp_bridge.json's ranked sections.
+
+    Single parser for the budget gate and session compare so their field
+    fallback chains cannot drift (they had: one fell back score->p95->avgMs,
+    the other score->avgMs). `score` is what section_rank wrote (p95 preferred,
+    else avgMs), so the raw p95/avgMs keys only matter for hand-made documents;
+    a legitimate 0 stays 0 instead of falling through to the next field.
+    The value is None when an entry carries no parseable duration - UNKNOWN,
+    never a healthy zero; callers decide whether None skips (budget gate) or
+    reads as a present-at-0 tie (compare). Raises ValueError naming the path
+    when the JSON is unreadable; callers surface that, never gate on silence.
+    """
+    path = session / "csharp_bridge.json"
+    if not path.is_file():
+        return {}
+    try:
+        data = load_json(path)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"cannot parse {path}: {error}") from None
+    heats: dict[str, float | None] = {}
+    for section in data.get("top_managed_sections") or []:
+        name = str(section.get("name") or "")
+        if not name:
+            continue
+        heats[name] = first_number(section.get("score"), section.get("p95"), section.get("avgMs"))
+    return heats
 
 
 def load_folded_frames(session: Path) -> list[tuple[str, int]]:

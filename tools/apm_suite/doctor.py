@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
@@ -12,6 +11,7 @@ from typing import Any
 
 import psutil
 
+from .io import file_sha256
 from .paths import REPO, apm_root, dedicated_dir
 from .session import keep_sessions_budget, prune_grace_hours
 
@@ -73,14 +73,11 @@ def _bridge_status() -> dict[str, Any]:
     if not installed.is_file():
         return {"ok": False, "fix": "make bridge-install (bridge not installed)"}
     result: dict[str, Any] = {"ok": True, "fix": None}
-    if built.is_file():
-        digest_installed = hashlib.sha256(installed.read_bytes()).hexdigest()
-        digest_built = hashlib.sha256(built.read_bytes()).hexdigest()
-        if digest_installed != digest_built:
-            result = {
-                "ok": False,
-                "fix": "installed bridge differs from dist build; make bridge-install + restart server",
-            }
+    if built.is_file() and file_sha256(installed) != file_sha256(built):
+        result = {
+            "ok": False,
+            "fix": "installed bridge differs from dist build; make bridge-install + restart server",
+        }
     config = dedicated_dir() / "Mods/7dtd-server-apm-bridge/Config/apmbridge.json"
     with suppress(OSError, json.JSONDecodeError, ValueError):
         settings = json.loads(config.read_text(encoding="utf-8"))

@@ -12,39 +12,20 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import as_number, collected_layer_scores
+from ..models import as_number, collected_layer_scores, first_present, layer_signals
+from .bridge import ranked_section_heats
 from .flame_delta import delta, load_weights
-
-
-def _first_present(*values: Any) -> float:
-    """First value coercible to a number, else 0.0. Unlike `a or b`, a legitimate
-    0 is kept rather than falling through to the next field; an unparseable
-    value (imported/hand-edited JSON) is skipped like a missing one."""
-    for value in values:
-        number = as_number(value)
-        if number is not None:
-            return number
-    return 0.0
 
 
 def load_sections(session: Path) -> dict[str, float]:
     """name -> per-call heat (p95/avg ms). Never cumulative totals: bridge
     snapshots accumulate since server start, so totalMs is not comparable
-    between sessions."""
-    heat: dict[str, float] = {}
-    bridge = session / "csharp_bridge.json"
-    if bridge.is_file():
-        try:
-            data = load_json(bridge)
-        except json.JSONDecodeError as error:
-            raise ValueError(f"cannot parse {bridge}: {error}") from None
-        for section in data.get("top_managed_sections") or []:
-            name = section.get("name")
-            if not name:
-                continue
-            heat[str(name)] = _first_present(
-                section.get("score"), section.get("p95"), section.get("avgMs")
-            )
+    between sessions. A section entry with no parseable duration counts as
+    present-at-0 so a junk field degrades to a tie, never a bogus winner."""
+    heat: dict[str, float] = {
+        name: 0.0 if value is None else value
+        for name, value in ranked_section_heats(session).items()
+    }
     app = session / "app"
     if app.is_dir():
         for path in list(app.glob("apm_app*.json")) + list(app.glob("snapshot_*.json")):
@@ -56,7 +37,7 @@ def load_sections(session: Path) -> dict[str, float]:
                 name = section.get("name")
                 if not name:
                     continue
-                per_call = _first_present(section.get("p95Ms"), section.get("avgMs"))
+                per_call = first_present(section.get("p95Ms"), section.get("avgMs"))
                 if per_call > heat.get(str(name), 0):
                     heat[str(name)] = per_call
     return heat
@@ -215,15 +196,9 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
         value = (summary.get("metadata") or {}).get(block) or {}
         return as_number(value.get(field)) or 0.0
 
-    def layer_signal(summary: dict[str, Any], layer: str, field: str) -> float:
-        for entry in summary.get("layers") or []:
-            if entry.get("layer") == layer:
-                return as_number((entry.get("signals") or {}).get(field)) or 0.0
-        return 0.0
-
     late_a, late_b = late_ticks(summary_a), late_ticks(summary_b)
-    stw_a = layer_signal(summary_a, "runtime_gc", "stw_pause_worst_ms")
-    stw_b = layer_signal(summary_b, "runtime_gc", "stw_pause_worst_ms")
+    stw_a = as_number(layer_signals(summary_a, "runtime_gc").get("stw_pause_worst_ms")) or 0.0
+    stw_b = as_number(layer_signals(summary_b, "runtime_gc").get("stw_pause_worst_ms")) or 0.0
     # Gross GC_malloc churn drives the STW pauses; net heap growth reads ~0.
     alloc_a = rate(summary_a, "gc", "grossAllocMBPerSecond")
     alloc_b = rate(summary_b, "gc", "grossAllocMBPerSecond")

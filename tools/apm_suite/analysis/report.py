@@ -317,10 +317,7 @@ def _app_layer(texts: dict[str, str]) -> LayerScore:
 
 def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> list[LayerScore]:
     """Heuristic 0-100 severity scores (higher = more pressure), coverage-aware."""
-    meta: dict[str, Any] = {}
-    meta_path = session / "meta.json"
-    if meta_path.is_file():
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta = _load_meta(session)
     duration = max(1.0, float(meta.get("seconds") or 1))
     scores = [
         _cpu_layer(hw, texts),
@@ -364,11 +361,9 @@ def thread_summary(session: Path) -> dict[str, Any]:
     path = session / "threads/threads.jsonl"
     if not path.exists():
         return {}
-    meta_path = session / "meta.json"
     main_tid = 0
-    if meta_path.is_file():
-        with contextlib.suppress(ValueError, OSError):
-            main_tid = int(json.loads(meta_path.read_text(encoding="utf-8")).get("pid") or 0)
+    with contextlib.suppress(ValueError, OSError):
+        main_tid = int(_load_meta(session).get("pid") or 0)
     samples: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
