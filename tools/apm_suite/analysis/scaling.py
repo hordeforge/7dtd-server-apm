@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import load_json
+from ..models import as_number
 
 # exponent (slope of log(cost) vs log(load)) thresholds
 LINEAR_LOW, LINEAR_HIGH = 0.8, 1.2
@@ -50,8 +51,8 @@ def classify(exponent: float) -> str:
 def _scale_of(summary: dict[str, Any], key: str) -> float:
     world = (summary.get("metadata") or {}).get("world") or {}
     if key == "entities":
-        return float(world.get("entities") or 0)
-    return float(world.get("clients") or world.get("players") or 0)
+        return as_number(world.get("entities")) or 0.0
+    return as_number(world.get("clients")) or as_number(world.get("players")) or 0.0
 
 
 def _sections(session: Path) -> dict[str, dict[str, float]]:
@@ -61,11 +62,10 @@ def _sections(session: Path) -> dict[str, dict[str, float]]:
     out: dict[str, dict[str, float]] = {}
     for s in load_json(bridge).get("top_managed_sections") or []:
         name = s.get("name")
-        if name:
-            out[str(name)] = {
-                "avgMs": float(s.get("avgMs") or 0),
-                "totalMs": float(s.get("totalMs") or 0),
-            }
+        avg = as_number(s.get("avgMs"))
+        total = as_number(s.get("totalMs"))
+        if name and avg is not None and total is not None:
+            out[str(name)] = {"avgMs": avg, "totalMs": total}
     return out
 
 

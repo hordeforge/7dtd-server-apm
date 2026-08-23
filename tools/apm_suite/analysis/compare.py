@@ -12,16 +12,18 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import collected_layer_scores
+from ..models import as_number, collected_layer_scores
 from .flame_delta import delta, load_weights
 
 
 def _first_present(*values: Any) -> float:
-    """First non-None value as float, else 0.0. Unlike `a or b`, a legitimate 0
-    is kept rather than falling through to the next field."""
+    """First value coercible to a number, else 0.0. Unlike `a or b`, a legitimate
+    0 is kept rather than falling through to the next field; an unparseable
+    value (imported/hand-edited JSON) is skipped like a missing one."""
     for value in values:
-        if value is not None:
-            return float(value)
+        number = as_number(value)
+        if number is not None:
+            return number
     return 0.0
 
 
@@ -80,10 +82,15 @@ def _attribution_totals(session: Path) -> dict[str, float]:
     if not bridge.is_file():
         return {}
     attribution = load_json(bridge).get("attribution") or {}
-    return {
-        str(s["subsystem"]): float(s["scaled_total_ms"])
-        for s in attribution.get("subsystems") or []
-    }
+    totals: dict[str, float] = {}
+    for entry in attribution.get("subsystems") or []:
+        if not isinstance(entry, dict):
+            continue
+        name = entry.get("subsystem")
+        total = as_number(entry.get("scaled_total_ms"))
+        if name and total is not None:
+            totals[str(name)] = total
+    return totals
 
 
 def _winner(delta_value: float) -> str:
@@ -104,8 +111,8 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
         raise ValueError("analyzer versions differ; re-finalize both sessions with one version")
     if str(meta_a.get("only") or "all") != str(meta_b.get("only") or "all"):
         raise ValueError("incompatible collector selection")
-    duration_a = float(meta_a.get("seconds") or 0)
-    duration_b = float(meta_b.get("seconds") or 0)
+    duration_a = as_number(meta_a.get("seconds")) or 0.0
+    duration_b = as_number(meta_b.get("seconds")) or 0.0
     # A zero/near-zero window is a failed capture; comparing it to a real one
     # yields meaningless deltas. Reject before the 10% check (which is skipped
     # when a duration is falsy).
@@ -189,15 +196,18 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
     overall = _winner(sum_b - sum_a)
 
     def late_ticks(summary: dict[str, Any]) -> int:
-        return int(((summary.get("metadata") or {}).get("frame") or {}).get("lateTicks") or 0)
+        return int(
+            as_number(((summary.get("metadata") or {}).get("frame") or {}).get("lateTicks")) or 0
+        )
 
     def rate(summary: dict[str, Any], block: str, field: str) -> float:
-        return float(((summary.get("metadata") or {}).get(block) or {}).get(field) or 0)
+        value = (summary.get("metadata") or {}).get(block) or {}
+        return as_number(value.get(field)) or 0.0
 
     def layer_signal(summary: dict[str, Any], layer: str, field: str) -> float:
         for entry in summary.get("layers") or []:
             if entry.get("layer") == layer:
-                return float((entry.get("signals") or {}).get(field) or 0)
+                return as_number((entry.get("signals") or {}).get(field)) or 0.0
         return 0.0
 
     late_a, late_b = late_ticks(summary_a), late_ticks(summary_b)

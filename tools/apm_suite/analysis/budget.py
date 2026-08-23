@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import collected_layer_scores
+from ..models import as_number, collected_layer_scores
 
 DEFAULT_BUDGET: dict[str, Any] = {
     "schema": "7dtd.apm.budget.v2",
@@ -57,12 +57,13 @@ def load_sections(session: Path) -> dict[str, float]:
                 # Explicit None checks: a legitimate score/avg of 0 must not fall
                 # through to the next field as if it were missing. A section with
                 # no heat at all is omitted (UNKNOWN), never recorded as a 0 that
-                # would silently pass the gate.
-                score = section.get("score")
-                avg = section.get("avgMs")
+                # would silently pass the gate. Unparseable values (imported or
+                # hand-edited JSON) are treated the same as missing.
+                score = as_number(section.get("score"))
+                avg = as_number(section.get("avgMs"))
                 value = score if score is not None else avg
                 if value is not None:
-                    heat[str(name)] = float(value)
+                    heat[str(name)] = value
     return heat
 
 
@@ -140,7 +141,13 @@ def check(
         if rate_value is None:
             lines.append(f"skip {key} (no data)")
             continue
-        if float(rate_value) > float(limit):
+        number = as_number(rate_value)
+        if number is None:
+            # Fail closed: unparseable evidence is UNKNOWN, never a pass.
+            ok = False
+            lines.append(f"UNKNOWN {key}: unparseable summary value {rate_value!r}")
+            continue
+        if number > float(limit):
             ok = False
             lines.append(f"FAIL {key}={rate_value} > budget {limit}")
         else:
@@ -150,18 +157,29 @@ def check(
     if max_late is not None:
         summary = load_json(session / "summary.json")
         frame = (summary.get("metadata") or {}).get("frame") or {}
-        late = int(frame.get("lateTicks") or 0)
-        window = int(frame.get("windowUpdates") or 0)
-        if window:
+        late_raw = frame.get("lateTicks")
+        window_raw = frame.get("windowUpdates")
+        late = as_number(late_raw)
+        window = as_number(window_raw)
+        if late_raw is None and window_raw is None:
+            lines.append("skip late_ticks (no bridge frame data)")
+        elif late is None or window is None:
+            # Fail closed: unparseable evidence is UNKNOWN, never a pass.
+            ok = False
+            lines.append(
+                f"UNKNOWN late_ticks: unparseable frame values "
+                f"lateTicks={late_raw!r} windowUpdates={window_raw!r}"
+            )
+        elif window > 0:
             share = late / window
             if share > float(max_late):
                 ok = False
                 lines.append(
-                    f"FAIL late_ticks {late}/{window} = {share:.3f} > budget {max_late} "
+                    f"FAIL late_ticks {late:g}/{window:g} = {share:.3f} > budget {max_late} "
                     "(server missed its tick deadline)"
                 )
             else:
-                lines.append(f"ok   late_ticks {late}/{window} = {share:.3f} <= {max_late}")
+                lines.append(f"ok   late_ticks {late:g}/{window:g} = {share:.3f} <= {max_late}")
         else:
             lines.append("skip late_ticks (no bridge frame data)")
 

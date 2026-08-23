@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import math
 import os
 import shutil
 import subprocess
@@ -24,6 +23,7 @@ from .capture import find_server_pid, run_capture, unknown_only_tokens, write_pl
 from .doctor import inspect
 from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json
+from .models import as_number
 from .paths import REPO, apm_root, require_backends
 from .runner import backend_python, run, terminate_tree
 from .session import (
@@ -327,6 +327,16 @@ def _member_is_safe(name: str) -> bool:
     return not candidate.is_absolute() and ".." not in candidate.parts
 
 
+# Decompression-bomb guard for imported evidence bundles (they arrive from
+# other people): CPython's extractall caps each member at its declared
+# file_size, so the sum of declared sizes is a reliable upper bound on what
+# lands on disk. Sessions are tens of MB; 2 GiB total / 20k members is far
+# above any legitimate bundle while stopping a small archive from filling
+# the session store volume.
+MAX_IMPORT_MEMBERS = 20_000
+MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * 1024**3
+
+
 @app.command("import")
 def import_bundle(
     bundle: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
@@ -345,6 +355,15 @@ def import_bundle(
         stem = f"session_{stem}"
     try:
         with zipfile.ZipFile(bundle) as archive:
+            infos = archive.infolist()
+            declared_bytes = sum(info.file_size for info in infos)
+            if len(infos) > MAX_IMPORT_MEMBERS or declared_bytes > MAX_IMPORT_UNCOMPRESSED_BYTES:
+                err_console.print(
+                    f"[red]refusing bundle beyond import limits "
+                    f"({len(infos)} members, {declared_bytes} uncompressed bytes; "
+                    f"max {MAX_IMPORT_MEMBERS}/{MAX_IMPORT_UNCOMPRESSED_BYTES})[/red]"
+                )
+                raise typer.Exit(2)
             unsafe = [m for m in archive.namelist() if not _member_is_safe(m)]
             if unsafe:
                 err_console.print(
@@ -446,17 +465,20 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
         "# TYPE sevendtd_apm_layer_pressure gauge",
     ]
     for layer in summary.get("layers") or []:
-        score = layer.get("score")
-        # A non-finite score (inf/nan) must never reach the scrape line.
-        if layer.get("state") == "collected" and score is not None and math.isfinite(float(score)):
+        # summary.json is re-read without schema guarantees (hand-edited or
+        # imported), so every numeric field goes through a safe coercion: a
+        # crafted value must degrade to "no line", never raise mid-export.
+        score = as_number(layer.get("score"))
+        if layer.get("state") == "collected" and score is not None:
             name = _prom_label(layer.get("layer", "unknown"))
-            lines.append(f'sevendtd_apm_layer_pressure{{layer="{name}"}} {float(score):.6f}')
+            lines.append(f'sevendtd_apm_layer_pressure{{layer="{name}"}} {score:.6f}')
     health_path = session / "health.json"
     health = load_json(health_path) if health_path.is_file() else summary.get("health") or {}
-    if health.get("coverage") is not None:
+    coverage = as_number(health.get("coverage"))
+    if coverage is not None:
         lines += [
             "# TYPE sevendtd_apm_coverage gauge",
-            f"sevendtd_apm_coverage {float(health['coverage']):.6f}",
+            f"sevendtd_apm_coverage {coverage:.6f}",
         ]
     bridge_path = session / "csharp_bridge.json"
     if bridge_path.is_file():
@@ -469,11 +491,11 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
             ]
             for entry in subsystems:
                 subsystem = entry.get("subsystem")
-                scaled = entry.get("scaled_total_ms")
+                scaled = as_number(entry.get("scaled_total_ms"))
                 if subsystem is None or scaled is None:
                     continue
                 name = _prom_label(subsystem)
-                lines.append(f'sevendtd_apm_subsystem_ms{{subsystem="{name}"}} {float(scaled):.3f}')
+                lines.append(f'sevendtd_apm_subsystem_ms{{subsystem="{name}"}} {scaled:.3f}')
     lag = (summary.get("metadata") or {}).get("lag_diagnosis") or {}
     if lag:
         lines += [
@@ -489,26 +511,27 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
             ]
             for cause in causes:
                 name = _prom_label(cause.get("cause", "unknown"))
-                lines.append(
-                    f'sevendtd_apm_lag_cause_severity{{cause="{name}"}} '
-                    f"{float(cause.get('severity') or 0):.3f}"
-                )
+                severity = as_number(cause.get("severity")) or 0.0
+                lines.append(f'sevendtd_apm_lag_cause_severity{{cause="{name}"}} {severity:.3f}')
     frame = (summary.get("metadata") or {}).get("frame") or {}
-    if frame.get("lateTicks") is not None:
+    late_ticks = as_number(frame.get("lateTicks"))
+    if late_ticks is not None:
         lines += [
             "# TYPE sevendtd_apm_late_ticks gauge",
-            f"sevendtd_apm_late_ticks {int(frame['lateTicks'])}",
+            f"sevendtd_apm_late_ticks {int(late_ticks)}",
         ]
     gc_meta = (summary.get("metadata") or {}).get("gc") or {}
-    if gc_meta.get("allocMBPerSecond") is not None:
+    alloc_rate = as_number(gc_meta.get("allocMBPerSecond"))
+    if alloc_rate is not None:
         lines += [
             "# TYPE sevendtd_apm_alloc_mb_per_second gauge",
-            f"sevendtd_apm_alloc_mb_per_second {float(gc_meta['allocMBPerSecond']):.3f}",
+            f"sevendtd_apm_alloc_mb_per_second {alloc_rate:.3f}",
         ]
-    if gc_meta.get("grossAllocMBPerSecond") is not None:
+    gross_rate = as_number(gc_meta.get("grossAllocMBPerSecond"))
+    if gross_rate is not None:
         lines += [
             "# TYPE sevendtd_apm_gross_alloc_mb_per_second gauge",
-            f"sevendtd_apm_gross_alloc_mb_per_second {float(gc_meta['grossAllocMBPerSecond']):.3f}",
+            f"sevendtd_apm_gross_alloc_mb_per_second {gross_rate:.3f}",
         ]
     gc_layer = next(
         (
@@ -518,20 +541,23 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
         ),
         {},
     )
-    if gc_layer.get("stw_pause_worst_ms") is not None:
+    stw_worst = as_number(gc_layer.get("stw_pause_worst_ms"))
+    if stw_worst is not None:
+        stw_total = as_number(gc_layer.get("stw_pause_total_ms")) or 0.0
         lines += [
             "# TYPE sevendtd_apm_gc_stw_worst_ms gauge",
-            f"sevendtd_apm_gc_stw_worst_ms {float(gc_layer['stw_pause_worst_ms']):.3f}",
+            f"sevendtd_apm_gc_stw_worst_ms {stw_worst:.3f}",
             "# TYPE sevendtd_apm_gc_stw_total_ms gauge",
-            f"sevendtd_apm_gc_stw_total_ms {float(gc_layer.get('stw_pause_total_ms') or 0):.3f}",
+            f"sevendtd_apm_gc_stw_total_ms {stw_total:.3f}",
         ]
     # Kernel UDP send is the honest windowed chunk rate (bridge transfers is a
     # join-burst-weighted lifetime average; see report R56).
     net_meta = (summary.get("metadata") or {}).get("net") or {}
-    if net_meta.get("udp_send_mb_per_second") is not None:
+    udp_send = as_number(net_meta.get("udp_send_mb_per_second"))
+    if udp_send is not None:
         lines += [
             "# TYPE sevendtd_apm_udp_send_mb_per_second gauge",
-            f"sevendtd_apm_udp_send_mb_per_second {float(net_meta['udp_send_mb_per_second']):.3f}",
+            f"sevendtd_apm_udp_send_mb_per_second {udp_send:.3f}",
         ]
     # Atomic write: a scrape racing the export must not read a truncated file.
     atomic_text(output, "\n".join(lines) + "\n")

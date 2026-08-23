@@ -497,6 +497,162 @@ def test_import_rejects_zip_slip_and_corrupt_bundles(
     assert not list(store.glob("session_*"))
 
 
+def test_import_rejects_bundles_beyond_size_limits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A decompression-bomb bundle (huge declared uncompressed size or member
+    count) is refused before any extraction touches the session store."""
+    from apm_suite import cli as cli_module
+
+    session = tmp_path / "session_bomb"
+    (session / "io").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "io/vfs.bt.out").write_text("openat /steamapps/common\n")
+    bundle = tmp_path / "session_bomb.zip"
+    exported = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert exported.exit_code == 0, exported.output
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+    monkeypatch.setattr(cli_module, "MAX_IMPORT_UNCOMPRESSED_BYTES", 4)
+    result = runner.invoke(app, ["import", str(bundle)])
+    assert result.exit_code == 2
+    assert "import limits" in result.output
+    assert not list(store.glob("session_*"))
+
+    monkeypatch.setattr(cli_module, "MAX_IMPORT_UNCOMPRESSED_BYTES", 2**40)
+    monkeypatch.setattr(cli_module, "MAX_IMPORT_MEMBERS", 1)
+    result = runner.invoke(app, ["import", str(bundle)])
+    assert result.exit_code == 2
+    assert "import limits" in result.output
+    assert not list(store.glob("session_*"))
+
+
+def test_as_number_rejects_non_finite_and_boolean_scalars() -> None:
+    from apm_suite.models import as_number
+
+    assert as_number(42) == 42.0
+    assert as_number("3.5") == 3.5
+    assert as_number(True) is None
+    assert as_number(False) is None
+    assert as_number(None) is None
+    assert as_number("abc") is None
+    assert as_number(float("inf")) is None
+    assert as_number(float("nan")) is None
+    # JSON 1e999 parses to inf through the stdlib reader.
+    assert as_number(json.loads("1e999")) is None
+
+
+def test_collected_layer_scores_skips_unparseable_scores() -> None:
+    """Summary JSON is unvalidated on read paths; a junk score must degrade to
+    "no evidence for that layer" instead of raising mid-analysis."""
+    from apm_suite.models import collected_layer_scores
+
+    summary = {
+        "layers": [
+            {"layer": "cpu", "state": "collected", "score": 10},
+            {"layer": "runtime_gc", "state": "collected", "score": "garbage"},
+            {"layer": "io", "state": "skipped", "score": 50},
+        ]
+    }
+    assert collected_layer_scores(summary) == {"cpu": 10.0}
+
+
+def test_prometheus_drops_malformed_metric_fields_instead_of_crashing(
+    tmp_path: Path,
+) -> None:
+    session = _session(tmp_path / "session_junk")
+    summary = load_json(session / "summary.json")
+    summary["layers"].append({"layer": "runtime_gc", "state": "collected", "score": "garbage"})
+    summary["metadata"] = {
+        "frame": {"lateTicks": {"boom": 1}},
+        "gc": {"allocMBPerSecond": "not-a-number", "grossAllocMBPerSecond": None},
+        "net": {"udp_send_mb_per_second": json.loads("1e999")},
+        "lag_diagnosis": {
+            "laggy": True,
+            "causes": [{"cause": "gc_pauses", "severity": "high"}],
+        },
+    }
+    atomic_json(session / "summary.json", summary)
+    out = tmp_path / "metrics.txt"
+    result = runner.invoke(app, ["prometheus", str(session), "--output", str(out)])
+    assert result.exit_code == 0, result.output
+    text = out.read_text()
+    # The valid numeric layer still exports; every malformed field drops its line.
+    assert 'sevendtd_apm_layer_pressure{layer="cpu"}' in text
+    assert "runtime_gc" not in text
+    assert "late_ticks" not in text
+    assert "alloc_mb_per_second" not in text
+    assert "udp_send_mb_per_second" not in text
+    # A non-numeric cause severity falls back to 0 rather than crashing.
+    assert 'sevendtd_apm_lag_cause_severity{cause="gc_pauses"} 0.000' in text
+    assert "Infinity" not in text and "inf" not in text.replace("inflate", "")
+
+
+def test_budget_fails_closed_on_unparseable_summary_numbers(tmp_path: Path) -> None:
+    """Unparseable gate inputs are UNKNOWN (gate fails); they must neither pass
+    silently nor raise a conversion traceback."""
+    session = _session(tmp_path / "session_gate")
+    summary = load_json(session / "summary.json")
+    summary["metadata"] = {
+        "gc": {"grossAllocMBPerSecond": "12x"},
+        "net": {"udp_send_mb_per_second": []},
+        "frame": {"lateTicks": "many", "windowUpdates": 1000},
+    }
+    atomic_json(session / "summary.json", summary)
+    result = runner.invoke(app, ["budget", str(session)])
+    assert result.exit_code == 1
+    assert "UNKNOWN max_gross_alloc_mb_per_second" in result.output
+    assert "UNKNOWN max_udp_send_mb_per_second" in result.output
+    assert "UNKNOWN late_ticks" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_compare_tolerates_malformed_numbers_in_both_sessions(tmp_path: Path) -> None:
+    def make(name: str) -> Path:
+        session = _session(tmp_path / name)
+        summary = load_json(session / "summary.json")
+        summary["meta"] = {"analyzer_version": "2.1.0", "only": "all", "seconds": 60}
+        summary["metadata"] = {
+            "frame": {"lateTicks": "many"},
+            "gc": {"grossAllocMBPerSecond": "junk"},
+            "transfers": {"mb_per_second": []},
+        }
+        summary["layers"].append(
+            {
+                "layer": "runtime_gc",
+                "state": "collected",
+                "score": 5,
+                "signals": {"stw_pause_worst_ms": "junk"},
+            }
+        )
+        atomic_json(session / "summary.json", summary)
+        atomic_json(
+            session / "csharp_bridge.json",
+            {
+                "schema": "7dtd.apm.bridge.v2",
+                "attribution": {
+                    "subsystems": [{"subsystem": "network", "scaled_total_ms": "junk"}]
+                },
+                "top_managed_sections": [{"name": "World.TickEntities", "score": "junk"}],
+            },
+        )
+        return session
+
+    before, after = make("session_before"), make("session_after")
+    result = runner.invoke(app, ["compare", str(before), str(after)])
+    assert result.exit_code == 0, result.output
+    cmp_doc = load_json(after / "compare.json")
+    assert cmp_doc["late_ticks_a"] == 0 and cmp_doc["alloc_mb_s_a"] == 0.0
+    assert cmp_doc["stw_worst_ms_a"] == 0.0
+    # Junk section/attribution heat degrades to 0.0 ties, never a bogus winner
+    # and never a conversion crash.
+    for delta in cmp_doc["section_deltas"] + cmp_doc["attribution_deltas"]:
+        assert delta["a_heat" if "a_heat" in delta else "a_ms"] == 0.0
+        assert delta["better"] in ("tie", "not_comparable")
+
+
 def test_models_emit_v2_schema() -> None:
     model = ManifestV2(
         session_id="session_test",

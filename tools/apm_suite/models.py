@@ -1,10 +1,29 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+def as_number(value: Any) -> float | None:
+    """Coerce an unvalidated JSON scalar to a finite float, else None.
+
+    Session documents are re-read without schema guarantees (hand-edited,
+    older writers, imported bundles): a string like "abc" or JSON 1e999
+    (which parses to inf) must degrade to "no data" instead of raising
+    ValueError/OverflowError mid-analysis. bools are rejected even though
+    float() accepts them - True is not a measurement.
+    """
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
 
 
 class StrictModel(BaseModel):
@@ -202,7 +221,7 @@ def collected_layer_scores(summary: Mapping[str, Any]) -> dict[str, float]:
         if not isinstance(layer, dict):
             continue
         name = layer.get("layer")
-        score = layer.get("score")
-        if name and layer.get("state", "collected") == "collected" and score is not None:
-            out[str(name)] = float(score)
+        pressure = as_number(layer.get("score"))
+        if name and layer.get("state", "collected") == "collected" and pressure is not None:
+            out[str(name)] = pressure
     return out
