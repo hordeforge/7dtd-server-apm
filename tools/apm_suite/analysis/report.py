@@ -457,21 +457,14 @@ def memory_trend(session: Path) -> dict[str, Any]:
     return result
 
 
-# Frames that are runtime/BCL/engine/profiler noise, never the allocation's real
-# owner. 7DTD game types live in the global namespace (GameManager, AstarVoxelGrid)
-# or resolve as Class.Method, so skipping these surfaces the game frame. Note
-# UnityEngine.* is skipped: engine struct/util methods (Quaternion.FromToRotation,
-# Vector3 ops) appear as leaf frames but do not own the heap allocation - the real
-# allocator is the game caller below. Kept consistent with the CPU filter.
-_ALLOC_NOISE_PREFIX = (
-    "System.",
-    "UnityEngine.",
-    "Unity.",
-    "Mono.",
-    "Cysharp.",
-    "Newtonsoft.",
-)
-_ALLOC_NOISE_EXACT = frozenset({"GC_malloc", "GC_gcj_malloc", "GC_gcj_fast_malloc"})
+# Frames that are runtime/BCL/engine noise, never the real owner of a sample or
+# allocation. 7DTD game types live in the global namespace (GameManager,
+# AstarVoxelGrid) or resolve as Class.Method, so skipping these surfaces the game
+# frame. UnityEngine.* is skipped: engine struct/util methods (e.g.
+# Quaternion.FromToRotation) appear as leaf frames but do not own the cost - the
+# real owner is the game caller below. Kept consistent between the alloc and CPU
+# filters.
+_NOISE_PREFIX = ("System.", "UnityEngine.", "Unity.", "Mono.", "Cysharp.", "Newtonsoft.")
 
 # One bpftrace ustack map record: @name[\n <frames> \n]: <value>.
 _ALLOC_RECORD = re.compile(r"@\w+\[\n(?P<frames>.*?)\n\s*\]:\s*(?P<value>\d+)", re.DOTALL)
@@ -488,7 +481,9 @@ def _alloc_stack_site(frames: list[str]) -> str | None:
         name = frame.split("+", 1)[0].strip()
         if not name or name.startswith("0x"):
             continue
-        if name in _ALLOC_NOISE_EXACT or name.startswith(_ALLOC_NOISE_PREFIX):
+        # GC_malloc-style leaves carry no Class.Method separator and are dropped
+        # by the resolved-symbol check below along with native C symbols.
+        if name.startswith(_NOISE_PREFIX):
             continue
         if "." not in name and "::" not in name:
             continue  # not a resolved Class.Method symbol
@@ -531,8 +526,7 @@ def _alloc_block_sites(
 
 
 # CPU-flame frame noise: native libs, kernel, unresolved, and the BCL/runtime.
-# A "game frame" is Class.Method that is not one of these prefixes.
-_CPU_NOISE_PREFIX = ("System.", "UnityEngine.", "Unity.", "Mono.", "Cysharp.", "Newtonsoft.")
+# A "game frame" is Class.Method that is not one of the noise prefixes above.
 
 
 def _is_game_frame(frame: str) -> bool:
@@ -541,7 +535,7 @@ def _is_game_frame(frame: str) -> bool:
         return False  # [libc.so.6] / [unknown] / [jit] / raw hex
     if "." not in f and "::" not in f:
         return False  # native C symbol (GC_dirty_inner, __pthread_*)
-    return not f.startswith(_CPU_NOISE_PREFIX)  # skip BCL / engine runtime
+    return not f.startswith(_NOISE_PREFIX)  # skip BCL / engine runtime
 
 
 def _rank_folded(folded: Path, limit: int) -> dict[str, list[tuple[str, float]]]:

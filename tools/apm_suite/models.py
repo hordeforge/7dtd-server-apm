@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -166,10 +165,6 @@ class BridgeSnapshotV3(BaseModel):
 
 def schema_dict(model: BaseModel) -> dict[str, Any]:
     return model.model_dump(mode="json", by_alias=True)
-
-
-def relative_artifact(root: Path, path: Path) -> str:
-    return path.relative_to(root).as_posix()
 
 
 # Request tokens accepted for each canonical layer beyond the layer name itself.

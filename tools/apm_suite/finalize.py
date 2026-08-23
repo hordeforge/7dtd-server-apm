@@ -29,7 +29,6 @@ from .reporting import render_session
 class FinalizeResult:
     session: Path
     failed_stages: list[str] = field(default_factory=list)
-    budget_passed: bool | None = None
 
     @property
     def exit_code(self) -> int:
@@ -55,10 +54,9 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
     if not skip_bridge:
         stage("bridge", lambda: analyze(session), required=False)
 
-    def run_budget() -> None:
-        result.budget_passed = check_budget(session)
-
-    stage("budget", run_budget, required=False)
+    # The gate's pass/fail lives in budget_check.txt/.json and the explicit
+    # `budget` command; finalize's exit code tracks failed stages only.
+    stage("budget", lambda: check_budget(session), required=False)
     stage("render", lambda: render_session(session), required=True)
     stage("index", lambda: write_index(), required=False)
 

@@ -18,6 +18,7 @@ from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
 from .catalog import RULES, SECTION_TO_CSHARP
+from .flame_delta import load_weights
 
 # Thresholds: evidence below these never fires a rule (no word-matching noise).
 NATIVE_SHARE_MIN = 0.005  # >= 0.5% of total sampled frame weight
@@ -30,7 +31,8 @@ SIGNAL_GATES: dict[str, tuple[str, tuple[tuple[str, float], ...]]] = {
     "futex_lock": ("sync_locks", (("slow_futex_lines", 1),)),
     "blocking_io": ("io", (("slow_block_lines", 1),)),
 }
-REQUIRED_LAYER = {"gc_mono": "runtime_gc", "futex_lock": "sync_locks", "blocking_io": "io"}
+# A gated rule also requires its gate's layer to be collected this session.
+REQUIRED_LAYER = {rule_id: gate[0] for rule_id, gate in SIGNAL_GATES.items()}
 
 # Subsystem attribution: section prefix -> bucket. Answers "where does the
 # frame budget go" (optimizer experiment 1). Deep sections are scaled by the
@@ -315,24 +317,7 @@ def load_folded_frames(session: Path) -> list[tuple[str, int]]:
     folded = session / "cpu/perf/stacks.folded"
     if not folded.exists():
         return []
-    weights: dict[str, int] = defaultdict(int)
-    for line in folded.read_text(errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            stack, raw_count = line.rsplit(" ", 1)
-            value = float(raw_count)
-        except ValueError:
-            continue
-        # int(float("inf")) raises OverflowError; a non-finite weight is not a
-        # real sample count, so skip it rather than crash the whole load.
-        if not math.isfinite(value):
-            continue
-        count = int(value)
-        for frame in stack.split(";"):
-            if frame:
-                weights[frame] += count
+    weights = load_weights(folded)
     return sorted(weights.items(), key=lambda kv: -kv[1])
 
 

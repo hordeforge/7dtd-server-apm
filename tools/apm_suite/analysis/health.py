@@ -25,10 +25,6 @@ DEFAULT_WEIGHT = 0.08
 COVERAGE_MIN = 0.8
 
 
-def layers_from_summary(summary: dict[str, object]) -> dict[str, float]:
-    return collected_layer_scores(summary)
-
-
 def compute_health(layers: dict[str, float]) -> HealthV2:
     if not layers:
         return HealthV2(reason="no collected layers with usable evidence")
@@ -73,7 +69,7 @@ def compute_health(layers: dict[str, float]) -> HealthV2:
 
 def build_health(session: Path) -> HealthV2:
     summary = load_json(session / "summary.json")
-    result = compute_health(layers_from_summary(summary))
+    result = compute_health(collected_layer_scores(summary))
     result.session = session.name
     atomic_json(session / "health.json", schema_dict(result))
     return result

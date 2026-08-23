@@ -53,7 +53,6 @@ def render_session(session: Path) -> None:
         "net": (summary.get("metadata") or {}).get("net") or {},
         "churn_sites": (summary.get("metadata") or {}).get("top_churn_sites") or [],
         "alloc_sites": (summary.get("metadata") or {}).get("top_alloc_sites") or [],
-        "cpu_hot_paths": (summary.get("metadata") or {}).get("cpu_hot_paths") or {},
         "worldinfo": (summary.get("metadata") or {}).get("world") or {},
         "frameinfo": (summary.get("metadata") or {}).get("frame") or {},
         "links": [(label, href) for label, href in candidates if (session / href).is_file()],

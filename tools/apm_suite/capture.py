@@ -580,10 +580,6 @@ class CaptureOutcome:
     exit_code: int = 0
 
 
-def plan(ctx: CaptureContext, only: str) -> list[tuple[CollectorSpec, list[str] | None]]:
-    return [(spec, spec.build(ctx)) for spec in SPECS if wanted(spec, only)]
-
-
 def _terminate(running: list[_Running]) -> None:
     """Best-effort bounded shutdown.
 
@@ -989,7 +985,6 @@ __all__ = [
     "CaptureOutcome",
     "CollectorSpec",
     "find_server_pid",
-    "plan",
     "run_capture",
     "unknown_only_tokens",
     "wanted",

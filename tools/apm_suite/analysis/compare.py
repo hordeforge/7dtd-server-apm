@@ -57,10 +57,6 @@ def load_sections(session: Path) -> dict[str, float]:
     return heat
 
 
-def layer_map(summary: dict[str, Any]) -> dict[str, float]:
-    return collected_layer_scores(summary)
-
-
 def _flame_path(session: Path) -> Path | None:
     for rel in ("cpu/perf/stacks.annotated.folded", "cpu/perf/stacks.folded", "stacks.folded"):
         path = session / rel
@@ -100,7 +96,7 @@ def _winner(delta_value: float) -> str:
 
 def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
     summary_a, summary_b = load_json(a / "summary.json"), load_json(b / "summary.json")
-    layers_a, layers_b = layer_map(summary_a), layer_map(summary_b)
+    layers_a, layers_b = collected_layer_scores(summary_a), collected_layer_scores(summary_b)
     if set(layers_a) != set(layers_b):
         raise ValueError(f"incompatible layer coverage: A={sorted(layers_a)} B={sorted(layers_b)}")
     meta_a, meta_b = summary_a.get("meta") or {}, summary_b.get("meta") or {}

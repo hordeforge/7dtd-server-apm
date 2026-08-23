@@ -17,13 +17,9 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-# Reuse game log spike parser patterns
 RE_SPIKE = re.compile(
     r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}).*\[EfficientServer\]\s+SPIKE\s+"
     r"(?P<utc>\S+)\s+frame=(?P<frame>[\d.]+)ms.*zed=(?P<zed>-?\d+).*\|\s+(?P<top>.*)"
-)
-RE_PERF = re.compile(
-    r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}).*\[EfficientServer\]\s+perf frame avg=(?P<avg>[\d.]+)ms"
 )
 
 
