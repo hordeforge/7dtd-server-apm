@@ -27,7 +27,7 @@ def build_html(a: Path, b: Path, rows: list[dict]) -> str:
     max_abs = max((abs(r["delta"]) for r in rows), default=1) or 1
     for r in rows:
         w = 100 * abs(r["delta"]) / max_abs
-        color = "#e74c3c" if r["delta"] > 0 else "#2ecc71"
+        color = "#ff7070" if r["delta"] > 0 else "#57d977"
         tr.append(
             f"<tr><td><code>{_esc(r['frame'][:90])}</code></td>"
             f"<td>{r['a']}</td><td>{r['b']}</td>"
