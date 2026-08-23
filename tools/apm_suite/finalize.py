@@ -70,7 +70,7 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
     summary_path = session / "summary.json"
     if summary_path.is_file():
         with suppress(Exception):
-            meta = json.loads(summary_path.read_text()).get("metadata") or {}
+            meta = json.loads(summary_path.read_text(encoding="utf-8")).get("metadata") or {}
             lag = meta.get("lag_diagnosis") or {}
             if lag.get("verdict"):
                 print(f">> lag diagnosis: {lag['verdict']}")

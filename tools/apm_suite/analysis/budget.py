@@ -177,7 +177,7 @@ def check_budget(
     """Run the gate and persist budget_check.txt/.json. Returns pass/fail."""
     budget = DEFAULT_BUDGET
     if budget_path and budget_path.is_file():
-        budget = json.loads(budget_path.read_text())
+        budget = json.loads(budget_path.read_text(encoding="utf-8"))
     ok, lines = check(session, budget, baseline, max_regression)
     report = "\n".join(lines) + f"\n\nRESULT: {'PASS' if ok else 'FAIL'}\n"
     print(report)

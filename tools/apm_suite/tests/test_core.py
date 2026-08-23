@@ -389,6 +389,54 @@ def test_import_bundle_without_session_prefix_lands_in_store(
     assert (store / "session_evidence").is_dir()
 
 
+def test_import_normalizes_nfd_bundle_stem_to_nfc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A macOS NFD bundle filename and its NFC spelling must claim the same
+    session directory name: identity is NFC at ingestion, not byte-equal."""
+    import unicodedata
+    import zipfile
+
+    nfd = unicodedata.normalize("NFD", "café")
+    assert nfd != unicodedata.normalize("NFC", "café")
+    bundle = tmp_path / f"session_{nfd}.zip"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("meta.json", "{}\n")
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+    result = runner.invoke(app, ["import", str(bundle)])
+    assert result.exit_code == 0, result.output
+    assert (store / "session_café").is_dir()
+    assert list(store.iterdir()) == [store / "session_café"]
+
+
+def test_export_round_trips_non_ascii_evidence_bytes(
+    tmp_path: Path,
+) -> None:
+    """Sanitized bundles must carry non-ASCII evidence through as UTF-8 bytes,
+    independent of the host locale the export ran under."""
+    import zipfile
+
+    session = tmp_path / "session_unicode"
+    (session / "io").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    note = "player ☃ joined — NFD: café"
+    (session / "io/vfs.bt.out").write_text(note + "\n", encoding="utf-8")
+    atomic_json(session / "summary.json", _summary("session_unicode", []))
+
+    bundle = tmp_path / "session_unicode.zip"
+    exported = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert exported.exit_code == 0, exported.output
+
+    with zipfile.ZipFile(bundle) as archive:
+        raw = archive.read("io/vfs.bt.out")
+        summary = json.loads(archive.read("summary.json").decode("utf-8"))
+    assert raw.decode("utf-8") == note + "\n"
+    assert summary["session_id"] == "session_unicode"
+
+
 def test_import_bundle_twice_keeps_runs_isolated(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

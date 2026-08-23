@@ -305,7 +305,7 @@ def attribute_snapshot(session: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        return attribute_document(json.loads(path.read_text()))
+        return attribute_document(json.loads(path.read_text(encoding="utf-8")))
     except (AttributeError, TypeError, ValueError, OSError):
         # AttributeError: a "measurement"/"update"/"world" block that parsed as
         # a non-object (list/str) has no .get; treat the whole document as bad.
@@ -326,7 +326,7 @@ def load_speedscope_frames(session: Path) -> list[tuple[str, int]]:
     if not path.exists():
         return []
     try:
-        data = json.loads(path.read_text())
+        data = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError:
         return []
     frames = data.get("shared", {}).get("frames") or []
@@ -361,7 +361,7 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
 
     def ingest_file(path: Path) -> None:
         with contextlib.suppress(json.JSONDecodeError):
-            ingest_obj(json.loads(path.read_text()))
+            ingest_obj(json.loads(path.read_text(encoding="utf-8")))
 
     named = [
         path
@@ -376,7 +376,7 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
 
     scrape = session / "app/bridge.jsonl"
     if scrape.exists():
-        for line in scrape.read_text().splitlines():
+        for line in scrape.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
@@ -385,7 +385,7 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
 
     excerpt = session / "app/efficientserver_log_excerpt.txt"
     if excerpt.exists():
-        sections.extend(parse_section_line(excerpt.read_text(errors="replace")))
+        sections.extend(parse_section_line(excerpt.read_text(encoding="utf-8", errors="replace")))
 
     app_dir = session / "app"
     if app_dir.is_dir():
@@ -393,7 +393,7 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
             if path.resolve() in ingested:
                 continue
             with contextlib.suppress(json.JSONDecodeError, OSError):
-                ingest_obj(json.loads(path.read_text()))
+                ingest_obj(json.loads(path.read_text(encoding="utf-8")))
 
     return sections
 

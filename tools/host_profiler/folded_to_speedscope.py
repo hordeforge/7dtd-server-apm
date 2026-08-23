@@ -23,7 +23,7 @@ MAX_STACK_DEPTH = 4096
 
 def load_folded(path: Path) -> list[tuple[list[str], int]]:
     rows: list[tuple[list[str], int]] = []
-    for line in path.read_text(errors="replace").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -206,7 +206,7 @@ def main() -> int:
 
     prof = to_speedscope(rows, args.name)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(prof))
+    args.output.write_text(json.dumps(prof), encoding="utf-8")
     print(
         f"wrote {args.output} samples={sum(w for _, w in rows)} stacks={len(rows)} frames={len(prof['shared']['frames'])}"
     )
@@ -216,7 +216,7 @@ def main() -> int:
         tree_path = args.output.with_suffix("").with_suffix(".tree.json")
         if str(args.output).endswith(".speedscope.json"):
             tree_path = Path(str(args.output).replace(".speedscope.json", ".tree.json"))
-    tree_path.write_text(dumps_deep(to_d3_tree(rows)))
+    tree_path.write_text(dumps_deep(to_d3_tree(rows)), encoding="utf-8")
     print(f"wrote {tree_path}")
     return 0
 

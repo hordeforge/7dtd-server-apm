@@ -70,7 +70,7 @@ def annotate_folded_line(line: str) -> str:
 
 
 def annotate_file(src: Path, dst: Path) -> dict:
-    lines_in = src.read_text(errors="replace").splitlines()
+    lines_in = src.read_text(encoding="utf-8", errors="replace").splitlines()
     out_lines = []
     tagged = 0
     total_frames = 0
@@ -86,7 +86,7 @@ def annotate_file(src: Path, dst: Path) -> dict:
             if fr.startswith("["):
                 tagged += 1
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text("\n".join(out_lines) + ("\n" if out_lines else ""))
+    dst.write_text("\n".join(out_lines) + ("\n" if out_lines else ""), encoding="utf-8")
     return {
         "stacks": len(out_lines),
         "frames": total_frames,

@@ -54,7 +54,7 @@ class EventSink:
 def parse_bt_slow(sink: EventSink, path: Path, kind: str) -> None:
     if not path.is_file():
         return
-    text = path.read_text(errors="replace")
+    text = path.read_text(encoding="utf-8", errors="replace")
     for i, line in enumerate(text.splitlines()):
         if "SLOW_" in line or "SLOW " in line or "STALL_MAIN" in line or "STW_PAUSE" in line:
             sink.add(
@@ -93,7 +93,7 @@ def parse_proc_jsonl(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
     prev_rss: float | None = None
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
             continue
         try:
@@ -132,7 +132,7 @@ def parse_proc_jsonl(sink: EventSink, path: Path) -> None:
 def parse_threads_jsonl(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
             continue
         try:
@@ -163,7 +163,7 @@ def parse_threads_jsonl(sink: EventSink, path: Path) -> None:
 def parse_app_scrape(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
@@ -210,7 +210,7 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
     try:
-        snapshot = json.loads(path.read_text())
+        snapshot = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, ValueError):
         return
     for spike in snapshot.get("spikes") or []:

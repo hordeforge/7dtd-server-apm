@@ -346,7 +346,13 @@ def tool_version(binary: str) -> str:
         return ""
     try:
         result = subprocess.run(
-            [path, "--version"], capture_output=True, text=True, check=False, timeout=5
+            [path, "--version"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=5,
         )
     except (subprocess.TimeoutExpired, OSError):
         return ""
@@ -367,7 +373,7 @@ def count_samples(artifact: Path) -> int | None:
 def _mono_library(pid: int) -> Path | None:
     maps = Path(f"/proc/{pid}/maps")
     try:
-        for line in maps.read_text(errors="replace").splitlines():
+        for line in maps.read_text(encoding="utf-8", errors="replace").splitlines():
             if "libmonobdwgc-2.0.so" in line:
                 parts = line.split(None, 5)
                 if len(parts) >= 6:
@@ -404,6 +410,8 @@ def _unmount_mono(link: Path | None) -> None:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
         )
         if result.returncode == 0:
@@ -416,6 +424,8 @@ def _unmount_mono(link: Path | None) -> None:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=15,
         )
         if lazy.returncode == 0:
@@ -532,7 +542,7 @@ def reset_bridge_stats(host: str, port: int, password: str) -> bool:
 
 def _warn(session: Path, message: str) -> None:
     print(f"WARN: {message}", file=sys.stderr)
-    with (session / "WARN.txt").open("a") as stream:
+    with (session / "WARN.txt").open("a", encoding="utf-8") as stream:
         stream.write(message + "\n")
 
 
@@ -731,7 +741,7 @@ def run_capture(
             # any bpftrace output (allocation/stall sites), not just perf flames.
             with suppress(OSError):
                 shutil.copy2(map_source, session / "runtime" / f"perf-{pid}.map")
-            with map_source.open(errors="replace") as handle:
+            with map_source.open(encoding="utf-8", errors="replace") as handle:
                 symbols = sum(1 for _ in handle)
             print(f">> jitmap: {symbols} managed symbols mapped")
         else:
@@ -953,7 +963,7 @@ def _ingest_bridge_snapshot(
     if not latest.is_file():
         return
     try:
-        snapshot = BridgeSnapshotV3.model_validate(json.loads(latest.read_text()))
+        snapshot = BridgeSnapshotV3.model_validate(json.loads(latest.read_text(encoding="utf-8")))
     except (json.JSONDecodeError, OSError, ValidationError) as error:
         _warn(session, f"bridge snapshot rejected by schema validation: {error}")
         return

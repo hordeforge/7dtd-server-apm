@@ -72,8 +72,10 @@ def main() -> int:
     rows = delta(load_weights(fa), load_weights(fb), top=args.top)
     html = build_html(args.session_a, args.session_b, rows)
     out = args.output or (args.session_b / "flame_diff.html")
-    out.write_text(html)
-    (args.session_b / "flame_diff.json").write_text(json.dumps({"frames": rows}, indent=2))
+    out.write_text(html, encoding="utf-8")
+    (args.session_b / "flame_diff.json").write_text(
+        json.dumps({"frames": rows}, indent=2), encoding="utf-8"
+    )
     print(f"wrote {out}")
     return 0
 

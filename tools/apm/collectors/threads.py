@@ -43,7 +43,7 @@ class ThreadDelta(ThreadRow):
 def read_tid(pid: int, tid: int) -> ThreadRow | None:
     base = Path(f"/proc/{pid}/task/{tid}")
     try:
-        stat = (base / "stat").read_text()
+        stat = (base / "stat").read_text(encoding="utf-8", errors="replace")
         # comm is in parens and may contain spaces
         lparen = stat.find("(")
         rparen = stat.rfind(")")
@@ -63,7 +63,7 @@ def read_tid(pid: int, tid: int) -> ThreadRow | None:
 
     vol = non = 0
     try:
-        for line in (base / "status").read_text().splitlines():
+        for line in (base / "status").read_text(encoding="ascii", errors="replace").splitlines():
             if line.startswith("voluntary_ctxt_switches:"):
                 vol = int(line.split()[1])
             elif line.startswith("nonvoluntary_ctxt_switches:"):
@@ -74,7 +74,7 @@ def read_tid(pid: int, tid: int) -> ThreadRow | None:
 
     wchan = ""
     with contextlib.suppress(OSError):
-        wchan = (base / "wchan").read_text().strip()
+        wchan = (base / "wchan").read_text(encoding="utf-8", errors="replace").strip()
 
     return {
         "tid": tid,
@@ -127,7 +127,7 @@ def main() -> int:
     prev_mono: dict[int, float] = {}
     user_hz = os.sysconf("SC_CLK_TCK")
 
-    with args.jsonl.open("w") as fh:
+    with args.jsonl.open("w", encoding="utf-8") as fh:
         while time.monotonic() < end:
             if not Path(f"/proc/{args.pid}").exists():
                 break

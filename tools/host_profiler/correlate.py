@@ -40,7 +40,11 @@ def load_proc(capture: Path) -> list[dict]:
     p = capture / "proc.jsonl"
     if not p.exists():
         return []
-    return [json.loads(line) for line in p.read_text().splitlines() if line.strip()]
+    return [
+        json.loads(line)
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.strip()
+    ]
 
 
 def nearest_proc(rows: list[dict], t: float) -> dict | None:
@@ -57,7 +61,7 @@ def main() -> int:
     args = ap.parse_args()
 
     proc = load_proc(args.capture)
-    text = args.game_log.read_text(errors="replace")
+    text = args.game_log.read_text(encoding="utf-8", errors="replace")
     spikes = []
     for m in RE_SPIKE.finditer(text):
         spikes.append(

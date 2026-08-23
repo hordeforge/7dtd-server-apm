@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import unicodedata
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Annotated
@@ -276,34 +277,35 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
                 relative = source.relative_to(session)
                 if source.suffix == ".json":
                     try:
-                        data = json.loads(source.read_text())
+                        data = json.loads(source.read_text(encoding="utf-8"))
                     except (json.JSONDecodeError, OSError) as error:
                         raise typer.BadParameter(f"cannot parse {relative}: {error}") from None
                     sanitized = temp / relative
                     sanitized.parent.mkdir(parents=True, exist_ok=True)
                     sanitized.write_text(
-                        json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n"
+                        json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n",
+                        encoding="utf-8",
                     )
                     archive.write(sanitized, relative)
                 elif source.suffix == ".jsonl":
                     try:
-                        text = source.read_text(errors="replace")
+                        text = source.read_text(errors="replace", encoding="utf-8")
                     except OSError:
                         archive.write(source, relative)
                         continue
                     sanitized = temp / relative
                     sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(_scrub_jsonl(text, home))
+                    sanitized.write_text(_scrub_jsonl(text, home), encoding="utf-8")
                     archive.write(sanitized, relative)
                 elif source.suffix in text_suffixes:
                     try:
-                        text = source.read_text(errors="replace")
+                        text = source.read_text(errors="replace", encoding="utf-8")
                     except OSError:
                         archive.write(source, relative)
                         continue
                     sanitized = temp / relative
                     sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(text.replace(home, "~"))
+                    sanitized.write_text(text.replace(home, "~"), encoding="utf-8")
                     archive.write(sanitized, relative)
                 else:
                     archive.write(source, relative)
@@ -328,7 +330,11 @@ def import_bundle(
     ] = None,
 ) -> None:
     """Restore an exported support bundle into the session store and audit it."""
-    stem = "".join(c if c.isalnum() or c in "._-" else "_" for c in bundle.stem).strip("._")
+    # NFC at ingestion: a macOS NFD filename and its NFC spelling must claim
+    # the same session directory name, or later lookups by the typed form miss.
+    stem = "".join(
+        c if c.isalnum() or c in "._-" else "_" for c in unicodedata.normalize("NFC", bundle.stem)
+    ).strip("._")
     if not stem.startswith("session_"):
         stem = f"session_{stem}"
     try:
@@ -426,7 +432,7 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
     if not summary_path.is_file():
         raise typer.BadParameter("session has no summary.json")
     try:
-        summary = json.loads(summary_path.read_text())
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise typer.BadParameter(f"unreadable {summary_path}: {error}") from None
     lines = [
@@ -573,7 +579,7 @@ def monitor(
                 }
             if bridge_latest.is_file():
                 try:
-                    snapshot = json.loads(bridge_latest.read_text())
+                    snapshot = json.loads(bridge_latest.read_text(encoding="utf-8"))
                     update = snapshot.get("update") or {}
                     world = snapshot.get("world") or {}
                     sample["tick_avg_ms"] = update.get("serverTickIntervalAvgMs")
@@ -637,7 +643,7 @@ def monitor(
             )
             if output:
                 output.parent.mkdir(parents=True, exist_ok=True)
-                with output.open("a") as stream:
+                with output.open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(sample) + "\n")
             taken += 1
     except (KeyboardInterrupt, psutil.NoSuchProcess):
@@ -914,7 +920,7 @@ def scenario_run(
     # The claim pre-creates the manifest path, so only content proves the
     # loadgen actually wrote it (an empty marker must not crash the attach).
     if session is not None and workload.stat().st_size > 0:
-        doc = json.loads(workload.read_text())
+        doc = json.loads(workload.read_text(encoding="utf-8"))
         if label:
             doc["label"] = label
         doc.setdefault("workload", {})["botMode"] = bot_mode or doc.get("workload", {}).get(
@@ -947,7 +953,7 @@ def scenario_matrix(
         err_console.print(f"[red]plan file not found: {plan}[/red]")
         raise typer.Exit(2)
     try:
-        entries = json.loads(plan.read_text())
+        entries = json.loads(plan.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise typer.BadParameter(f"plan is not valid JSON ({plan}): {error}") from None
     if not isinstance(entries, list) or not entries:

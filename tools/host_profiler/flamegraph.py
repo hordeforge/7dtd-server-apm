@@ -28,7 +28,7 @@ def main() -> int:
     # node -> total
     totals: dict[tuple[str, ...], float] = defaultdict(float)
     grand = 0.0
-    for line in folded.read_text(errors="replace").splitlines():
+    for line in folded.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
             continue
         *parts, count_s = line.rsplit(" ", 1)
@@ -111,7 +111,7 @@ def main() -> int:
         *rects,
         "</svg>",
     ]
-    out.write_text("\n".join(svg))
+    out.write_text("\n".join(svg), encoding="utf-8")
     print(f"wrote {out}")
     return 0
 

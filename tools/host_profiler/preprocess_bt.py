@@ -53,7 +53,7 @@ def main() -> int:
         if not mono_path.is_file():
             ap.error(f"--mono-so is not a file: {mono_path}")
 
-    text = args.script.read_text()
+    text = args.script.read_text(encoding="utf-8", errors="replace")
 
     # Drop preprocessor guards from source templates
     text = re.sub(r"#ifndef TARGET_PID\n#error[^\n]*\n#endif\n?", "", text)
@@ -76,7 +76,7 @@ def main() -> int:
         # predicate, and braced body); a dangling predicate is a syntax error.
         text = _drop_mono_blocks(text)
 
-    args.output.write_text(header + text)
+    args.output.write_text(header + text, encoding="utf-8")
     return 0
 
 

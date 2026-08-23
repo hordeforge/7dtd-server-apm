@@ -43,7 +43,12 @@ class Sample:
 
 def read_stat(pid: int) -> dict:
     # man proc_pid_stat
-    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[-1].split()
+    fields = (
+        Path(f"/proc/{pid}/stat")
+        .read_text(encoding="utf-8", errors="replace")
+        .rsplit(")", 1)[-1]
+        .split()
+    )
     # after comm: state=0, ppid=1, ... utime=11, stime=12, cutime=13, cstime=14, num_threads=17, vsize=20, rss=21
     return {
         "utime": int(fields[11]),
@@ -58,7 +63,9 @@ def read_stat(pid: int) -> dict:
 
 def read_status_ctx(pid: int) -> tuple[int, int]:
     vol = non = 0
-    for line in Path(f"/proc/{pid}/status").read_text().splitlines():
+    for line in (
+        Path(f"/proc/{pid}/status").read_text(encoding="ascii", errors="replace").splitlines()
+    ):
         if line.startswith("voluntary_ctxt_switches:"):
             vol = int(line.split()[1])
         elif line.startswith("nonvoluntary_ctxt_switches:"):
@@ -71,7 +78,7 @@ def read_io(pid: int) -> dict:
     p = Path(f"/proc/{pid}/io")
     if not p.exists():
         return out
-    for line in p.read_text().splitlines():
+    for line in p.read_text(encoding="ascii", errors="replace").splitlines():
         k, _, v = line.partition(":")
         k = k.strip()
         if k in out:
@@ -93,7 +100,11 @@ def top_threads(pid: int, n: int = 8) -> list[dict]:
         for tid in tasks.iterdir():
             try:
                 st = read_stat(int(tid.name))
-                comm = Path(f"/proc/{pid}/task/{tid.name}/comm").read_text().strip()
+                comm = (
+                    Path(f"/proc/{pid}/task/{tid.name}/comm")
+                    .read_text(encoding="utf-8", errors="replace")
+                    .strip()
+                )
                 rows.append(
                     {
                         "tid": int(tid.name),
@@ -157,7 +168,10 @@ def main() -> int:
             root = Path(__file__).resolve().parents[2]
             pid = int(
                 subprocess.check_output(
-                    [str(root / "tools/host_profiler/find_server.sh")], text=True
+                    [str(root / "tools/host_profiler/find_server.sh")],
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 ).strip()
             )
         except Exception as e:
@@ -224,7 +238,7 @@ def main() -> int:
 
     if args.json and rows:
         args.json.parent.mkdir(parents=True, exist_ok=True)
-        with args.json.open("w") as f:
+        with args.json.open("w", encoding="utf-8") as f:
             for r in rows:
                 f.write(json.dumps(r) + "\n")
         print(f"wrote {args.json}")

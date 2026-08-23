@@ -75,7 +75,7 @@ def _bridge_status() -> dict[str, Any]:
             }
     config = dedicated_dir() / "Mods/7dtd-apm-bridge/Config/apmbridge.json"
     with suppress(OSError, json.JSONDecodeError, ValueError):
-        settings = json.loads(config.read_text())
+        settings = json.loads(config.read_text(encoding="utf-8"))
         result["deep_mode"] = bool(settings.get("DeepMode"))
         if not settings.get("DeepMode"):
             result["fix"] = (
@@ -90,7 +90,7 @@ def _mono_gc_probe(pid: int | None) -> dict[str, Any]:
     if pid is None:
         return {"ok": False, "fix": "no target pid; GC/alloc uprobes unavailable"}
     try:
-        maps = Path(f"/proc/{pid}/maps").read_text(errors="replace")
+        maps = Path(f"/proc/{pid}/maps").read_text(encoding="utf-8", errors="replace")
     except OSError as error:
         return {"ok": False, "fix": f"cannot read /proc/{pid}/maps: {error}"}
     if "libmonobdwgc-2.0.so" in maps:
@@ -131,7 +131,9 @@ def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
     }
     paranoid: int | None = None
     with suppress(OSError, ValueError):
-        paranoid = int(Path("/proc/sys/kernel/perf_event_paranoid").read_text().strip())
+        paranoid = int(
+            Path("/proc/sys/kernel/perf_event_paranoid").read_text(encoding="ascii").strip()
+        )
     perf_ok = checks["perf"]["ok"] and (paranoid is None or paranoid <= 2 or os.geteuid() == 0)
     ebpf_ok = checks["bpftrace"]["ok"] and checks["sudo"]["ok"] and process_ok
     layers = {

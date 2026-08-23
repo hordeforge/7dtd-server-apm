@@ -10,7 +10,7 @@ from typing import Any
 
 def load_weights(path: Path) -> dict[str, int]:
     weights: dict[str, int] = defaultdict(int)
-    for line in path.read_text(errors="replace").splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         line = line.strip()
         if not line:
             continue

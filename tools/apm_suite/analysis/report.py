@@ -55,13 +55,13 @@ def load_texts(session: Path) -> dict[str, str]:
         "hw": session / "memory/hw_stat.txt",
     }
     texts = {
-        key: path.read_text(errors="replace") if path.exists() else ""
+        key: path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
         for key, path in mapping.items()
     }
     app_path = session / "app/bridge.jsonl"
     parts: list[str] = []
     if app_path.exists():
-        for line in app_path.read_text().splitlines():
+        for line in app_path.read_text(encoding="utf-8", errors="replace").splitlines():
             try:
                 record = json.loads(line)
                 parts.append(str(record.get("text") or record.get("error") or ""))
@@ -326,7 +326,7 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
     meta: dict[str, Any] = {}
     meta_path = session / "meta.json"
     if meta_path.is_file():
-        meta = json.loads(meta_path.read_text())
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
     duration = max(1.0, float(meta.get("seconds") or 1))
     scores = [
         _cpu_layer(hw, texts),
@@ -374,9 +374,9 @@ def thread_summary(session: Path) -> dict[str, Any]:
     main_tid = 0
     if meta_path.is_file():
         with contextlib.suppress(ValueError, OSError):
-            main_tid = int(json.loads(meta_path.read_text()).get("pid") or 0)
+            main_tid = int(json.loads(meta_path.read_text(encoding="utf-8")).get("pid") or 0)
     samples: list[dict[str, Any]] = []
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if line.strip():
             samples.append(json.loads(line))
     if not samples:
@@ -424,7 +424,7 @@ def memory_trend(session: Path) -> dict[str, Any]:
     times: list[float] = []
     rss: list[float] = []
     fds: list[int] = []
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
             continue
         try:
@@ -495,7 +495,7 @@ def _alloc_source_text(session: Path) -> str:
     """Full text of the mono_alloc probe output (jitsym-annotated when present)."""
     annotated = session / "runtime" / "mono_alloc.bt.annotated.txt"
     source = annotated if annotated.is_file() else session / "runtime" / "mono_alloc.bt.out"
-    return source.read_text(errors="replace") if source.is_file() else ""
+    return source.read_text(encoding="utf-8", errors="replace") if source.is_file() else ""
 
 
 def _alloc_block_sites(
@@ -544,7 +544,7 @@ def _rank_folded(folded: Path, limit: int) -> dict[str, list[tuple[str, float]]]
     inclusive: dict[str, int] = {}
     self_game: dict[str, int] = {}
     total = 0
-    for line in folded.read_text(errors="replace").splitlines():
+    for line in folded.read_text(encoding="utf-8", errors="replace").splitlines():
         sp = line.rsplit(" ", 1)
         if len(sp) != 2 or not sp[1].isdigit():
             continue
@@ -615,7 +615,7 @@ def top_stack_sites(session: Path, rel: str, header: str, limit: int = 3) -> lis
     source = annotated if annotated.is_file() else stem
     if not source.is_file():
         return []
-    block = source.read_text(errors="replace").partition(header)[2]
+    block = source.read_text(encoding="utf-8", errors="replace").partition(header)[2]
     sites: list[str] = []
     for line in block.splitlines():
         frame = line.strip()
@@ -911,7 +911,7 @@ def diagnose_lag(
 
 def _load_meta(session: Path) -> dict[str, Any]:
     meta_path = session / "meta.json"
-    return json.loads(meta_path.read_text()) if meta_path.exists() else {}
+    return json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
 
 
 def _apply_main_thread_pressure(layers: list[LayerScore], threads: dict[str, Any]) -> None:
@@ -1108,7 +1108,7 @@ def build_summary(session: Path) -> SummaryV2:
         # A malformed bridge snapshot must not lose the host-side evidence
         # collected below; drop just the snapshot-derived blocks instead.
         try:
-            loaded = json.loads(snapshot_path.read_text())
+            loaded = json.loads(snapshot_path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 snapshot = loaded
             metadata.update(_snapshot_metadata(snapshot or {}, texts.get("mono_alloc", "")))
@@ -1147,7 +1147,9 @@ def build_summary(session: Path) -> SummaryV2:
         prior_bridge = session / "csharp_bridge.json"
         if prior_bridge.is_file():
             with contextlib.suppress(Exception):
-                attribution = json.loads(prior_bridge.read_text()).get("attribution") or {}
+                attribution = (
+                    json.loads(prior_bridge.read_text(encoding="utf-8")).get("attribution") or {}
+                )
     metadata["lag_diagnosis"] = diagnose_lag(layers, metadata, threads, attribution, session)
 
     perf_dir = session / "cpu" / "perf"

@@ -72,7 +72,7 @@ def main() -> int:
     end = time.monotonic() + args.seconds
     cmds = ["apm status", "apm capabilities", "apm dump"]
 
-    with args.out.open("w") as fh:
+    with args.out.open("w", encoding="utf-8") as fh:
         while time.monotonic() < end:
             t = time.time()
             try:

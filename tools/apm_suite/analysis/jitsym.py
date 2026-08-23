@@ -18,7 +18,7 @@ HEX = re.compile(r"\b0x([0-9a-fA-F]{6,})\b")
 def load_map(map_path: Path) -> tuple[list[int], list[tuple[int, str]]]:
     starts: list[int] = []
     entries: list[tuple[int, str]] = []  # (end, symbol)
-    for line in map_path.read_text(errors="replace").splitlines():
+    for line in map_path.read_text(encoding="utf-8", errors="replace").splitlines():
         parts = line.split(maxsplit=2)
         if len(parts) != 3:
             continue
@@ -59,11 +59,11 @@ def annotate_session(session: Path) -> int:
         return 0
     touched = 0
     for out in session.glob("**/*.bt.out"):
-        text = out.read_text(errors="replace")
+        text = out.read_text(encoding="utf-8", errors="replace")
         if "0x" not in text:
             continue
         annotated = annotate(text, starts, entries)
         if annotated != text:
-            out.with_suffix(".annotated.txt").write_text(annotated)
+            out.with_suffix(".annotated.txt").write_text(annotated, encoding="utf-8")
             touched += 1
     return touched

@@ -10,13 +10,13 @@ for session in sorted(root.glob("session_*")):
     workload = session / "workload.json"
     if not workload.is_file():
         continue
-    w = json.loads(workload.read_text())
+    w = json.loads(workload.read_text(encoding="utf-8"))
     label = w.get("label", "")
     if not label.startswith("ladder-") or label.endswith("invalid"):
         continue
-    bridge = json.loads((session / "csharp_bridge.json").read_text())
+    bridge = json.loads((session / "csharp_bridge.json").read_text(encoding="utf-8"))
     attribution = bridge.get("attribution") or {}
-    summary = json.loads((session / "summary.json").read_text())
+    summary = json.loads((session / "summary.json").read_text(encoding="utf-8"))
     frame = (summary.get("metadata") or {}).get("frame") or {}
     scheduler: dict[Any, Any] = next(
         (L for L in summary.get("layers", []) if L.get("layer") == "scheduler"), {}

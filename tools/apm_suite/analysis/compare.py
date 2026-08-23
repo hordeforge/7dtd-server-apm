@@ -44,7 +44,7 @@ def load_sections(session: Path) -> dict[str, float]:
     if app.is_dir():
         for path in list(app.glob("apm_app*.json")) + list(app.glob("snapshot_*.json")):
             try:
-                obj = json.loads(path.read_text())
+                obj = json.loads(path.read_text(encoding="utf-8"))
             except json.JSONDecodeError:
                 continue
             for section in obj.get("sections") or []:
@@ -122,7 +122,10 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
     if workload_a.is_file() != workload_b.is_file():
         raise ValueError("only one session has a workload manifest")
     if workload_a.is_file():
-        doc_a, doc_b = json.loads(workload_a.read_text()), json.loads(workload_b.read_text())
+        doc_a, doc_b = (
+            json.loads(workload_a.read_text(encoding="utf-8")),
+            json.loads(workload_b.read_text(encoding="utf-8")),
+        )
         keys = ("mode", "target", "workload")
         if {k: doc_a.get(k) for k in keys} != {k: doc_b.get(k) for k in keys}:
             raise ValueError("workload manifests are not equivalent")

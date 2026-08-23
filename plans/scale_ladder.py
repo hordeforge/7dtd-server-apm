@@ -62,7 +62,12 @@ def alive() -> int:
     telnet(["apm dump"])
     time.sleep(2)
     try:
-        return int((json.loads(SNAPSHOT.read_text()).get("world") or {}).get("entityAlives") or 0)
+        return int(
+            (json.loads(SNAPSHOT.read_text(encoding="utf-8")).get("world") or {}).get(
+                "entityAlives"
+            )
+            or 0
+        )
     except (json.JSONDecodeError, OSError, ValueError):
         return -1
 
@@ -146,7 +151,8 @@ def main() -> int:
                 },
                 indent=2,
             )
-            + "\n"
+            + "\n",
+            encoding="utf-8",
         )
         print(f"  TIER {tier}: session={session.name} rc={result.returncode}", flush=True)
     print("LADDER COMPLETE", flush=True)

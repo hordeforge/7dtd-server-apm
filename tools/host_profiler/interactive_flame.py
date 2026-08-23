@@ -258,7 +258,7 @@ def main() -> int:
     args = ap.parse_args()
 
     if args.tree:
-        tree = json.loads(args.tree.read_text())
+        tree = json.loads(args.tree.read_text(encoding="utf-8"))
     elif args.input:
         rows = load_folded(args.input)
         if not rows:
@@ -282,7 +282,7 @@ def main() -> int:
         .replace("__SPEEDSCOPE_NAME__", html.escape(args.speedscope_name))
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(page)
+    args.output.write_text(page, encoding="utf-8")
     print(f"wrote {args.output} (open in browser; click to zoom)")
     return 0
 
