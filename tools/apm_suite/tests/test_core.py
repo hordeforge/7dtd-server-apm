@@ -1066,7 +1066,11 @@ def test_app_scrape_events_withhold_raw_console_text(tmp_path: Path) -> None:
     # carry player names, IPs, and Steam IDs; events must not echo them.
     pii = "Player 'Alice' joined [203.0.113.7:26900] steamid=76561198000000001"
     records = [
-        {"t": 1.0, "ok": True, "text": f"[7dtd-server-apm] SPIKE gmUpdateDuration=250.00ms\n{pii}\n"},
+        {
+            "t": 1.0,
+            "ok": True,
+            "text": f"[7dtd-server-apm] SPIKE gmUpdateDuration=250.00ms\n{pii}\n",
+        },
         {"t": 2.0, "ok": True, "text": f"spike counter bumped\n{pii}\n"},
     ]
     (session / "app/bridge.jsonl").write_text(
