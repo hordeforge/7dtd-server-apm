@@ -42,6 +42,9 @@ OUT="$ROOT/dist/7dtd-apm-bridge-$VERSION.zip"
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 cp -a "$ROOT/dist/7dtd-apm-bridge" "$STAGE/"
+# Debug symbols never ship: the release zip carries the DLL, ModInfo, Config,
+# and WebMod only.
+rm -f "$STAGE"/7dtd-apm-bridge/*.pdb
 # zip updates archives in place, so a rerun over an old zip would keep stale
 # members that vanished from dist; rebuild the artifact from scratch instead.
 rm -f "$OUT"

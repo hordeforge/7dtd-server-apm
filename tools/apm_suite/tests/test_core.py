@@ -12,7 +12,7 @@ from typing import Any
 
 import psutil
 import pytest
-from apm_suite import capture
+from apm_suite import capture, paths
 from apm_suite.analysis.bridge import match_rules, parse_section_line
 from apm_suite.analysis.events import PER_SOURCE_MAX, build_timeline
 from apm_suite.analysis.health import build_health
@@ -165,6 +165,43 @@ def test_scenario_matrix_rejects_missing_plan_file(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scenario", "matrix", str(tmp_path / "plan.json")])
     assert result.exit_code == 2
     assert "plan file not found" in result.stderr
+
+
+# --- unit: checkout backends guard ------------------------------------------
+
+
+def test_require_backends_passes_in_checkout() -> None:
+    # The repository tree always carries tools/apm/collectors.
+    paths.require_backends()
+
+
+def test_require_backends_fails_without_backend_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An installed-wheel copy ships only apm_suite; the guard must fail loudly
+    # instead of letting every collector die with file-not-found noise.
+    monkeypatch.setattr(paths, "APM_BACKENDS", tmp_path / "tools" / "apm")
+    with pytest.raises(RuntimeError, match="collector backends missing"):
+        paths.require_backends()
+    with pytest.raises(RuntimeError, match="collector backends missing"):
+        capture.run_capture(
+            seconds=1,
+            pid=1,
+            only="all",
+            no_app=False,
+            telnet_host="",
+            telnet_port=0,
+            telnet_password="",
+        )
+
+
+def test_flame_build_reports_missing_backends_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(paths, "APM_BACKENDS", tmp_path / "tools" / "apm")
+    result = runner.invoke(app, ["flame", "build", str(tmp_path)])
+    assert result.exit_code == 2
+    assert "collector backends missing" in result.stderr
 
 
 def test_doctor_json_stdout_is_machine_readable() -> None:

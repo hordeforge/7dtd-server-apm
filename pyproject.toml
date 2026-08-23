@@ -2,7 +2,14 @@
 name = "seven-dtd-apm"
 version = "2.1.0"
 description = "Host-only APM for 7 Days to Die dedicated servers"
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "7DTD performance toolkit contributors" }]
 requires-python = ">=3.11"
+classifiers = [
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3 :: Only",
+]
 dependencies = [
   "jinja2>=3.1,<4",
   "psutil>=6,<8",
@@ -10,6 +17,9 @@ dependencies = [
   "rich>=13.9,<15",
   "typer>=0.15,<1",
 ]
+
+[project.urls]
+Repository = "https://github.com/maci0/7dtd-apm"
 
 [project.scripts]
 7dtd-apm = "apm_suite.cli:app"
@@ -23,6 +33,8 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tools/apm_suite"]
+# Tests and fixtures are development material; they never ship in the wheel.
+exclude = ["tools/apm_suite/tests"]
 
 [tool.ruff]
 target-version = "py311"

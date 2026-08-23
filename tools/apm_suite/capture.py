@@ -26,7 +26,7 @@ from pydantic import ValidationError
 from . import __version__
 from .io import atomic_json, claim_dir
 from .models import BridgeSnapshotV3, CollectorResult, MetaV2, schema_dict
-from .paths import APM_BACKENDS, TOOLS, apm_root
+from .paths import APM_BACKENDS, TOOLS, apm_root, require_backends
 from .session import (
     keep_sessions_budget,
     list_sessions,
@@ -636,6 +636,7 @@ def run_capture(
     reset_bridge: bool = False,
     symbolize: bool = True,
 ) -> CaptureOutcome:
+    require_backends()
     if pid is None:
         pid = find_server_pid()
     if pid is None or not Path(f"/proc/{pid}").is_dir():

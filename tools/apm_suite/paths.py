@@ -25,3 +25,18 @@ def dedicated_dir() -> Path:
 def apm_root() -> Path:
     """Session data root. Sessions are data, not source; keep them out of the repo."""
     return _env_path("SEVENDTD_APM_DIR", Path.home() / ".local/share/7dtd-apm")
+
+
+def require_backends() -> None:
+    """Fail fast when the collector backends beside this package are absent.
+
+    The wheel ships only apm_suite; capture and flamegraph features shell out
+    to tools/apm and tools/host_profiler, which exist only in a repository
+    checkout. Raise instead of letting every collector fail one by one with
+    file-not-found noise.
+    """
+    if not (APM_BACKENDS / "collectors").is_dir():
+        raise RuntimeError(
+            f"collector backends missing at {APM_BACKENDS}; this command needs a "
+            "repository checkout (`uv sync && uv run 7dtd-apm ...`)"
+        )

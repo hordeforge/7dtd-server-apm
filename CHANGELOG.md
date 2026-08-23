@@ -48,6 +48,11 @@ major version.
   materialized events) instead of feeding readers misleading totals.
 - jitmap files with undecodable bytes no longer abort finalize; percentage
   shares are rounded instead of truncated.
+- Packaging: the wheel carries complete metadata (MIT license expression,
+  README, repository URL, author, classifiers) and no longer ships the test
+  suite; capture and flamegraph commands fail with one clear message when run
+  from an installed copy that lacks the collector backends instead of failing
+  per collector.
 
 ### Bridge mod
 
@@ -62,6 +67,10 @@ major version.
   `500 SNAPSHOT_FAILED` envelope when snapshot serialization fails instead of
   an unhandled handler exception. Panel toggle buttons re-enable after a
   no-op response (previously stuck busy until reload).
+- Packaging: the release zip no longer contains debug symbols (`.pdb`);
+  `make bridge-install` replaces files by atomic rename so an upgrade cannot
+  truncate a DLL the running server still has mapped, and reminds you to
+  restart the server.
 
 ## 2.2.3 (tag v2.2.3) - bridge mod - 2026-08-22
 

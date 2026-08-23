@@ -23,7 +23,7 @@ from .capture import find_server_pid, run_capture, unknown_only_tokens, write_pl
 from .doctor import inspect
 from .finalize import finalize as finalize_session
 from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json
-from .paths import REPO, apm_root
+from .paths import REPO, apm_root, require_backends
 from .runner import backend_python, run, terminate_tree
 from .session import (
     audit_session,
@@ -48,6 +48,15 @@ err_console = Console(stderr=True)
 def _exit(code: int) -> None:
     if code:
         raise typer.Exit(code)
+
+
+def _require_backends() -> None:
+    """CLI boundary for paths.require_backends: clean error instead of a traceback."""
+    try:
+        require_backends()
+    except RuntimeError as error:
+        err_console.print(f"[red]{error}[/red]")
+        raise typer.Exit(2) from None
 
 
 def _version_callback(value: bool) -> None:
@@ -996,12 +1005,14 @@ def scenario_matrix(
 @flame_app.command("build")
 def flame_build(directory: Path) -> None:
     """Render flamegraphs from a session's captured stacks."""
+    _require_backends()
     _exit(run([str(REPO / "tools/host_profiler/make_flames.sh"), str(directory)], check=False))
 
 
 @flame_app.command("diff")
 def flame_diff(before: Path, after: Path) -> None:
     """Build a differential flamegraph HTML from two sessions."""
+    _require_backends()
     _exit(
         backend_python(REPO / "tools/host_profiler/flame_diff_html.py", [str(before), str(after)])
     )
