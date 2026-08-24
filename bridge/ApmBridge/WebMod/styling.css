@@ -16,7 +16,21 @@
 
 .apm-tick-budget { display: flex; align-items: center; gap: .6rem; margin: .75rem 0; }
 .apm-budget-val { font-variant-numeric: tabular-nums; opacity: .8; min-width: 4.5rem; }
+/* Level meters are quantized segments, not continuous bars: the ::after
+   overlay slices the track into 12 discrete cells, and the unfilled track
+   stays visible so the distance to full reads at a glance. */
 .apm-bar { position: relative; flex: 1; height: 10px; border-radius: 5px; background: rgba(127,127,127,.18); overflow: hidden; }
+.apm-bar::after, .apm-topbar-track::after {
+  content: ""; position: absolute; inset: 0; pointer-events: none;
+  background-image: linear-gradient(90deg, rgba(10,12,16,.8) 1px, transparent 1px);
+  background-size: calc(100% / 12) 100%;
+}
+/* Values ease toward their target (and decay back down) instead of jumping
+   between polls. */
+.apm-bar-fill, .apm-topbar-fill { transition: width .45s cubic-bezier(.22,.61,.36,1); }
+@media (prefers-reduced-motion: reduce) {
+  .apm-bar-fill, .apm-topbar-fill { transition: none; }
+}
 .apm-bar-fill { height: 100%; background: #57d977; border-radius: 5px; }
 .apm-bar-fill.apm-warn { background: #e6bd3a; }
 .apm-bar-fill.apm-bad { background: #ff7070; }
@@ -114,7 +128,7 @@ a[data-for="tooltip-Efficiency"]::before {
 .apm-topbars h3 { margin: 0 0 .5rem; font-size: .85rem; color: #c8d2e0; }
 .apm-topbar-row { display: grid; grid-template-columns: 150px 1fr 64px; gap: .5rem; align-items: center; margin: .3rem 0; font-size: .8rem; }
 .apm-topbar-name { color: #c8d2e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.apm-topbar-track { background: rgba(127,127,127,.18); border-radius: 4px; height: 10px; overflow: hidden; }
+.apm-topbar-track { position: relative; background: rgba(127,127,127,.18); border-radius: 4px; height: 10px; overflow: hidden; }
 .apm-topbar-fill { height: 100%; border-radius: 4px; }
 .apm-topbar-fill.apm-ok { background: #2d6b3a; }
 .apm-topbar-fill.apm-warn { background: #e6bd3a; }
