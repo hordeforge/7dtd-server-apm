@@ -39,26 +39,21 @@ exclude = ["tools/apm_suite/tests"]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-exclude = ["research", "tools/apm/testdata"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RUF100"]
+# RET (return simplification) and W (incl. invalid escape sequences) were
+# adopted on 2026-08-24 with zero violations across tools/, scripts/, plans/.
+select = ["E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RET", "W", "RUF100"]
 ignore = ["E501"] # Formatter cannot wrap embedded HTML, regexes, and generated snippets safely.
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 mypy_path = "tools"
-files = [
-  "tools/apm_suite",
-  "tools/apm/collectors/app_scrape.py",
-  "tools/apm/collectors/threads.py",
-  "tools/host_profiler",
-  "scripts/check_version.py",
-  "scripts/coverage_badge.py",
-  "plans/ladder_report.py",
-  "plans/scale_ladder.py",
-]
+# Whole roots instead of a file allowlist: every Python file under these three
+# trees is type-checked, so a new module is covered by default rather than
+# silently escaping the gate until someone remembers to list it.
+files = ["tools", "scripts", "plans"]
 
 [tool.pytest.ini_options]
 pythonpath = ["tools"]
