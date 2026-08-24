@@ -83,29 +83,34 @@ def annotate_folded_line(line: str) -> str:
 
 
 def annotate_file(src: Path, dst: Path) -> dict[str, Any]:
-    lines_in = src.read_text(encoding="utf-8", errors="replace").splitlines()
-    out_lines = []
+    stats: dict[str, Any] = {"stacks": 0, "frames": 0, "tagged_frames": 0, "output": str(dst)}
     tagged = 0
     total_frames = 0
-    for line in lines_in:
-        if not line.strip():
-            continue
-        ann = annotate_folded_line(line)
-        out_lines.append(ann)
-        # count tags
-        stack = ann.rsplit(" ", 1)[0]
-        for fr in stack.split(";"):
-            total_frames += 1
-            if fr.startswith("["):
-                tagged += 1
+    stacks = 0
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_text("\n".join(out_lines) + ("\n" if out_lines else ""), encoding="utf-8")
-    return {
-        "stacks": len(out_lines),
-        "frames": total_frames,
-        "tagged_frames": tagged,
-        "output": str(dst),
-    }
+    # Streamed line by line: folded inputs reach hundreds of MB, and the former
+    # read-all/transform/join/write held roughly three resident copies of the
+    # file for nothing. Each emitted line ends with "\n" exactly like the
+    # former splitlines-join, so the bytes are unchanged.
+    with (
+        src.open("r", encoding="utf-8", errors="replace") as reader,
+        dst.open("w", encoding="utf-8") as writer,
+    ):
+        for line in reader:
+            ann = annotate_folded_line(line)
+            if not ann:
+                continue
+            stacks += 1
+            writer.write(ann + "\n")
+            stack = ann.rsplit(" ", 1)[0]
+            for fr in stack.split(";"):
+                total_frames += 1
+                if fr.startswith("["):
+                    tagged += 1
+    stats["stacks"] = stacks
+    stats["frames"] = total_frames
+    stats["tagged_frames"] = tagged
+    return stats
 
 
 def main() -> int:

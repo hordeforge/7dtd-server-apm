@@ -1429,6 +1429,38 @@ def test_jitsym_annotates_hex_against_map(tmp_path: Path) -> None:
     assert "0xdeadbeef" in out  # outside any range: left as-is
 
 
+def test_jitsym_annotate_session_streams_and_skips_unchanged(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The streaming rewrite must match the former whole-text pass: a changed
+    probe gets a byte-identical .annotated.txt twin; a probe whose hex never
+    resolves gets NO twin (an empty one would shadow the raw evidence for
+    readers that prefer the annotated file)."""
+    from apm_suite.analysis.jitsym import annotate, annotate_session, load_map
+
+    (tmp_path / "cpu/perf").mkdir(parents=True)
+    (tmp_path / "runtime").mkdir()
+    map_file = tmp_path / "cpu/perf/perf-7.map"
+    map_file.write_text("41e0155e 100 EntityAlive.updateTasks\n")
+    monkeypatch.chdir(tmp_path)
+    resolvable = tmp_path / "runtime" / "mono_alloc.bt.out"
+    resolvable.write_text("site 0x41e0155e\nplain line\n")
+    unresolvable = tmp_path / "runtime" / "futex.bt.out"
+    unresolvable.write_text("addr 0xdeadbeff no match\n")
+    plain = tmp_path / "scheduler" / "runqlat.bt.out"
+    plain.parent.mkdir(parents=True)
+    plain.write_text("no hex at all\n")
+
+    assert annotate_session(tmp_path) == 1
+
+    annotated = tmp_path / "runtime" / "mono_alloc.bt.annotated.txt"
+    assert annotated.is_file()
+    # Byte parity with the whole-text implementation, including line endings.
+    assert annotated.read_text() == annotate(resolvable.read_text(), *load_map(map_file))
+    assert not (tmp_path / "runtime" / "futex.bt.annotated.txt").exists()
+    assert not (tmp_path / "scheduler" / "runqlat.bt.annotated.txt").exists()
+
+
 def test_diagnose_lag_ranks_causes() -> None:
     from apm_suite.analysis.report import diagnose_lag
 

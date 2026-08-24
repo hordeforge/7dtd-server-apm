@@ -51,22 +51,28 @@ def load_texts(session: Path) -> dict[str, str]:
         "offcpu": session / "scheduler/offcpu.bt.out",
         "oncpu": session / "cpu/oncpu.bt.out",
         "mono_gc": session / "runtime/mono_gc.bt.out",
-        "mono_alloc": session / "runtime/mono_alloc.bt.out",
         "hw": session / "memory/hw_stat.txt",
     }
     texts = {
         key: path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
         for key, path in mapping.items()
     }
+    # mono_alloc is deliberately absent: the (forensic-sized) probe output is
+    # read once by _alloc_source_text in build_summary and shared with the
+    # site rankings; loading it here as well held two full copies resident.
     app_path = session / "app/bridge.jsonl"
     parts: list[str] = []
     if app_path.exists():
-        for line in app_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                record = json.loads(line)
-                parts.append(str(record.get("text") or record.get("error") or ""))
-            except json.JSONDecodeError:
-                pass
+        # Streamed like every other jsonl reader: each record carries a whole
+        # telnet reply, so the file can reach tens of MB without ever needing
+        # to be fully resident.
+        with app_path.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                    parts.append(str(record.get("text") or record.get("error") or ""))
+                except json.JSONDecodeError:
+                    pass
     texts["app"] = "\n".join(parts)
     return texts
 
@@ -1139,6 +1145,11 @@ def build_summary(session: Path) -> SummaryV2:
     metadata: dict[str, Any] = {}
     snapshot_path = session / "app/apm_app.json"
     snapshot: dict[str, Any] | None = None
+    # One read of the (forensic-sized) mono_alloc output feeds both the gross
+    # churn fallback below and the site rankings further down; the annotated
+    # variant preferred here carries the same counter lines (jitsym rewrites
+    # only hex address tokens).
+    alloc_text = _alloc_source_text(session)
     if snapshot_path.is_file():
         # A malformed bridge snapshot must not lose the host-side evidence
         # collected below; drop just the snapshot-derived blocks instead.
@@ -1146,7 +1157,7 @@ def build_summary(session: Path) -> SummaryV2:
             loaded = json.loads(snapshot_path.read_text(encoding="utf-8"))
             if isinstance(loaded, dict):
                 snapshot = loaded
-            metadata.update(_snapshot_metadata(snapshot or {}, texts.get("mono_alloc", "")))
+            metadata.update(_snapshot_metadata(snapshot or {}, alloc_text))
             if "gc" in metadata:
                 _apply_gc_pressure(layers, metadata["gc"])
             _apply_late_tick_pressure(layers, (snapshot or {}).get("update") or {})
@@ -1161,8 +1172,7 @@ def build_summary(session: Path) -> SummaryV2:
     net = _net_rates(texts.get("io_net", ""), net_window)
     if net:
         metadata["net"] = net
-    # One read of the (forensic-sized) alloc probe output feeds both rankings.
-    alloc_text = _alloc_source_text(session)
+    # The alloc text read above also feeds both site rankings.
     metadata["top_alloc_sites"] = top_alloc_sites(session, text=alloc_text)
     metadata["top_churn_sites"] = top_churn_sites(session, text=alloc_text)
     metadata["cpu_hot_paths"] = top_cpu_hot_paths(session)

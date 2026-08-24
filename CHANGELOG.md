@@ -19,6 +19,12 @@ major version.
 
 ### Host CLI
 
+- Performance: the SVG flamegraph builder no longer slices a prefix tuple per
+  stack depth (quadratic in stack depth) and renders without cyclic-GC passes;
+  a 50k-line folded profile drops from ~28 s to ~3 s with byte-identical
+  output. jitsym annotation and folded-stack annotation now stream their
+  inputs instead of holding whole probe outputs resident, and finalize reads
+  the forensic `mono_alloc` output once instead of twice.
 - Supply chain: CI actions run from immutable commit SHAs instead of mutable
   tags (`actions/checkout` v4.4.0; `astral-sh/setup-uv` updated v6 to
   v10.0.1), Dependabot keeps `uv.lock` and those pins current weekly, and a
