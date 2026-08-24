@@ -8,7 +8,7 @@ import tempfile
 import time
 import unicodedata
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -26,7 +26,7 @@ from .capture import (
     unknown_only_tokens,
     write_plan_text,
 )
-from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json
+from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json, member_is_safe
 from .models import as_number, layer_signals
 from .paths import REPO, apm_root, require_backends
 from .runner import backend_python, run, terminate_tree
@@ -324,8 +324,7 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
 
 def _member_is_safe(name: str) -> bool:
     # Zip-slip guard: bundle members must stay inside the restore target.
-    candidate = PurePosixPath(name)
-    return not candidate.is_absolute() and ".." not in candidate.parts
+    return member_is_safe(name)
 
 
 # Decompression-bomb guard for imported evidence bundles (they arrive from

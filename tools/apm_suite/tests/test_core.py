@@ -897,6 +897,37 @@ def test_audit_accepts_newly_attached_artifacts(tmp_path: Path) -> None:
     assert "valid" in result.stdout
 
 
+def test_audit_rejects_manifest_paths_escaping_the_session(tmp_path: Path) -> None:
+    """A planted manifest.json (imported bundles carry one) must not aim the
+    recorded-hash check at files outside the session via absolute paths or
+    '..' segments: those records are integrity failures, never reads."""
+    session = _session(tmp_path / "session_escape")
+    assert audit_session(session)[1]
+    outside = tmp_path / "outside.secret"
+    outside.write_text("host file the manifest must not reach")
+    atomic_json(
+        session / "manifest.json",
+        {
+            "schema": "7dtd.apm.manifest.v2",
+            "session_id": session.name,
+            "started_at": "2026-08-24T00:00:00+00:00",
+            "target": {"pid": 1, "comm": "7DaysToDieServe", "exe": "", "cmdline": ""},
+            "requested_layers": [],
+            "artifacts": [
+                # Absolute path and traversal both resolve outside the session;
+                # sha256 is a syntactically valid digest so only the containment
+                # check can reject these records.
+                {"path": str(outside), "bytes": outside.stat().st_size, "sha256": "0" * 64},
+                {"path": "../outside.secret", "bytes": 40, "sha256": "a" * 64},
+            ],
+        },
+    )
+    result = runner.invoke(app, ["audit", str(session)])
+    assert result.exit_code == 1
+    assert "escapes the session directory" in result.stderr
+    assert "outside.secret" in result.stderr
+
+
 def test_bridge_export_period_from_config_or_default(tmp_path: Path) -> None:
     """The monitor's stale-read threshold keys off the bridge's export cadence
     (PeriodicExportSeconds), falling back to 30 on absent/invalid config; a

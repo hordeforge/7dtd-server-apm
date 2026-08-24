@@ -13,7 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 
 from .collectors import SPEC_BY_NAME
-from .io import _sync_parent_directory, atomic_json, file_sha256, load_json
+from .io import _sync_parent_directory, atomic_json, file_sha256, load_json, member_is_safe
 from .models import (
     Artifact,
     BridgeSnapshotV3,
@@ -365,6 +365,12 @@ def verify_recorded_hashes(session: Path) -> list[str]:
         return ["recorded manifest.json is unreadable; integrity baseline lost"]
     errors: list[str] = []
     for artifact in recorded.artifacts:
+        # Recorded paths are untrusted (imported bundles carry their own
+        # manifest.json): an absolute path or ".." segment would point this
+        # hash check at arbitrary host files outside the session.
+        if not member_is_safe(artifact.path):
+            errors.append(f"integrity: {artifact.path} escapes the session directory")
+            continue
         current = session / artifact.path
         if not current.is_file():
             errors.append(f"integrity: {artifact.path} is recorded but missing")
