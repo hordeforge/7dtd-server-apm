@@ -57,7 +57,7 @@ jobs:
           fi
           cp "$RUNNER_TEMP/coverage.svg" badge-repo/
           cd badge-repo
-git remote remove origin 2>/dev/null || true
+          git remote remove origin 2>/dev/null || true
           git remote add origin "$url"
           git config user.name "hordeforge-ci"
           git config user.email "ci@hordeforge.noreply.github.com"
