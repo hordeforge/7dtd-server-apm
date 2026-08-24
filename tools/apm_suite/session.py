@@ -337,6 +337,10 @@ def purge_expired_trash(
             if entry.stat().st_mtime > cutoff:
                 continue
             shutil.rmtree(entry)
+        except FileNotFoundError:
+            # A concurrent purge got there first: same contract as
+            # remove_sessions, the intended end state already holds.
+            yield entry, None
         except OSError as error:
             yield entry, error
         else:
@@ -372,6 +376,10 @@ def purge_stale_scenario_runs(
             if entry.stat().st_mtime > cutoff:
                 continue
             entry.unlink()
+        except FileNotFoundError:
+            # A concurrent purge got there first: the file is gone, which is
+            # the intended end state, not a purge failure.
+            yield entry, None
         except OSError as error:
             yield entry, error
         else:

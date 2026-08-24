@@ -447,9 +447,22 @@ namespace DtdApmBridge
         public static void QueueLatest()
         {
             if (Interlocked.CompareExchange(ref _exportQueued, 1, 0) != 0) { Interlocked.Increment(ref _droppedExports); return; }
-            ThreadPool.QueueUserWorkItem(_ => { try { Write(Path.Combine(BridgeMod.OutputDir, "apm_app_latest.json")); }
-                catch (Exception ex) { _lastExportError = ex.GetType().Name + ": " + ex.Message; BridgeMod.Log("export failed: " + _lastExportError); }
-                finally { Interlocked.Exchange(ref _exportQueued, 0); } });
+            try { ThreadPool.QueueUserWorkItem(RunExport); }
+            catch (Exception ex)
+            {
+                // Enqueue itself failed (OOM, TP unavailable): RunExport's finally
+                // can never run, so release the single-flight flag here or every
+                // later export is counted as dropped until the next restart.
+                Interlocked.Exchange(ref _exportQueued, 0);
+                _lastExportError = ex.GetType().Name + ": " + ex.Message;
+                BridgeMod.Log("export enqueue failed: " + _lastExportError);
+            }
+        }
+        static void RunExport(object _)
+        {
+            try { Write(Path.Combine(BridgeMod.OutputDir, "apm_app_latest.json")); }
+            catch (Exception ex) { _lastExportError = ex.GetType().Name + ": " + ex.Message; BridgeMod.Log("export failed: " + _lastExportError); }
+            finally { Interlocked.Exchange(ref _exportQueued, 0); }
         }
         public static string Dump()
         {

@@ -450,13 +450,23 @@ def _sudo_available() -> bool:
 def _place_perf_map_link(map_source: Path, map_link: Path) -> None:
     """Point perf's hardcoded /tmp/perf-<pid>.map at this capture's map.
 
+    The swap is atomic (symlink staged under a temp name, then rename(2)): an
+    overlapping capture against the same pid polls this path continuously, and
+    the former unlink-then-symlink pair let a reader observe the link absent
+    between the two calls and record the whole window with unresolved frames.
+
     Raises OSError when the swap is impossible (a stale link owned by another
     user after pid reuse survives the sticky /tmp); the caller records that as
     a session warning instead of letting perf silently resolve this capture's
     JIT frames against the previous process's map.
     """
-    map_link.unlink(missing_ok=True)
-    map_link.symlink_to(map_source)
+    temp = map_link.with_name(f".{map_link.name}.{os.getpid()}.tmp")
+    temp.symlink_to(map_source)
+    try:
+        os.replace(temp, map_link)
+    except OSError:
+        temp.unlink(missing_ok=True)
+        raise
 
 
 def _export_jitmap(
@@ -496,9 +506,20 @@ def _export_jitmap(
     if not (map_source.is_file() and map_source.stat().st_size):
         _warn(session, "bridge jitmap export failed; managed perf frames stay [jit]")
         return
+    # Keep a copy in-session so finalize can annotate JIT addresses in
+    # any bpftrace output (allocation/stall sites), not just perf flames.
+    # Copy BEFORE publishing the /tmp name: whatever the link names must be
+    # complete when it appears, or this capture's own perf run (and any
+    # overlapping capture against the same pid) resolves managed frames
+    # against a missing or half-written file. On copy failure fall back to
+    # linking the bridge's own stable copy rather than a partial file.
+    link_target = map_source
+    with suppress(OSError):
+        shutil.copy2(map_source, session / "runtime" / f"perf-{pid}.map")
+        link_target = session / "runtime" / f"perf-{pid}.map"
     map_link = Path(f"/tmp/perf-{pid}.map")
     try:
-        _place_perf_map_link(map_source, map_link)
+        _place_perf_map_link(link_target, map_link)
     except OSError as error:
         # A stale link owned by another user (pid reuse on a shared host,
         # sticky /tmp) must not pass silently: perf would resolve this
@@ -509,10 +530,6 @@ def _export_jitmap(
             f"cannot replace {map_link}: {error}; managed perf frames are "
             "unresolved or misattributed; remove the stale map manually",
         )
-    # Keep a copy in-session so finalize can annotate JIT addresses in
-    # any bpftrace output (allocation/stall sites), not just perf flames.
-    with suppress(OSError):
-        shutil.copy2(map_source, session / "runtime" / f"perf-{pid}.map")
     with map_source.open(encoding="utf-8", errors="replace") as handle:
         symbols = sum(1 for _ in handle)
     print(f">> jitmap: {symbols} managed symbols mapped")
