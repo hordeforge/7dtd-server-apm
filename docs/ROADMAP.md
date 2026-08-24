@@ -15,7 +15,7 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 6. [ ] Per-thread CPU attribution (which threads burn CPU)
 7. [ ] Main-thread starvation vs worker imbalance classifier
 8. [ ] Idle-vs-loaded baseline delta in every report
-9. [x] p99/p99.9 tick health (not just avg + late count)
+9. [ ] p99/p99.9 tick health (not just avg + late count)
 10. [ ] Tick jitter/variance metric
 11. [ ] Flag when observer overhead (bridge/telnet) is material
 12. [x] Allocation-per-tick metric (gross alloc / tick)
@@ -72,8 +72,8 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 55. [ ] Grafana dashboard JSON
 
 ## F. Budget / CI
-56. [x] Budget on network subsystem share
-57. [x] Budget on p99 tick
+56. [ ] Budget on network subsystem share
+57. [ ] Budget on p99 tick
 58. [ ] Budget on per-player cost (ms/player)
 59. [ ] Auto-baseline from a golden session
 60. [ ] Named budget profiles per scenario

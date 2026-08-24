@@ -1,7 +1,7 @@
 # Canonical load profile
 
 **Owns:** pinned reference workloads for fair APM / optim A/B.  
-**Not:** how APM scores evidence ([APM](APM.md)), bot protocol ([../README](../README.md) in loadgen).
+**Not:** how APM scores evidence ([APM](APM.md)), bot protocol ([README](../../7dtd-loadgen/docs/README.md) in loadgen).
 
 `canonical-heavy-v2` is **the** reference workload for comparing builds and
 settings. It is a **heavy** mixed load - it exercises the whole server at once

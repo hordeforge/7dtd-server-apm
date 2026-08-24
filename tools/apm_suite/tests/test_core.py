@@ -569,6 +569,10 @@ def test_bridge_status_tolerates_non_object_config(
     (mods / "Config").mkdir(parents=True)
     (mods / "7dtd-server-apm-bridge.dll").write_bytes(b"dll")
     monkeypatch.setattr(doctor, "dedicated_dir", lambda: tmp_path)
+    # Isolate REPO so _bridge_status cannot compare against a real dist build
+    # from the working tree; this test pins the malformed-config posture, not
+    # the stale-DLL verdict.
+    monkeypatch.setattr(doctor, "REPO", tmp_path)
     for body in ("[1, 2]", '"DeepMode"', "42", "null", ""):
         (mods / "Config/apmbridge.json").write_text(body)
         status = doctor._bridge_status()

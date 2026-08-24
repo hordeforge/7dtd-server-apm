@@ -11,10 +11,11 @@ sidebar entry (a module route, not a Settings tab) and authenticated
 snapshot used by console capture. The endpoint defaults to administrator
 permission level 0. Enable `WebDashboardEnabled`, browse to its configured port
 (8080 in the loadgen profile), and sign in normally; the mod opens no separate
-web listener. The menu entry is registered only when the web session cookie is
-present (the dashboard reloads after login/logout), so it is hidden while
-logged out; a logged-in non-admin sees the entry and an "admin access
-required" state from the panel, since the endpoint stays at permission 0.
+web listener. The menu entries are registered unconditionally (the session
+cookie is HttpOnly, so client-side JS cannot see it to gate registration); a
+logged-out or non-admin visitor sees the entry and the panel's
+"Authentication required" state after its first poll answers 403, since the
+endpoints stay at permission 0.
 The panel also hosts an admin switch for the sibling EfficientServer perf mod:
 `GET/POST /api/perf` reads/flips its config `Enabled` flag and individual
 feature groups (`{"group": "...", "enabled": bool}` or batch

@@ -10,7 +10,7 @@ every bpftrace probe against your installed toolchain.
 
 | Component | Supported | Notes |
 |-----------|-----------|-------|
-| 7 Days to Die dedicated | V2.x, V3.x (build `7DaysToDieServe`) | Bridge hooks are verified against the game assembly hash at load; mismatches are recorded in bridge metadata and the bridge disables deep hooks. |
+| 7 Days to Die dedicated | V2.x, V3.x (build `7DaysToDieServe`) | Bridge startup records the game assembly version and SHA-256 in its metadata; hooks resolve by name, marking missing methods `unavailable` without blocking the rest. Deep hooks are gated solely by the bridge config (`DeepMode`), so after a game update re-verify timings rather than expecting a hard failure. |
 | Linux kernel | >= 5.15 with BTF (`CONFIG_DEBUG_INFO_BTF=y`) | Needed by bpftrace kprobes/tracepoints. Older kernels lose the `runtime_gc`, `sync_locks`, `scheduler`, and `io` layers; the session then reports them `unavailable`, never zero. |
 | perf | >= 5.15 (matching kernel preferred) | `perf_event_paranoid <= 2` or root for per-process counters; frame-pointer call graphs (Mono keeps FP; dwarf cannot unwind JIT code and bloats perf.data ~100x). |
 | bpftrace | >= 0.17 | `--dry-run` used by `make check-bt`. Root (via narrow `sudo -n` rules) required to attach probes. |

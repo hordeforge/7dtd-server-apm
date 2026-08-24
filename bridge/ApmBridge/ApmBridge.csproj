@@ -8,7 +8,10 @@
     <!-- The tree compiles warning-free; a new compiler diagnostic must be
          resolved, not scrolled past (release DLLs ship from this project). -->
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
-    <AssemblyName>7dtd-apm-bridge</AssemblyName>
+    <!-- Must match ModInfo.xml Name: the game's mod loader resolves the mod
+         DLL as <ModFolderName>.dll, and install_bridge.sh/doctor copy and
+         check that exact filename. -->
+    <AssemblyName>7dtd-server-apm-bridge</AssemblyName>
     <RootNamespace>DtdApmBridge</RootNamespace>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <OutputPath>$(BridgeOutput)</OutputPath>
@@ -19,7 +22,7 @@
          DLL) to a fixed prefix. Verified by rebuilding from two directories
          and comparing sha256. -->
     <Deterministic>true</Deterministic>
-    <PathMap>$(MSBuildThisFileDirectory)=/usr/src/7dtd-apm-bridge/</PathMap>
+    <PathMap>$(MSBuildThisFileDirectory)=/usr/src/7dtd-server-apm-bridge/</PathMap>
     <!-- The SDK also feeds two generated inputs to the compiler whose content
          contains the absolute checkout path (obj/*/ApmBridge.sourcelink.json
          and the generated analyzer .editorconfig), which would re-leak the

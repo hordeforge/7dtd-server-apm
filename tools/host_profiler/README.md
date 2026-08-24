@@ -59,7 +59,7 @@ sudo -n bpftrace /tmp/cpu_profile.bt
 uv run 7dtd-server-apm audit SESSION
 uv run 7dtd-server-apm bridge SESSION
 
-# Low-level helper (expects a capture dir with proc.jsonl):
+# Low-level helper (expects a session dir with memory/proc.jsonl):
 uv run python tools/host_profiler/correlate.py \
   --capture ~/.local/share/7dtd-server-apm/session_... \
   --game-log /path/to/server/output_log.txt

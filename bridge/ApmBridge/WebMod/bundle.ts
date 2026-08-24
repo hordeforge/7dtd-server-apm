@@ -1,8 +1,9 @@
 // 7dtd-server-apm-bridge WebMod (TypeScript source).
 // Compiled to bundle.js by `tsc -p WebMod/tsconfig.json` (wired into
 // scripts/build_bridge.sh). The dashboard loads /webmods/7dtd-server-apm-bridge/bundle.js
-// and reads window["7dtd-server-apm-bridge"]: routes render as direct sidebar entries
-// (hidden until the sid session cookie is present), settings as Settings tabs.
+// and reads window["7dtd-server-apm-bridge"]: routes render as direct sidebar entries,
+// settings as Settings tabs (both registered unconditionally; the panels
+// render their auth-required state when the session lacks admin rights).
 // Do not hand-edit bundle.js; regenerate from this file.
 //
 // The whole body is an IIFE on purpose: webmod bundles are plain <script> tags

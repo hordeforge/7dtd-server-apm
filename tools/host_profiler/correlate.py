@@ -6,7 +6,8 @@ Usage:
     --capture ~/.local/share/7dtd-server-apm/session_... \
     --game-log /path/to/server/output_log.txt
 
-Prefers APM session dirs (proc.jsonl). Legacy EfficientServer SPIKE lines still parse if present.
+Prefers APM session dirs (memory/proc.jsonl; a root-level proc.jsonl from
+older layouts still works). Legacy EfficientServer SPIKE lines still parse if present.
 """
 
 from __future__ import annotations
@@ -39,9 +40,9 @@ def parse_ts(s: str) -> float:
 
 
 def load_proc(capture: Path) -> list[dict[str, Any]]:
-    p = capture / "proc.jsonl"
+    p = capture / "memory" / "proc.jsonl"
     if not p.exists():
-        return []
+        p = capture / "proc.jsonl"
     return [
         json.loads(line)
         for line in p.read_text(encoding="utf-8", errors="replace").splitlines()
