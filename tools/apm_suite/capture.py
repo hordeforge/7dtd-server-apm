@@ -447,6 +447,18 @@ def _sudo_available() -> bool:
         return False
 
 
+def _place_perf_map_link(map_source: Path, map_link: Path) -> None:
+    """Point perf's hardcoded /tmp/perf-<pid>.map at this capture's map.
+
+    Raises OSError when the swap is impossible (a stale link owned by another
+    user after pid reuse survives the sticky /tmp); the caller records that as
+    a session warning instead of letting perf silently resolve this capture's
+    JIT frames against the previous process's map.
+    """
+    map_link.unlink(missing_ok=True)
+    map_link.symlink_to(map_source)
+
+
 def _export_jitmap(
     session: Path, pid: int, telnet_host: str, telnet_port: int, telnet_password: str
 ) -> None:
@@ -477,9 +489,18 @@ def _export_jitmap(
         _warn(session, "bridge jitmap export failed; managed perf frames stay [jit]")
         return
     map_link = Path(f"/tmp/perf-{pid}.map")
-    with suppress(OSError):
-        map_link.unlink(missing_ok=True)
-        map_link.symlink_to(map_source)
+    try:
+        _place_perf_map_link(map_source, map_link)
+    except OSError as error:
+        # A stale link owned by another user (pid reuse on a shared host,
+        # sticky /tmp) must not pass silently: perf would resolve this
+        # capture's JIT frames against the previous process's map, i.e.
+        # misattribute them, which is worse than declaring frames [jit].
+        _warn(
+            session,
+            f"cannot replace {map_link}: {error}; managed perf frames are "
+            "unresolved or misattributed; remove the stale map manually",
+        )
     # Keep a copy in-session so finalize can annotate JIT addresses in
     # any bpftrace output (allocation/stall sites), not just perf flames.
     with suppress(OSError):

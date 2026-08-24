@@ -3361,6 +3361,44 @@ def test_scaling_skips_unreadable_summaries_like_missing_ones(tmp_path: Path) ->
     assert result["scales"] == [5.0, 20.0]  # torn session excluded, fit survives
 
 
+# --- perf map link swap ------------------------------------------------------------
+
+
+def test_place_perf_map_link_swaps_stale_link(tmp_path: Path) -> None:
+    """pid reuse leaves the previous capture's link at /tmp/perf-<pid>.map;
+    a fresh capture must be able to replace it with its own map."""
+    map_source = tmp_path / "telemetry" / "perf-4242.map"
+    map_source.parent.mkdir()
+    map_source.write_text("sym 0x0\n", encoding="utf-8")
+    stale = tmp_path / "perf-4242.map"
+    stale.write_text("old-process symbols\n", encoding="utf-8")
+
+    capture._place_perf_map_link(map_source, stale)
+
+    assert stale.is_symlink()
+    assert stale.resolve() == map_source.resolve()
+
+
+def test_place_perf_map_link_failure_degrades_to_warn(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An unplaceable /tmp link (sticky-bit owner mismatch) must land in
+    WARN.txt instead of silently letting perf misattribute JIT frames."""
+    session = tmp_path / "session_jitmap"
+    session.mkdir()
+    map_source = tmp_path / "telemetry" / "perf-4242.map"
+    map_source.parent.mkdir()
+    map_source.write_text("sym 0x0\n", encoding="utf-8")
+    unreachable_link = tmp_path / "no-such-dir" / "perf-4242.map"
+
+    with pytest.raises(OSError):
+        capture._place_perf_map_link(map_source, unreachable_link)
+
+    capture._warn(session, f"cannot replace {unreachable_link}: simulated")
+    assert "cannot replace" in (session / "WARN.txt").read_text(encoding="utf-8")
+    assert "WARN:" in capsys.readouterr().err
+
+
 # --- live server (opt-in) ----------------------------------------------------------
 
 
