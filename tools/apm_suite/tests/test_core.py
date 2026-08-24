@@ -9,6 +9,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import psutil
@@ -331,6 +332,181 @@ def test_scenario_matrix_rejects_missing_plan_file(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scenario", "matrix", str(tmp_path / "plan.json")])
     assert result.exit_code == 2
     assert "plan file not found" in result.stderr
+
+
+# --- scenario run orchestration ---------------------------------------------------
+#
+# `scenario run` is fully hermetic here: the sibling loadgen script, the loadgen
+# process, and run_capture are all faked, because a real invocation would spawn
+# the actual bot cohort found on development hosts.
+
+
+class _FakeLoadgenProcess:
+    def __init__(self, returncode: int) -> None:
+        self.pid = 424242
+        self.returncode = returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+
+class _CaptureOutcome:
+    def __init__(self, session: Path, exit_code: int) -> None:
+        self.session = session
+        self.exit_code = exit_code
+
+
+def _scenario_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    manifest_body: str | None = None,
+    stats_body: str | None = None,
+    capture_rc: int = 0,
+    loadgen_rc: int = 0,
+) -> tuple[Path, list[str], list[dict[str, object]], Path]:
+    """Isolate `scenario run` behind fakes; returns (session, loadgen argvs,
+    captured run_capture kwargs, store root). The run_capture stub also plays
+    the loadgen writing its manifest + stats beside the claimed path."""
+    import apm_suite.cli as cli_module
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    loadgen = tmp_path / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
+    loadgen.parent.mkdir(parents=True)
+    loadgen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    store = tmp_path / "store"
+    store.mkdir()
+
+    started: list[str] = []
+    captured: list[dict[str, object]] = []
+
+    def fake_popen(argv: list[str], **_kwargs: object) -> _FakeLoadgenProcess:
+        started.append(str(argv[0]))
+        return _FakeLoadgenProcess(loadgen_rc)
+
+    monkeypatch.setattr(
+        cli_module,
+        "subprocess",
+        SimpleNamespace(Popen=fake_popen, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    monkeypatch.setattr(cli_module, "REPO", repo)
+    monkeypatch.setattr(cli_module, "apm_root", lambda: store)
+
+    session = _session(tmp_path / "session_scn")
+
+    def fake_run_capture(**kwargs: object) -> _CaptureOutcome:
+        captured.append(kwargs)
+        if manifest_body is not None:
+            claimed = sorted((store / ".scenario").glob("loadgen_*.json"))
+            assert len(claimed) == 1
+            claimed[0].write_text(manifest_body, encoding="utf-8")
+            if stats_body is not None:
+                claimed[0].with_name(f"{claimed[0].stem}_stats.json").write_text(
+                    stats_body, encoding="utf-8"
+                )
+        return _CaptureOutcome(session, capture_rc)
+
+    monkeypatch.setattr(cli_module, "run_capture", fake_run_capture)
+    return session, started, captured, store
+
+
+def test_scenario_run_rejects_unknown_preset_before_any_side_effect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The preset gate runs first: nothing spawned, no manifest claimed."""
+    _, started, _, store = _scenario_env(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["scenario", "run", "--preset", "bogus"])
+    assert result.exit_code == 2
+    assert "preset must be standard, deep, or forensic" in result.stderr
+    assert started == []
+    assert not (store / ".scenario").exists()
+
+
+def test_scenario_run_names_missing_sibling_loadgen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing sibling tree must fail with the resolved path instead of a
+    FileNotFoundError from Popen. The real sibling exists on dev hosts, so the
+    lookup is pointed at an empty repo root for hermeticity."""
+    import apm_suite.cli as cli_module
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setattr(cli_module, "REPO", tmp_path / "empty_repo")
+    monkeypatch.setattr(cli_module, "apm_root", lambda: store)
+    result = runner.invoke(app, ["scenario", "run"], env={"COLUMNS": "4096"})
+    assert result.exit_code == 2
+    expected = (tmp_path / "empty_repo").parent / "7dtd-loadgen/scripts/run_loadgen.sh"
+    assert str(expected) in result.stderr
+    assert "sibling load generator not found" in result.stderr
+    assert not (store / ".scenario").exists()
+
+
+def test_scenario_run_validates_rally_at_before_starting_loadgen(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A typo'd --rally-at must fail fast with no leaked subprocess and no
+    wasted warmup (documented ordering in scenario_run)."""
+    _, started, _, _store = _scenario_env(tmp_path, monkeypatch)
+    result = runner.invoke(app, ["scenario", "run", "--rally-at", "north"])
+    assert result.exit_code == 2
+    squashed = _squashed(result.stderr)
+    # The rich error panel wraps mid-token, so match the tail of the message.
+    assert "expects'x,z'" in squashed
+    assert "'north'" in squashed
+    assert started == []
+
+
+def test_scenario_run_attaches_workload_manifest_and_stats(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The attach step must copy the loadgen-written manifest into the session
+    with the label and botMode default recorded, copy the stats file, and audit
+    the resulting evidence; the default preset maps to its documented collectors."""
+    session, started, captured, _store = _scenario_env(
+        tmp_path,
+        monkeypatch,
+        manifest_body='{"mode": "clients", "target": "standard", "seed": 7}',
+        stats_body='{"actions_done": 500}\n',
+    )
+    result = runner.invoke(
+        app,
+        ["scenario", "run", "--seconds", "5", "--label", "perf-fix"],
+        env={"COLUMNS": "4096"},
+    )
+    assert result.exit_code == 0, result.output
+    assert len(started) == 1  # exactly one loadgen launch
+    assert captured[0]["only"] == "app,threads,memory,cpu"  # standard preset table
+    workload = load_json(session / "workload.json")
+    assert workload["label"] == "perf-fix"
+    assert workload["mode"] == "clients"
+    assert workload["workload"]["botMode"] == "auto"  # recorded default, not absent
+    assert (session / "loadgen_stats.json").read_text() == '{"actions_done": 500}\n'
+    # The post-capture audit ran over the attached evidence.
+    assert load_json(session / "manifest.json")["schema"] == "7dtd.apm.manifest.v2"
+    assert "workload manifest attached" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "body,message",
+    [
+        ('{"mode": ', "loadgen manifest unreadable, not attached"),
+        ("[1, 2]", "loadgen manifest is not a JSON object, not attached"),
+    ],
+)
+def test_scenario_run_survives_bad_loadgen_manifest_and_still_audits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, body: str, message: str
+) -> None:
+    """A torn or non-object manifest write (loadgen killed mid-flush) must not
+    crash the attach after the capture succeeded: report it, attach nothing,
+    and still audit the session evidence."""
+    session, _started, _captured, _store = _scenario_env(tmp_path, monkeypatch, manifest_body=body)
+    result = runner.invoke(app, ["scenario", "run"], env={"COLUMNS": "4096"})
+    assert result.exit_code == 0, result.output  # the capture itself succeeded
+    assert message in result.stderr
+    assert not (session / "workload.json").exists()
+    assert (session / "manifest.json").is_file()
 
 
 # --- unit: checkout backends guard ------------------------------------------

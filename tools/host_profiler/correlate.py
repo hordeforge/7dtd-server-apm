@@ -33,7 +33,7 @@ def parse_ts(s: str) -> float:
     # stamping the naive value as UTC would shift every match by the UTC
     # offset and miss the window on any non-UTC host.
     try:
-        return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").timestamp()
+        return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").timestamp()  # noqa: DTZ007 -- naive on purpose, see rationale above
     except ValueError:
         return 0.0
 

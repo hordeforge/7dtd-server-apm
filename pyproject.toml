@@ -43,7 +43,10 @@ line-length = 100
 [tool.ruff.lint]
 # RET (return simplification) and W (incl. invalid escape sequences) were
 # adopted on 2026-08-24 with zero violations across tools/, scripts/, plans/.
-select = ["E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RET", "W", "RUF100"]
+# PLE (pylint errors), YTT (sys-version traps), and DTZ (naive datetimes) were
+# adopted on 2026-08-25 with zero violations; DTZ's single deliberate naive
+# strptime carries a scoped noqa at tools/host_profiler/correlate.py.
+select = ["E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RET", "W", "DTZ", "PLE", "YTT", "RUF100"]
 ignore = ["E501"] # Formatter cannot wrap embedded HTML, regexes, and generated snippets safely.
 
 [tool.mypy]
@@ -54,6 +57,17 @@ mypy_path = "tools"
 # trees is type-checked, so a new module is covered by default rather than
 # silently escaping the gate until someone remembers to list it.
 files = ["tools", "scripts", "plans"]
+# Beyond strict: an unreachable branch usually means dead code or a type lie,
+# and these error codes are not part of strict. All four pass the tree clean
+# as of 2026-08-25; bare ignores were already banned de facto (every existing
+# ignore carries its error code).
+warn_unreachable = true
+enable_error_code = [
+  "ignore-without-code",
+  "possibly-undefined",
+  "redundant-self",
+  "deprecated",
+]
 
 [tool.pytest.ini_options]
 pythonpath = ["tools"]

@@ -254,6 +254,7 @@ def _sample_loop(
             f"{rel:8.1f} {s.cpu_pct:7.1f} {s.rss_mb:8.1f} {s.num_threads:3d} {s.fd_count:4d} "
             f"{dr:7.2f} {dw:7.2f} {dvc:5d} {dnc:5d}"
         )
+        rec = asdict(s)
         if args.threads:
             # One walk of /proc/pid/task per sample feeds both the console line
             # and the JSONL record; a second call would re-read stat+comm for
@@ -261,8 +262,6 @@ def _sample_loop(
             thr = top_threads(pid)
             for t in thr[:5]:
                 print(f"    tid={t['tid']:<7} {t['comm']:<16} ticks={t['cpu_ticks']}")
-        rec = asdict(s)
-        if args.threads:
             rec["top_threads"] = thr
         if out_fh is not None:
             out_fh.write(json.dumps(rec) + "\n")
