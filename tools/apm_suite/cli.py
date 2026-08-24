@@ -353,11 +353,6 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
     console.print(f"sanitized bundle: {output}")
 
 
-def _member_is_safe(name: str) -> bool:
-    # Zip-slip guard: bundle members must stay inside the restore target.
-    return member_is_safe(name)
-
-
 # Decompression-bomb guard for imported evidence bundles (they arrive from
 # other people): CPython's extractall caps each member at its declared
 # file_size, so the sum of declared sizes is a reliable upper bound on what
@@ -395,7 +390,7 @@ def import_bundle(
                     f"max {MAX_IMPORT_MEMBERS}/{MAX_IMPORT_UNCOMPRESSED_BYTES})[/red]"
                 )
                 raise typer.Exit(2)
-            unsafe = [m for m in archive.namelist() if not _member_is_safe(m)]
+            unsafe = [m for m in archive.namelist() if not member_is_safe(m)]
             if unsafe:
                 err_console.print(
                     f"[red]refusing bundle with unsafe member path(s): {', '.join(unsafe)}[/red]"

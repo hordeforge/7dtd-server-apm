@@ -230,7 +230,6 @@ def _unmount_mono(link: Path | None) -> None:
 def telnet_command(host: str, port: int, password: str, command: str) -> bool:
     """Fire one console command over the dedicated telnet interface."""
     import socket
-    import time as time_module
 
     try:
         with socket.create_connection((host, port), timeout=3) as sock:
@@ -239,11 +238,11 @@ def telnet_command(host: str, port: int, password: str, command: str) -> bool:
                 sock.recv(4096)
             if password:
                 sock.sendall((password + "\n").encode("utf-8"))
-                time_module.sleep(0.3)
+                time.sleep(0.3)
                 with suppress(TimeoutError, OSError):
                     sock.recv(4096)
             sock.sendall((command + "\n").encode("utf-8"))
-            time_module.sleep(0.3)
+            time.sleep(0.3)
             sock.sendall(b"exit\n")
         return True
     except OSError:
@@ -255,7 +254,6 @@ def telnet_exec(
 ) -> str:
     """Run one console command and return the accumulated output text."""
     import socket
-    import time as time_module
 
     chunks: list[bytes] = []
     try:
@@ -263,8 +261,8 @@ def telnet_exec(
             sock.settimeout(0.5)
 
             def drain(seconds: float) -> None:
-                deadline = time_module.monotonic() + seconds
-                while time_module.monotonic() < deadline:
+                deadline = time.monotonic() + seconds
+                while time.monotonic() < deadline:
                     with suppress(TimeoutError, OSError):
                         data = sock.recv(8192)
                         if not data:
