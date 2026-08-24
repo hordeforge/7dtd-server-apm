@@ -3471,7 +3471,10 @@ def test_budget_names_corrupt_bridge_file(tmp_path: Path) -> None:
     bare 'Expecting value' that leaves the operator guessing which artifact."""
     session = _session(tmp_path / "session_corrupt_bridge")
     (session / "csharp_bridge.json").write_text('{"top_managed_sections": ')
-    result = runner.invoke(app, ["budget", str(session)])
+    # Pin the rich console width: error panels crop long session paths at the
+    # default 80 columns, which depends on the pytest tmp base name
+    # (/tmp/pytest-of-<user>/) and made these containment asserts flaky.
+    result = runner.invoke(app, ["budget", str(session)], env={"COLUMNS": "4096"})
     assert result.exit_code == 2
     squashed = _squashed(result.stderr)
     assert str(session / "csharp_bridge.json") in squashed
@@ -3482,7 +3485,7 @@ def test_compare_names_corrupt_bridge_file(tmp_path: Path) -> None:
     base = _cmp_session(tmp_path, "cmp_base")
     candidate = _cmp_session(tmp_path, "cmp_cand")
     (candidate / "csharp_bridge.json").write_text("[torn")
-    result = runner.invoke(app, ["compare", str(base), str(candidate)])
+    result = runner.invoke(app, ["compare", str(base), str(candidate)], env={"COLUMNS": "4096"})
     assert result.exit_code == 1
     squashed = _squashed(result.stderr)
     assert "cannotparse" in squashed
@@ -3495,7 +3498,9 @@ def test_prometheus_rejects_corrupt_health_json_cleanly(tmp_path: Path) -> None:
     session = _session(tmp_path / "session_corrupt_health")
     (session / "health.json").write_text("{oops")
     out = tmp_path / "metrics.txt"
-    result = runner.invoke(app, ["prometheus", str(session), "--output", str(out)])
+    result = runner.invoke(
+        app, ["prometheus", str(session), "--output", str(out)], env={"COLUMNS": "4096"}
+    )
     assert result.exit_code == 2
     assert str(session / "health.json") in _squashed(result.stderr)
 
