@@ -357,6 +357,18 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
     return scores
 
 
+def _as_tid(value: Any) -> int:
+    """Normalize a jsonl row's tid to int for the main-thread match.
+
+    threads.jsonl is re-read without schema guarantees (torn collector output,
+    imported bundles): the collector writes int tids, but a float or string tid
+    that fails the == match silently reports the main thread at 0% instead of
+    raising - a wrong measurement is worse than a missing one.
+    """
+    number = as_number(value)
+    return int(number) if number is not None else -1
+
+
 def thread_summary(session: Path) -> dict[str, Any]:
     path = session / "threads/threads.jsonl"
     if not path.exists():
@@ -385,8 +397,19 @@ def thread_summary(session: Path) -> dict[str, Any]:
     main_shares: list[float] = []
     for sample in samples:
         rows = sample.get("top") or []
-        total = sum(float(r.get("cpu_pct") or 0) for r in rows)
-        main = next((float(r.get("cpu_pct") or 0) for r in rows if r.get("tid") == main_tid), 0.0)
+        if not isinstance(rows, list):
+            continue
+        # Junk-but-valid JSON values coerce to "no contribution" so a single
+        # corrupt row cannot crash the required summary stage.
+        total = sum(as_number(r.get("cpu_pct")) or 0.0 for r in rows if isinstance(r, dict))
+        main = next(
+            (
+                as_number(r.get("cpu_pct")) or 0.0
+                for r in rows
+                if isinstance(r, dict) and _as_tid(r.get("tid")) == main_tid
+            ),
+            0.0,
+        )
         if total > 0:
             main_cpus.append(main)
             main_shares.append(main / total)

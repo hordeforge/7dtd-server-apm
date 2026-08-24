@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import layer_signals
+from ..models import as_number, layer_signals
 from ..paths import apm_root
 
 
@@ -72,7 +72,17 @@ def scan(root: Path) -> list[dict[str, Any]]:
                 "health": health.get("health"),
                 "grade": health.get("grade"),
                 "layers": layers,
-                "sum_pressure": round(sum(float(v or 0) for v in layers.values()), 2),
+                # Scores come from unvalidated session JSON (imported bundles,
+                # hand edits): a non-numeric value must drop out of the sum,
+                # not poison the whole index scan with a float() ValueError.
+                "sum_pressure": round(
+                    sum(
+                        score
+                        for score in (as_number(v) for v in layers.values())
+                        if score is not None
+                    ),
+                    2,
+                ),
                 "has_flame": (directory / "cpu/perf/flame.html").is_file(),
                 "has_bridge": (directory / "csharp_bridge.md").is_file(),
                 "has_report": (directory / "report.html").is_file(),

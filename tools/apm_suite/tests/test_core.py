@@ -207,6 +207,91 @@ def test_thread_summary_skips_torn_final_line(tmp_path: Path) -> None:
     assert summary["n_threads"] == 4
 
 
+def test_thread_summary_survives_junk_values_and_finds_string_tid(
+    tmp_path: Path,
+) -> None:
+    """threads.jsonl is re-read without schema guarantees: a valid-JSON row with
+    a non-numeric cpu_pct must degrade to "no contribution", not crash the
+    required summary stage, and a float/string tid (older writer, hand edit)
+    must still match the main pid instead of silently reporting the main thread
+    at 0% share."""
+    from apm_suite.analysis.report import thread_summary
+
+    session = tmp_path / "session_junk_rows"
+    (session / "threads").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta(pid=5))
+    row = json.dumps(
+        {
+            "t": 1.0,
+            "top": [
+                {"tid": 5, "cpu_pct": 30.0},
+                {"tid": 6.0, "cpu_pct": "90.0"},  # coercible string tid/pct still count
+                {"tid": 7, "cpu_pct": {"corrupt": True}},  # junk pct drops out
+            ],
+        }
+    )
+    (session / "threads/threads.jsonl").write_text(row + "\n")
+    summary = thread_summary(session)
+    assert summary["main_thread_cpu_pct_avg"] == 30.0
+    # main 30 of process total 120
+    assert summary["main_thread_share_of_process_avg"] == pytest.approx(0.25)
+
+
+def test_bridge_spikes_with_corrupt_duration_do_not_kill_timeline(
+    tmp_path: Path,
+) -> None:
+    """spikes[] sits outside BridgeSnapshotV3 validation (extra="allow"), so a
+    format-changed duration field must coerce to "no data" like every other
+    collector field instead of raising out of the required events stage; the
+    intact sibling spike is still recorded."""
+    from apm_suite.analysis.events import build_timeline
+
+    session = tmp_path / "session_corrupt_spike"
+    (session / "app").mkdir(parents=True)
+    atomic_json(
+        session / "app/apm_app.json",
+        {
+            "spikes": [
+                {"utc": "2026-07-16T10:00:00Z", "gmUpdateDurationMs": {"corrupt": True}},
+                {
+                    "utc": "2026-07-16T10:00:01Z",
+                    "gmUpdateDurationMs": 250.0,
+                    "serverTickIntervalMs": None,
+                },
+            ]
+        },
+    )
+    doc = build_timeline(session)
+    spikes = [e for e in doc.events if e.kind == "frame_spike"]
+    assert len(spikes) == 2
+    intact = next(e for e in spikes if e.model_dump(mode="json")["value"] == 250.0)
+    assert "tickInterval 0.0ms" in intact.message
+
+
+def test_index_scan_survives_non_numeric_layer_score(tmp_path: Path) -> None:
+    """A tampered/imported summary.json whose layer score is not numeric must
+    drop out of sum_pressure instead of poisoning the whole store index scan
+    (one bad session would otherwise brick `index` and every dashboard)."""
+    from apm_suite.analysis.index import scan
+
+    bad = tmp_path / "session_bad"
+    bad.mkdir()
+    (bad / "summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "7dtd.apm.summary.v2",
+                "layers": [
+                    {"layer": "cpu", "state": "collected", "score": "12abc"},
+                    {"layer": "io", "state": "collected", "score": 40},
+                ],
+            }
+        )
+    )
+    rows = scan(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["sum_pressure"] == 40.0
+
+
 def test_scenario_matrix_rejects_missing_plan_file(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scenario", "matrix", str(tmp_path / "plan.json")])
     assert result.exit_code == 2

@@ -641,9 +641,11 @@ def monitor(
                     # from the world sample (current by construction), fall back to
                     # the lifetime average, and expose both so long-run dashboards
                     # can tell them apart. Survives when telnet is too saturated to
-                    # answer, unlike a listplayers poll.
-                    frame_now = world.get("unityDeltaMs") or 0
-                    tick_life = update.get("serverTickIntervalAvgMs") or 0
+                    # answer, unlike a listplayers poll. Values coerce like every
+                    # other unvalidated snapshot field: a string/None must read as
+                    # "no data", never raise TypeError out of the sample loop.
+                    frame_now = as_number(world.get("unityDeltaMs")) or 0.0
+                    tick_life = as_number(update.get("serverTickIntervalAvgMs")) or 0.0
                     sample["tps"] = (
                         round(1000 / frame_now, 1)
                         if frame_now
