@@ -15,7 +15,13 @@ mkdir -p "$TARGET/WebMod"
 install_file() {
   local src="$1" dst="$2"
   local tmp="$dst.tmp.$$"
-  cp "$src" "$tmp"
+  # A failed cp (disk full, unreadable source) trips set -e and would strand
+  # this partial copy beside the live mod files forever - each failed install
+  # leaves another .tmp.$$, so remove it before aborting.
+  if ! cp "$src" "$tmp"; then
+    rm -f "$tmp"
+    exit 1
+  fi
   mv -f "$tmp" "$dst"
 }
 install_file "$ROOT/dist/7dtd-server-apm-bridge/7dtd-server-apm-bridge.dll" "$TARGET/7dtd-server-apm-bridge.dll"
