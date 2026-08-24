@@ -1105,7 +1105,7 @@ def scenario_matrix(
 def flame_build(directory: Path) -> None:
     """Render flamegraphs from a session's captured stacks."""
     _require_backends()
-    _exit(run([str(REPO / "tools/host_profiler/make_flames.sh"), str(directory)], check=False))
+    _exit(run([str(REPO / "tools/host_profiler/make_flames.sh"), str(directory)]))
 
 
 @flame_app.command("diff")

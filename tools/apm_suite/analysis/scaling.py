@@ -16,7 +16,7 @@ from ..io import load_json
 from ..models import as_number
 
 # exponent (slope of log(cost) vs log(load)) thresholds
-LINEAR_LOW, LINEAR_HIGH = 0.8, 1.2
+LINEAR_LOW = 0.8
 SUPERLINEAR = 1.3
 QUADRATIC = 1.7
 

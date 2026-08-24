@@ -2691,7 +2691,6 @@ def test_run_redacts_password_flags_from_echoed_command(
 
     rc = runner.run(
         [sys.executable, "-c", "pass", "--telnet-password", "sekret", "--other", "value"],
-        check=False,
     )
     assert rc == 0
     echoed = capsys.readouterr().out

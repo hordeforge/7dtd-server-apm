@@ -56,7 +56,6 @@ GRACE_SECONDS = 60
 @dataclass
 class CaptureOutcome:
     session: Path
-    results: list[CollectorResult] = field(default_factory=list)
     interrupted: bool = False
     exit_code: int = 0
 
@@ -649,7 +648,6 @@ def run_capture(
         else:
             status, message = "failed", f"collector exited unexpectedly (rc={rc})"
         result = _result(ctx, item.spec, status, exit_code=rc, duration=duration, message=message)
-        outcome.results.append(result)
         print(f"   {item.spec.name}: {status} exit={rc} samples={result.sample_count}")
 
     _ingest_bridge_snapshot(session, pid, no_app, started_at, seconds)
