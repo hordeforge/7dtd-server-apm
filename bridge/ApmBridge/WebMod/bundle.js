@@ -88,8 +88,15 @@
         const lastPoint = (_a = pts.split(" ").pop()) !== null && _a !== void 0 ? _a : "";
         const [lastX, lastY] = lastPoint.split(",");
         const gradId = `apm-grad-${color.slice(1)}`;
-        // Decorative: the enclosing trend cell prints the current value as text.
-        return React.createElement("svg", { className: "apm-spark", width: w, height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", "aria-hidden": true }, React.createElement("defs", null, React.createElement("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 }, React.createElement("stop", { offset: "0%", stopColor: color, stopOpacity: 0.35 }), React.createElement("stop", { offset: "100%", stopColor: color, stopOpacity: 0.02 }))), React.createElement("polygon", { points: `0,${h} ${pts} ${w},${h}`, fill: `url(#${gradId})` }), React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 1.5 }), React.createElement("circle", { cx: lastX, cy: lastY, r: 2, fill: color }));
+        // Faint quarter reference lines: unlit structure so position reads without
+        // axes even at thumbnail size (preserveAspectRatio none stretches strokes,
+        // hence vectorEffect). Decorative overall: the enclosing trend cell prints
+        // the current value as text.
+        const refs = [0.25, 0.5, 0.75].map((f) => React.createElement("line", {
+            key: f, x1: 0, y1: h * f, x2: w, y2: h * f,
+            stroke: "rgba(127,127,127,.14)", strokeWidth: 1, vectorEffect: "non-scaling-stroke"
+        }));
+        return React.createElement("svg", { className: "apm-spark", width: w, height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", "aria-hidden": true }, React.createElement("defs", null, React.createElement("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 }, React.createElement("stop", { offset: "0%", stopColor: color, stopOpacity: 0.35 }), React.createElement("stop", { offset: "100%", stopColor: color, stopOpacity: 0.02 }))), ...refs, React.createElement("polygon", { points: `0,${h} ${pts} ${w},${h}`, fill: `url(#${gradId})` }), React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 1.5, vectorEffect: "non-scaling-stroke" }), React.createElement("circle", { cx: lastX, cy: lastY, r: 2, fill: color }));
     }
     function budgetBar(React, frac, cls) {
         const pct = Math.max(0, Math.min(1, frac)) * 100;
@@ -127,7 +134,7 @@
         const avg = num(lu.serverTickIntervalAvgMs);
         const push = (arr, v) => {
             arr.push(v);
-            if (arr.length > HIST) {
+            if (arr.length > histDepth) {
                 arr.shift();
             }
         };
@@ -138,7 +145,7 @@
         push(hist.heap, mib(lgc.heapBytes));
     }
     function cell(h, label, valueText, cls) {
-        return h("div", { className: `apm-cell${cls !== null && cls !== "" ? ` ${cls}` : ""}` }, h("span", { className: "apm-label" }, label), h("strong", null, valueText !== null && valueText !== void 0 ? valueText : "—"));
+        return h("div", { className: `apm-cell${cls !== null && cls !== "" ? ` ${cls}` : ""}` }, h("span", { className: "apm-label" }, label), h("strong", null, valueText !== null && valueText !== void 0 ? valueText : "n/a"));
     }
     function trend(h, React, label, series, cur, color) {
         return h("div", { className: "apm-cell apm-trend" }, h("span", { className: "apm-label" }, label), h("strong", null, cur), spark(React, series, color, 130, 30));
@@ -286,6 +293,38 @@
     const TREND_DECAY = 0.93;
     const TREND_GRID_S = 30;
     const TREND_SAMPLE_S = 2;
+    // Configurable history depth (samples; memory stays proportional to what is
+    // drawn). Persisted per browser; trimming drops oldest samples first.
+    const HISTORY_KEY = "apm.historySamples";
+    const HISTORY_CHOICES = [60, 150, 300];
+    let histDepth = HIST;
+    try {
+        const stored = Number(globalThis.localStorage.getItem(HISTORY_KEY));
+        if (HISTORY_CHOICES.includes(stored)) {
+            histDepth = stored;
+        }
+        // oxlint-disable-next-line @rikalabs/no-silent-catch-fallback -- deliberate: storage can be blocked (private mode); the default depth still applies for the session
+    }
+    catch (_a) {
+        // Keep the default depth.
+    }
+    function persistHistDepth(samples) {
+        try {
+            globalThis.localStorage.setItem(HISTORY_KEY, String(samples));
+            // oxlint-disable-next-line @rikalabs/no-silent-catch-fallback -- deliberate: persistence is best-effort; the chosen depth still applies for the session
+        }
+        catch (_a) {
+            // Storage unavailable: keep the session-only depth.
+        }
+    }
+    function trimHistory(hist) {
+        const series = [hist.tps, hist.alloc, hist.gm, hist.gen2, hist.heap];
+        for (const arr of series) {
+            while (arr.length > histDepth) {
+                arr.shift();
+            }
+        }
+    }
     // Pixel width of the newest step (samples get narrower going back by decay).
     function trendStep0(innerW, n, compressed) {
         if (!compressed) {
@@ -361,10 +400,13 @@
     function trendSeriesSvg(h, s, innerW, innerH, max, yOf, xOf, hoverIdx) {
         const paths = seriesPaths(s.values, innerW, innerH, max, xOf);
         const gradId = `apg-${s.key}`;
-        const hoverCircle = hoverIdx >= 0
-            ? h("circle", { cx: xOf(hoverIdx), cy: yOf(s.values[hoverIdx]), r: 3, fill: s.color })
-            : null;
-        return h("g", { key: s.key }, h("defs", null, h("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 }, h("stop", { offset: "0%", stopColor: s.color, stopOpacity: 0.3 }), h("stop", { offset: "100%", stopColor: s.color, stopOpacity: 0.02 }))), h("polygon", { points: `0,${innerH} ${paths.points} ${innerW},${innerH}`, fill: `url(#${gradId})` }), h("polyline", { points: paths.points, fill: "none", stroke: s.color, strokeWidth: 1.5 }), hoverCircle);
+        // Leading-edge current-value marker: rests on the newest sample and is the
+        // eye anchor; the pointer drags it along the trace while hovering.
+        const markerIdx = hoverIdx >= 0 ? hoverIdx : s.values.length - 1;
+        return h("g", { key: s.key }, h("defs", null, h("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 }, h("stop", { offset: "0%", stopColor: s.color, stopOpacity: 0.3 }), h("stop", { offset: "100%", stopColor: s.color, stopOpacity: 0.02 }))), h("polygon", { points: `0,${innerH} ${paths.points} ${innerW},${innerH}`, fill: `url(#${gradId})` }), h("polyline", { points: paths.points, fill: "none", stroke: s.color, strokeWidth: 1.5 }), h("circle", {
+            cx: xOf(markerIdx), cy: yOf(s.values[markerIdx]), r: 3,
+            fill: s.color, stroke: "rgba(0,0,0,.6)", strokeWidth: 1
+        }));
     }
     // Faint vertical grid: one line per TREND_GRID_S of real time, drawn behind
     // the series. Uniform mode spaces them evenly; compressed mode bunches them
@@ -383,7 +425,7 @@
         const ago = Math.round((series[0].values.length - 1 - idx) * secondsPerSample);
         return h("div", { className: "apm-legend" }, series.map((s) => h("span", { key: s.key, className: "apm-legend-chip" }, h("span", { className: "apm-legend-swatch", style: { background: s.color }, "aria-hidden": true }), h("span", null, `${s.label} `), h("strong", { className: "apm-legend-value" }, s.format(s.values[idx])))), h("span", { className: "apm-axis-label" }, hoverIdx >= 0 ? `${ago}s ago` : "live"));
     }
-    function renderTrendsChart(h, React, H) {
+    function renderTrendsChart(h, React, H, depth, onDepth) {
         const [hoverIdx, setHoverIdx] = React.useState(-1);
         const [compressed, setCompressed] = React.useState(true);
         const width = 600;
@@ -394,8 +436,10 @@
         const innerW = width - padLeft;
         const innerH = height - padTop - padBottom;
         const n = H.tps.length;
+        // Empty structure: the frame, grids, and scale render before the first two
+        // samples arrive; absence of signal stays visible instead of a text-only box.
         if (n < 2) {
-            return h("div", { className: "apm-chart apm-trends" }, "Collecting samples for the trends chart…");
+            return h("div", { className: "apm-chart apm-trends" }, trendControls(h, depth, onDepth, compressed, setCompressed), h("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Line chart axes for TPS and gmUpdate ms; collecting samples." }, trendGrid(h, width, padLeft, padTop, innerH, niceMax(1), (v) => padTop + innerH - (v / niceMax(1)) * innerH), h("text", { className: "apm-axis-label", x: width / 2, y: height / 2, textAnchor: "middle" }, "collecting samples…")));
         }
         const series = trendSeriesOf(H);
         const max = niceMax(Math.max(...series.reduce((acc, s) => [...acc, ...s.values], []), 1));
@@ -409,7 +453,7 @@
             const age = trendAgeOf(innerW, n, x, compressed);
             setHoverIdx(Math.max(0, Math.min(n - 1, Math.round(n - 1 - age))));
         };
-        return h("div", { className: "apm-chart apm-trends" }, h("div", { className: "apm-chart-head" }, h("button", { type: "button", className: "apm-btn", onClick: () => setCompressed(!compressed), "aria-pressed": compressed }, `Timescale: ${compressed ? "compressed" : "uniform"}`), h("span", { className: "apm-axis-label" }, "older history tapers left · grid lines are 30s apart")), h("svg", {
+        return h("div", { className: "apm-chart apm-trends" }, trendControls(h, depth, onDepth, compressed, setCompressed), h("svg", {
             width, height, viewBox: `0 0 ${width} ${height}`, onMouseMove: onMove,
             onMouseLeave: () => setHoverIdx(-1),
             role: "img",
@@ -417,6 +461,16 @@
             // users get the series values from the text legend below the chart.
             "aria-label": `Line chart: TPS and gmUpdate ms over the last ${Math.round(n * TREND_SAMPLE_S)} seconds, timescale ${compressed ? "compressed (recent detail, older history tapers left)" : "uniform"}; latest values are listed in the legend below.`
         }, trendGrid(h, width, padLeft, padTop, innerH, max, yOf), trendVGrid(h, innerW, n, padLeft, padTop, innerH, compressed), h("g", null, series.map((s) => trendSeriesSvg(h, s, innerW, innerH, max, yOf, xOf, hoverIdx))), crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null, h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * TREND_SAMPLE_S)}s ago`), h("text", { className: "apm-axis-label", x: width - 4, y: height - 4, textAnchor: "end" }, "now")), trendLegend(h, series, hoverIdx, TREND_SAMPLE_S));
+    }
+    // Chart head: history-depth setting plus the timescale toggle.
+    function trendControls(h, depth, onDepth, compressed, setCompressed) {
+        return h("div", { className: "apm-chart-head" }, h("button", { type: "button", className: "apm-btn", onClick: () => setCompressed(!compressed), "aria-pressed": compressed }, `Timescale: ${compressed ? "compressed" : "uniform"}`), h("select", {
+            className: "apm-filter", "aria-label": "History depth",
+            value: String(depth), onChange: (e) => {
+                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the select is the handler target bound above
+                onDepth(Number(e.target.value));
+            }
+        }, HISTORY_CHOICES.map((c) => h("option", { key: c, value: String(c) }, `${Math.round((c * TREND_SAMPLE_S) / 60)} min`))), h("span", { className: "apm-axis-label" }, "older history tapers left · grid lines are 30s apart"));
     }
     function renderBudgetGauge(h, update) {
         const width = 230;
@@ -438,10 +492,11 @@
         if (top.length === 0) {
             return null;
         }
-        const maxP95 = Math.max(...top.map((s) => num(s.p95Ms)), 1);
         return h("div", { className: "apm-chart apm-topbars" }, h("h3", null, "Top sections by P95"), top.map((s) => {
             const p95 = num(s.p95Ms);
-            const frac = p95 / maxP95;
+            // Fixed baseline: fraction of the 50 ms tick budget, not a per-render
+            // maximum, so bar lengths stay comparable while the data streams.
+            const frac = Math.min(1, p95 / TICK_BUDGET_MS);
             const note = severityNote(p95);
             return h("div", { key: s.name, className: "apm-topbar-row" }, h("span", { className: "apm-topbar-name" }, s.name), 
             // Decorative bar; the ms value beside it carries the data.
@@ -597,6 +652,18 @@
     // (pending), not applied per click; the Apply button commits them all with a
     // single restart. The row shows the effective (staged) state, a changed
     // marker, the description, and the safe/experimental status.
+    // History-depth setting wired to a panel: the module variable is the single
+    // source that pushHistory reads; changing it persists and trims old samples.
+    function depthController(React, hist) {
+        const [depth, setDepth] = React.useState(histDepth);
+        const changeDepth = (n) => {
+            histDepth = n;
+            persistHistDepth(n);
+            trimHistory(hist);
+            setDepth(n);
+        };
+        return { depth, changeDepth };
+    }
     function renderPerfGroupRow(h, g, on, staged, busy, toggle) {
         const status = strOr(g.status, "safe");
         const name = String(g.name);
@@ -659,8 +726,9 @@
         const togglePerf = () => armToggle(perfArmed, setPerfArmed, () => {
             togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled, setPerfError });
         });
+        const { depth, changeDepth } = depthController(React, hist.current);
         const setSortKey = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
-        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf), perfError === "" ? null : h("pre", { className: "apm-error", role: "alert" }, perfError), renderTrendsChart(h, React, hist.current), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
+        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf), perfError === "" ? null : h("pre", { className: "apm-error", role: "alert" }, perfError), renderTrendsChart(h, React, hist.current, depth, changeDepth), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
     }
     // Staged-apply helpers for the Efficiency panel: feature-group toggles are
     // staged locally (pending), not applied per click; the Apply button commits
