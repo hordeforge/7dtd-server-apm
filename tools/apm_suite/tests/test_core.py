@@ -346,6 +346,9 @@ class _FakeLoadgenProcess:
         self.pid = 424242
         self.returncode = returncode
 
+    def poll(self) -> int:
+        return self.returncode
+
     def wait(self, timeout: float | None = None) -> int:
         return self.returncode
 
@@ -682,6 +685,42 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
     assert f"openat {home}" not in vfs and "openat ~/steamapps/common" in vfs
     assert "~/libgame.so" in svg
     assert "app/bridge.jsonl" not in names
+
+
+def test_export_unreadable_member_names_file_and_keeps_prior_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An artifact that cannot be read mid-export (raced prune, perms) must
+    fail with the offending member named - like the .json branch of the same
+    walk already does - instead of a bare traceback. The temp+replace build
+    must also leave a pre-existing bundle at the target untouched."""
+    import zipfile as zipfile_module
+
+    session = tmp_path / "session_export_fail"
+    (session / "io").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "io/vfs.bt.out").write_text("openat /steamapps/common\n")
+
+    def denied(self: Any, filename: str, arcname: str) -> None:
+        raise PermissionError(13, "Permission denied", str(filename))
+
+    # Force the open-failure fallback path: the stream scrubber reports it
+    # could not read the source (monkeypatched to False, its documented
+    # "source could not be opened" signal), so export falls back to a raw
+    # copy - which then fails with the same OS error and must be named.
+    monkeypatch.setattr("apm_suite.cli._stream_scrubbed_member", lambda *a, **k: False)
+    monkeypatch.setattr(zipfile_module.ZipFile, "write", denied)
+
+    prior = tmp_path / "bundle.zip"
+    prior.write_bytes(b"prior bundle bytes")
+    result = runner.invoke(app, ["export", str(session), "--output", str(prior)])
+
+    assert result.exit_code == 2
+    assert "cannot bundle io/vfs.bt.out" in result.output
+    assert prior.read_bytes() == b"prior bundle bytes"
+    # No half-written temp zips stranded beside the target.
+    leftovers = [p for p in tmp_path.glob("*.zip") if p.name != "bundle.zip"]
+    assert leftovers == []
 
 
 def test_export_streamed_text_members_match_full_text_scrub_bytes(tmp_path: Path) -> None:
@@ -3209,6 +3248,94 @@ def test_terminate_tree_escalates_to_sigkill_when_sigterm_is_ignored() -> None:
     assert process.poll() is not None
 
 
+def test_terminate_tree_escalates_when_interrupted_during_term_grace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An interrupt landing inside the SIGTERM grace wait must still escalate
+    to the group SIGKILL before propagating: bailing out there abandons the
+    whole tree (launcher + bot cohort and its sockets) with only a TERM
+    delivered, which is exactly what this teardown exists to prevent."""
+    process = subprocess.Popen(
+        ["bash", "-c", "trap '' TERM; sleep 30 & wait"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    real_wait = process.wait
+    waits = {"count": 0}
+
+    def interrupting_wait(timeout: float | None = None) -> int:
+        waits["count"] += 1
+        if waits["count"] == 1:
+            raise KeyboardInterrupt
+        return real_wait(timeout=timeout)
+
+    monkeypatch.setattr(process, "wait", interrupting_wait)
+
+    with pytest.raises(KeyboardInterrupt):
+        terminate_tree(process, term_grace=5)
+
+    assert waits["count"] >= 2  # SIGKILL escalation ran despite the interrupt
+    assert process.poll() is not None
+
+
+def test_scenario_run_teardown_survives_second_interrupt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second Ctrl+C inside the 30s teardown grace must still run the group
+    kill: skipping terminate_tree there orphans the whole bot cohort (and its
+    game sockets), the exact leak the finally block exists to prevent."""
+    import apm_suite.cli as cli_module
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    loadgen = tmp_path / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
+    loadgen.parent.mkdir(parents=True)
+    loadgen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    store = tmp_path / "store"
+    store.mkdir()
+    started: list[str] = []
+
+    class _InterruptedLoadgen:
+        pid = 424242
+
+        def poll(self) -> None:
+            return None
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise KeyboardInterrupt
+
+    def fake_popen(argv: list[str], **_kwargs: object) -> _InterruptedLoadgen:
+        started.append(str(argv[0]))
+        return _InterruptedLoadgen()
+
+    teardowns: list[int] = []
+
+    def fake_terminate_tree(process: Any, **_kwargs: object) -> int:
+        teardowns.append(process.pid)
+        return 7
+
+    monkeypatch.setattr(
+        cli_module,
+        "subprocess",
+        SimpleNamespace(Popen=fake_popen, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    monkeypatch.setattr(cli_module, "REPO", repo)
+    monkeypatch.setattr(cli_module, "apm_root", lambda: store)
+    monkeypatch.setattr(
+        cli_module,
+        "run_capture",
+        lambda **kwargs: _CaptureOutcome(_session(tmp_path / "session_scn2"), 0),
+    )
+    monkeypatch.setattr(cli_module, "terminate_tree", fake_terminate_tree)
+
+    result = runner.invoke(app, ["scenario", "run"], env={"COLUMNS": "4096"})
+
+    assert started == [str(loadgen)]
+    assert teardowns == [424242]  # the group kill ran despite the interrupt
+    assert result.exit_code == 130
+
+
 def test_monitor_samples_process_and_coerces_corrupt_bridge_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4181,6 +4308,50 @@ def test_export_jitmap_survives_vanished_map_at_symbol_count(
     capture._export_jitmap(session, 4242, "", 0, "")
 
     assert "symbol count unavailable" in capsys.readouterr().err
+
+
+def test_export_jitmap_survives_vanished_map_at_publish_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The map can vanish between the poll's last successful stat and the
+    final publish re-check (telemetry cleaned up between the two calls).
+    That re-check runs BEFORE run_capture installs its signal handler or
+    launches any collector, so an unhandled FileNotFoundError there aborts
+    the whole capture over a cosmetic headline."""
+    session = tmp_path / "session_jitmap"
+    (session / "runtime").mkdir(parents=True)
+    real_map = tmp_path / "telemetry" / "perf-4242.map"
+    real_map.parent.mkdir()
+    real_map.write_text("sym 0x0\n", encoding="utf-8")
+    monkeypatch.setattr(capture, "telnet_command", lambda *_args: True)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    class VanishingMap:
+        """Present through the growth poll, gone by the publish re-check."""
+
+        def __init__(self, backing: Path) -> None:
+            self.backing = backing
+            self.stats = 0
+
+        def stat(self) -> os.stat_result:
+            self.stats += 1
+            if self.stats > 2:  # two stable poll passes, then removed
+                raise FileNotFoundError(2, "No such file or directory", str(self.backing))
+            return self.backing.stat()
+
+        def is_file(self) -> bool:
+            return True  # it existed a moment ago; removal lands before the re-stat
+
+    vanishing = VanishingMap(real_map)
+    monkeypatch.setattr(capture, "bridge_telemetry_file", lambda _pid, _name: vanishing)
+    capture._export_jitmap(session, 4242, "", 0, "")
+
+    assert "jitmap export failed; managed perf frames stay [jit]" in (
+        session / "WARN.txt"
+    ).read_text(encoding="utf-8")
+    assert "WARN:" in capsys.readouterr().err
 
 
 def test_import_bundle_corrupt_member_cleans_partial_restore(

@@ -501,7 +501,16 @@ def _export_jitmap(
             break
         last_size = size
         time.sleep(2)
-    if not (map_source.is_file() and map_source.stat().st_size):
+    # Same vanished/raced-file contract as the poll loop above: is_file() can
+    # pass and the file be removed before this stat (bridge cleanup, server
+    # exit). This runs BEFORE run_capture's signal/collector block, so an
+    # unhandled OSError here would abort the capture before any collector
+    # launched over a purely cosmetic headline.
+    try:
+        published = bool(map_source.is_file() and map_source.stat().st_size)
+    except OSError:
+        published = False
+    if not published:
         _warn(session, "bridge jitmap export failed; managed perf frames stay [jit]")
         return
     # Keep a copy in-session so finalize can annotate JIT addresses in

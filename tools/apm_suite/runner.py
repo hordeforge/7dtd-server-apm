@@ -35,6 +35,19 @@ def backend_python(script: Path, args: list[str]) -> int:
     return run([sys.executable, str(script), *args])
 
 
+def _kill_group(process: subprocess.Popen[bytes], kill_grace: float) -> int | None:
+    """SIGKILL the process group, reap bounded; None when it never exited."""
+    with suppress(ProcessLookupError, PermissionError):
+        os.killpg(process.pid, signal.SIGKILL)
+    try:
+        return process.wait(timeout=kill_grace)
+    except subprocess.TimeoutExpired:
+        # Reap if it exited right after the SIGKILL so we don't leave a zombie
+        # behind (a still-D-state child can't be reaped by anyone).
+        process.poll()
+        return None
+
+
 def terminate_tree(
     process: subprocess.Popen[bytes], *, term_grace: float = 10, kill_grace: float = 5
 ) -> int | None:
@@ -45,6 +58,9 @@ def terminate_tree(
     gets SIGTERM, a bounded wait, then SIGKILL. Root-owned children that ignore
     signals are bounded the same way as capture._terminate: no wait here can
     hang shutdown. Returns the reaped returncode, or None when it never exited.
+    An interrupt landing inside the term-grace wait escalates to SIGKILL before
+    propagating: bailing out there would abandon the whole group on a delivered
+    TERM alone, which is exactly what this teardown exists to prevent.
     """
     with suppress(ProcessLookupError, PermissionError):
         os.killpg(process.pid, signal.SIGTERM)
@@ -52,12 +68,7 @@ def terminate_tree(
         return process.wait(timeout=term_grace)
     except subprocess.TimeoutExpired:
         pass
-    with suppress(ProcessLookupError, PermissionError):
-        os.killpg(process.pid, signal.SIGKILL)
-    try:
-        return process.wait(timeout=kill_grace)
-    except subprocess.TimeoutExpired:
-        # Reap if it exited right after the SIGKILL so we don't leave a zombie
-        # behind (a still-D-state child can't be reaped by anyone).
-        process.poll()
-        return None
+    except BaseException:
+        _kill_group(process, kill_grace)
+        raise
+    return _kill_group(process, kill_grace)

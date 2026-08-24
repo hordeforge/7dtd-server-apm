@@ -295,6 +295,16 @@ def _stream_scrubbed_member(
     return True
 
 
+def _copy_member(archive: zipfile.ZipFile, source: Path, relative: Path) -> None:
+    """Raw-copy one artifact into the archive; an unreadable source names the
+    file instead of surfacing as a bare traceback mid-export (the .json branch
+    in the same walk reports its failures the same way)."""
+    try:
+        archive.write(source, str(relative))
+    except OSError as error:
+        raise typer.BadParameter(f"cannot bundle {relative}: {error}") from None
+
+
 @app.command("export")
 def export_session(session: Path, output: Annotated[Path, typer.Option("--output", "-o")]) -> None:
     """Create a sanitized support bundle without raw command lines or telnet text."""
@@ -344,9 +354,11 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
                         home,
                         jsonl=source.suffix == ".jsonl",
                     ):
-                        archive.write(source, str(relative))
+                        # The stream open failed (raced prune, perms); the raw
+                        # copy hits the same wall, so let it name the file.
+                        _copy_member(archive, source, relative)
                 else:
-                    archive.write(source, str(relative))
+                    _copy_member(archive, source, relative)
         os.replace(tmp_zip_path, output)
     finally:
         tmp_zip_path.unlink(missing_ok=True)
@@ -1032,10 +1044,16 @@ def scenario_run(
         # Deterministic loadgen shutdown even when the capture is interrupted.
         # The script runs the bot client as its own child, so a plain
         # terminate()/kill() on the shell would orphan that cohort (and its
-        # sockets); escalate against the whole process group instead.
+        # sockets); escalate against the whole process group instead. A second
+        # Ctrl+C landing inside the grace wait falls through to the same group
+        # teardown instead of skipping it and orphaning the cohort for good.
         try:
             load_rc = load_process.wait(timeout=30)
         except subprocess.TimeoutExpired:
+            pass
+        except KeyboardInterrupt:
+            capture_rc = 130
+        if load_process.poll() is None:
             reaped = terminate_tree(load_process)
             if reaped is not None:
                 load_rc = reaped
