@@ -165,6 +165,20 @@
             cpuCores: num(o.cpuCores)
         };
     }
+    // Coerce every optional snapshot section once per render instead of guarding
+    // each property access in the render path.
+    function snapshotViewsOf(snapshot) {
+        return {
+            update: objOrEmpty(snapshot.update),
+            health: objOrEmpty(snapshot.health),
+            gc: objOrEmpty(snapshot.gc),
+            world: objOrEmpty(snapshot.world),
+            host: hostStatOf(snapshot.host),
+            sections: listOrEmpty(snapshot.sections),
+            transfers: listOrEmpty(snapshot.mapTransfers),
+            spikes: listOrEmpty(snapshot.spikes)
+        };
+    }
     function fmtUptime(uptimeS) {
         const s = Math.floor(uptimeS);
         const d = Math.floor(s / 86400);
@@ -202,6 +216,9 @@
     // panel's Apply): the first click arms the button, the second fires it, and
     // arming expires so a stale armed state cannot surprise anyone later.
     const ARMED_WINDOW_MS = 4000;
+    // Expiry timers per setter: a re-arm must cancel the previous window instead
+    // of letting the stale timer cut the fresh confirm short.
+    const armedTimers = new WeakMap();
     function perfToggleLabel(perfBusy, perfEnabled, perfArmed = false) {
         if (perfBusy) {
             return "restarting server…";
@@ -212,13 +229,21 @@
         return perfEnabled ? "Disable (restarts server)" : "Enable (restarts server)";
     }
     function armToggle(armed, setArmed, fire) {
+        const pending = armedTimers.get(setArmed);
+        if (pending !== undefined) {
+            clearTimeout(pending);
+            armedTimers.delete(setArmed);
+        }
         if (armed) {
             setArmed(false);
             fire();
             return;
         }
         setArmed(true);
-        setTimeout(() => setArmed(false), ARMED_WINDOW_MS);
+        armedTimers.set(setArmed, setTimeout(() => {
+            armedTimers.delete(setArmed);
+            setArmed(false);
+        }, ARMED_WINDOW_MS));
     }
     function renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf) {
         return h("div", { className: "apm-perf" }, h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"), h("span", { className: `apm-pill ${perfEnabled ? "apm-ok" : "apm-warn"}` }, perfEnabled ? "ENABLED" : "DISABLED"), h("button", {
@@ -544,12 +569,16 @@
         opts.setPerfBusy(true);
         // A no-op POST (config already in the requested state) answers 200 without
         // restarting, so busy must also clear on success or the button stays
-        // disabled until a manual reload.
+        // disabled until a manual reload. The mod config can be missing (409
+        // UNAVAILABLE) or unwritable (500 WRITE_FAILED); surface that instead of
+        // silently snapping back to idle.
         void opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled })
             .then(() => {
+            opts.setPerfError("");
             opts.setPerfBusy(false);
         })
             .catch(() => {
+            opts.setPerfError("Perf toggle failed: the perf API rejected or dropped the request.");
             opts.setPerfBusy(false);
         });
     }
@@ -589,10 +618,14 @@
         const [authBlocked, setAuthBlocked] = React.useState(false);
         const query = useQuery("seven-dtd-apm", () => HTTP.get("/api/apm"), { refetchInterval: 2000, enabled: !authBlocked, retry: false });
         React.useEffect(() => {
-            if (query.isError === true) {
+            var _a, _b;
+            // Latch only on auth failures: a transient network drop or a coded 500
+            // must not permanently freeze a live monitor on one bad poll.
+            const status = (_b = (_a = query.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
+            if (query.isError === true && (status === 401 || status === 403)) {
                 setAuthBlocked(true);
             }
-        }, [query.isError]);
+        }, [query.isError, query.error]);
         const perfQ = useQuery("apm-perf", () => HTTP.get("/api/perf"), { refetchInterval: 30000, enabled: !authBlocked, retry: false });
         const [perfBusy, setPerfBusy] = React.useState(false);
         const [perfArmed, setPerfArmed] = React.useState(false);
@@ -615,25 +648,19 @@
         if (!frozen && typeof live.utc === "string" && live.utc !== hist.current.last) {
             pushHistory(hist.current, live.utc, live);
         }
-        const update = objOrEmpty(snapshot.update);
-        const health = objOrEmpty(snapshot.health);
-        const gc = objOrEmpty(snapshot.gc);
-        const world = objOrEmpty(snapshot.world);
-        const host = hostStatOf(snapshot.host);
-        const sections = listOrEmpty(snapshot.sections);
-        const transfers = listOrEmpty(snapshot.mapTransfers);
-        const spikes = listOrEmpty(snapshot.spikes);
+        const { update, health, gc, world, host, sections, transfers, spikes } = snapshotViewsOf(snapshot);
         const g = grade(update);
         const perf = unwrapSnap(perfQ.data);
         const perfEnabled = perf.enabled === true, perfAvailable = perf.available === true;
         const toggleFreeze = () => freezeHandler({ frozen, setFrozen, live, frozenSnap });
         // Restarting the server kicks every player for a couple of minutes, so the
         // toggle needs one explicit confirm click before it fires.
+        const [perfError, setPerfError] = React.useState("");
         const togglePerf = () => armToggle(perfArmed, setPerfArmed, () => {
-            togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled });
+            togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled, setPerfError });
         });
         const setSortKey = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
-        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf), renderTrendsChart(h, React, hist.current), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
+        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf), perfError === "" ? null : h("pre", { className: "apm-error", role: "alert" }, perfError), renderTrendsChart(h, React, hist.current), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
     }
     // Staged-apply helpers for the Efficiency panel: feature-group toggles are
     // staged locally (pending), not applied per click; the Apply button commits
@@ -699,31 +726,38 @@
         const [perfError, setPerfError] = React.useState("");
         const perfQ = useQuery("apm-perf-efficiency", () => HTTP.get("/api/perf"), { refetchInterval: 30000, enabled: !blocked, retry: false });
         React.useEffect(() => {
-            if (perfQ.isError === true) {
+            var _a, _b;
+            // Auth-only latch, same rationale as ApmPanel: one dropped poll must not
+            // kill a live panel.
+            const status = (_b = (_a = perfQ.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
+            if (perfQ.isError === true && (status === 401 || status === 403)) {
                 setBlocked(true);
             }
-        }, [perfQ.isError]);
+        }, [perfQ.isError, perfQ.error]);
+        // All hooks above the conditional return: an error on a later refetch must
+        // not change the hook count between renders (Rules of Hooks).
+        const [toggleArmed, setToggleArmed] = React.useState(false);
         if (perfQ.isError === true) {
             const status = (_b = (_a = perfQ.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
             return renderAuthError(h, "Efficiency", status, "Authentication required: log in to the dashboard as an admin (permission level 0) to control the perf mod.", "Perf API unavailable");
         }
         const perf = unwrapSnap(perfQ.data);
         const enabled = perf.enabled === true;
+        const available = perf.available === true;
         const groups = listOrEmpty(perf.groups);
         // Same two-step confirm as the APM panel: flipping the whole mod restarts
         // the server, so a single stray click must not do it.
-        const [toggleArmed, setToggleArmed] = React.useState(false);
         const toggle = () => armToggle(toggleArmed, setToggleArmed, () => {
-            togglePerfHandler({ HTTP, perfBusy: busy, perfAvailable: true, setPerfBusy: setBusy, perfEnabled: enabled });
+            togglePerfHandler({ HTTP, perfBusy: busy, perfAvailable: available, setPerfBusy: setBusy, perfEnabled: enabled, setPerfError });
         });
         const pendingCount = Object.keys(pending).length;
         const apply = () => applyPerfGroups({ HTTP, busy, pending, pendingCount, setArmedApply, setPending, setBusy, setPerfError });
         return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, h("h2", null, "Efficiency"), h("span", { className: `apm-pill ${enabled ? "apm-ok" : "apm-warn"}` }, enabled ? "ENABLED" : "DISABLED")), h("div", { className: "apm-perf" }, h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"), h("button", {
-            type: "button", className: "apm-btn", disabled: busy, onClick: toggle,
+            type: "button", className: "apm-btn", disabled: busy || !available, onClick: toggle,
             "aria-label": toggleArmed && !busy
                 ? `Confirm ${enabled ? "disable" : "enable"} now and restart the server`
                 : undefined
-        }, perfToggleLabel(busy, enabled, toggleArmed)), h("span", { className: "apm-window" }, "flips the whole mod, restarts the server (~1-2 min)")), ...renderFeatureGroups(h, groups, pending, busy, perfError, (g) => stageToggle({ pending, setPending, setPerfError, group: g })), h("div", { className: "apm-perf" }, h("button", {
+        }, perfToggleLabel(busy, enabled, toggleArmed)), h("span", { className: "apm-window" }, available ? "flips the whole mod, restarts the server (~1-2 min)" : "perf config unavailable on this server")), ...renderFeatureGroups(h, groups, pending, busy, perfError, (g) => stageToggle({ pending, setPending, setPerfError, group: g })), h("div", { className: "apm-perf" }, h("button", {
             type: "button",
             className: `apm-btn apm-primary${armedApply ? " apm-armed" : ""}`,
             disabled: busy || pendingCount === 0,
@@ -735,12 +769,13 @@
     }
     // The stock dashboard renders every webmod `routes` entry as a direct sidebar
     // item and every `settings` entry as a tab under Settings, unconditionally.
-    // Gate the entry on the session cookie so it is hidden while logged out; the
-    // dashboard reloads the page after login/logout, so this re-evaluates.
-    const loggedIn = document.cookie.split(";").some((c) => c.trim().startsWith("sid="));
+    // The session cookie is set HttpOnly (see ../7dtd-engine-research/docs), so it
+    // is invisible to document.cookie and cannot gate registration here. Register
+    // both panels always: while logged out they poll once, get a 403, and render
+    // their auth-required state; the dashboard reloads the page after login.
     const webMod = {
         about: "Live, low-overhead managed telemetry from 7dtd-server-apm-bridge.",
-        routes: loggedIn ? { "APM": ApmPanel, "Efficiency": EfficiencyPanel } : {},
+        routes: { "APM": ApmPanel, "Efficiency": EfficiencyPanel },
         settings: {},
         mapComponents: []
     };
