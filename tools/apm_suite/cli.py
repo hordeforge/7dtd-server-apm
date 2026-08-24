@@ -252,16 +252,46 @@ def _scrub(obj: object) -> object:
     return obj
 
 
-def _scrub_jsonl(text: str, home: str) -> str:
-    """Apply the JSON scrub per line; a malformed trailing line keeps its content
+def _scrub_jsonl_line(line: str, home: str) -> str:
+    """Apply the JSON scrub to one line; a malformed line keeps its content
     but still loses the host home prefix."""
-    out: list[str] = []
-    for line in text.splitlines():
-        try:
-            out.append(json.dumps(_scrub(json.loads(line))).replace(home, "~"))
-        except json.JSONDecodeError:
-            out.append(line.replace(home, "~"))
-    return "".join(line + "\n" for line in out)
+    try:
+        return json.dumps(_scrub(json.loads(line))).replace(home, "~")
+    except json.JSONDecodeError:
+        return line.replace(home, "~")
+
+
+def _stream_scrubbed_member(
+    archive: zipfile.ZipFile, member: str, source: Path, home: str, *, jsonl: bool
+) -> bool:
+    """Stream one text artifact into the archive line by line.
+
+    perf.script and friends reach hundreds of MB in a session; reading one
+    resident copy plus its scrubbed twin before writestr spiked RSS by several
+    times the artifact size. Line-wise streaming produces the same bytes (every
+    kept line is terminated with "\\n", exactly like the former full-text
+    splitlines join) while capping memory at one line. Returns False when the
+    source could not be opened so the caller can fall back to a raw copy; once
+    streaming has started an OSError propagates (the bundle is unusable anyway).
+
+    Unlike str.splitlines this splits only on CR/LF, so exotic separators
+    (form feed, NEL, line separator) pass through instead of becoming newlines;
+    collector artifacts are line-oriented text and never contain them.
+    """
+    try:
+        source_stream = source.open("r", encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    with source_stream, archive.open(member, "w") as member_stream:
+        if jsonl:
+            for line in source_stream:
+                body = _scrub_jsonl_line(line[:-1] if line.endswith("\n") else line, home)
+                member_stream.write(body.encode("utf-8") + b"\n")
+        else:
+            for line in source_stream:
+                body = (line[:-1] if line.endswith("\n") else line).replace(home, "~")
+                member_stream.write(body.encode("utf-8") + b"\n")
+    return True
 
 
 @app.command("export")
@@ -303,17 +333,17 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
                         json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n",
                     )
                 elif source.suffix == ".jsonl" or source.suffix in text_suffixes:
-                    try:
-                        text = source.read_text(errors="replace", encoding="utf-8")
-                    except OSError:
+                    # Streamed scrub (see _stream_scrubbed_member): the same
+                    # per-line transforms as the former read_text+writestr,
+                    # without ever holding a full artifact resident.
+                    if not _stream_scrubbed_member(
+                        archive,
+                        str(relative),
+                        source,
+                        home,
+                        jsonl=source.suffix == ".jsonl",
+                    ):
                         archive.write(source, str(relative))
-                        continue
-                    scrub = (
-                        (lambda t: _scrub_jsonl(t, home))
-                        if source.suffix == ".jsonl"
-                        else (lambda t: t.replace(home, "~"))
-                    )
-                    archive.writestr(str(relative), scrub(text))
                 else:
                     archive.write(source, str(relative))
         os.replace(tmp_zip_path, output)

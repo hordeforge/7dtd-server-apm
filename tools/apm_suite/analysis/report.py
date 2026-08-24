@@ -376,29 +376,22 @@ def thread_summary(session: Path) -> dict[str, Any]:
     main_tid = 0
     with contextlib.suppress(ValueError, OSError):
         main_tid = int(_load_meta(session).get("pid") or 0)
-    samples: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            samples.append(json.loads(line))
-        except json.JSONDecodeError:
-            # A collector killed mid-window (grace deadline, Ctrl+C) leaves a
-            # torn final line; drop it like every other jsonl reader here
-            # rather than failing the required summary stage.
-            continue
-    if not samples:
-        return {}
-    last = samples[-1]
-    # Main-thread saturation: averaged across samples, the main thread's own
-    # CPU% and its share of total process CPU. High main share with a low
-    # box-wide load = "laggy without CPU" that is really main-thread-bound.
-    main_cpus: list[float] = []
-    main_shares: list[float] = []
-    for sample in samples:
+    # Streaming fold: only the last intact record plus two running means are
+    # needed, so retaining every parsed sample (each with its nested top list)
+    # would hold the whole file as Python objects for nothing.
+    last: dict[str, Any] | None = None
+    main_cpu_sum = 0.0
+    main_share_sum = 0.0
+    averaged = 0
+
+    def fold(sample: dict[str, Any]) -> None:
+        # Main-thread saturation: averaged across samples, the main thread's own
+        # CPU% and its share of total process CPU. High main share with a low
+        # box-wide load = "laggy without CPU" that is really main-thread-bound.
+        nonlocal main_cpu_sum, main_share_sum, averaged
         rows = sample.get("top") or []
         if not isinstance(rows, list):
-            continue
+            return
         # Junk-but-valid JSON values coerce to "no contribution" so a single
         # corrupt row cannot crash the required summary stage.
         total = sum(as_number(r.get("cpu_pct")) or 0.0 for r in rows if isinstance(r, dict))
@@ -411,10 +404,29 @@ def thread_summary(session: Path) -> dict[str, Any]:
             0.0,
         )
         if total > 0:
-            main_cpus.append(main)
-            main_shares.append(main / total)
-    main_cpu_avg = round(sum(main_cpus) / len(main_cpus), 1) if main_cpus else None
-    main_share_avg = round(sum(main_shares) / len(main_shares), 3) if main_shares else None
+            main_cpu_sum += main
+            main_share_sum += main / total
+            averaged += 1
+
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                # A collector killed mid-window (grace deadline, Ctrl+C) leaves a
+                # torn final line; drop it like every other jsonl reader here
+                # rather than failing the required summary stage.
+                continue
+            if not isinstance(record, dict):
+                continue
+            last = record
+            fold(record)
+    if last is None:
+        return {}
+    main_cpu_avg = round(main_cpu_sum / averaged, 1) if averaged else None
+    main_share_avg = round(main_share_sum / averaged, 3) if averaged else None
     return {
         "n_threads": last.get("n_threads"),
         "states": last.get("states"),

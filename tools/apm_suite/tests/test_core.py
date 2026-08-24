@@ -238,6 +238,40 @@ def test_thread_summary_survives_junk_values_and_finds_string_tid(
     assert summary["main_thread_share_of_process_avg"] == pytest.approx(0.25)
 
 
+def test_thread_summary_averages_across_samples_and_folds_streaming(
+    tmp_path: Path,
+) -> None:
+    """The summary folds the file instead of materializing every sample: only
+    samples whose process total is positive enter both running means, a
+    non-list "top" row contributes nothing, and the LAST intact record wins
+    for n_threads/wchan_top. A JSON-valid but non-object line (corrupt writer)
+    is dropped like every other jsonl reader here instead of crashing."""
+    from apm_suite.analysis.report import thread_summary
+
+    session = tmp_path / "session_fold"
+    (session / "threads").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta(pid=5))
+
+    def sample(t: float, top: object, threads: int) -> str:
+        return json.dumps({"t": t, "n_threads": threads, "top": top})
+
+    lines = [
+        sample(1.0, [{"tid": 5, "cpu_pct": 20.0}, {"tid": 6, "cpu_pct": 60.0}], 9),
+        "[not,an,object]",  # valid JSON, wrong shape: skipped entirely
+        sample(2.0, "not-a-list", 8),  # unparsable top row: no contribution
+        sample(3.0, [{"tid": 5, "cpu_pct": 50.0}], 7),
+        sample(4.0, [{"tid": 6, "cpu_pct": 0.0}], 6),  # total == 0: not averaged
+    ]
+    (session / "threads/threads.jsonl").write_text("\n".join(lines) + "\n")
+    summary = thread_summary(session)
+    # main cpu: (20 + 50) / 2 averaged samples
+    assert summary["main_thread_cpu_pct_avg"] == 35.0
+    # main share of process: (20/80 + 50/50) / 2
+    assert summary["main_thread_share_of_process_avg"] == pytest.approx(0.625)
+    # last intact record, not the highest-t one that contributed
+    assert summary["n_threads"] == 6
+
+
 def test_bridge_spikes_with_corrupt_duration_do_not_kill_timeline(
     tmp_path: Path,
 ) -> None:
@@ -472,6 +506,52 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
     assert f"openat {home}" not in vfs and "openat ~/steamapps/common" in vfs
     assert "~/libgame.so" in svg
     assert "app/bridge.jsonl" not in names
+
+
+def test_export_streamed_text_members_match_full_text_scrub_bytes(tmp_path: Path) -> None:
+    """The streaming scrubber must emit byte-identical output to the former
+    full-text path: universal newlines normalized to LF, every kept line
+    terminated with "\\n" (including a final line that had none), per-line
+    JSONL redaction, and the home prefix replaced everywhere."""
+    import zipfile
+
+    from apm_suite.cli import _scrub_jsonl_line
+
+    home = str(Path.home())
+    session = tmp_path / "session_stream"
+    (session / "io").mkdir(parents=True)
+    (session / "app").mkdir()
+    atomic_json(session / "meta.json", _meta())
+    # CRLF, a bare CR, no trailing newline: the text layer normalizes all of
+    # them to LF before the line-wise scrub runs.
+    vfs_raw = f"openat 1\nopenat {home}/steamapps\r\nclose\rno-newline-tail"
+    (session / "io/vfs.bt.out").write_bytes(vfs_raw.encode("utf-8"))
+    jsonl_lines = [
+        json.dumps({"t": 1.0, "cmdline": "-quiet", "note": f"at {home}/x"}),
+        f"malformed trailing {home}/y",  # no newline at EOF
+    ]
+    (session / "events.jsonl").write_text("\n".join(jsonl_lines))
+
+    bundle = tmp_path / "bundle.zip"
+    result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert result.exit_code == 0, result.output
+
+    # Expected bytes from the former implementation's contract.
+    def legacy_text(raw: str) -> str:
+        return "".join(line.replace(home, "~") + "\n" for line in raw.splitlines())
+
+    def legacy_jsonl(raw: str) -> str:
+        return "".join(_scrub_jsonl_line(line, home) + "\n" for line in raw.splitlines())
+
+    expected = {
+        "io/vfs.bt.out": legacy_text(vfs_raw),
+        "events.jsonl": legacy_jsonl("\n".join(jsonl_lines)),
+    }
+    with zipfile.ZipFile(bundle) as archive:
+        for name, want in expected.items():
+            got = archive.read(name).decode("utf-8")
+            assert got == want, name
+            assert home not in got
 
 
 def test_import_bundle_round_trip_restores_evidence(
