@@ -25,6 +25,14 @@ major version.
   output. jitsym annotation and folded-stack annotation now stream their
   inputs instead of holding whole probe outputs resident, and finalize reads
   the forensic `mono_alloc` output once instead of twice.
+- Performance: the remaining large-artifact readers stream line by line
+  (flame weights/deltas, speedscope + SVG + interactive tree builds, folded
+  hot-path ranking, events timeline, jitmap load, session compare), so
+  finalize and compare no longer hold whole hundreds-of-MB folded stacks or
+  tens-of-MB telnet scrapes resident on top of their results.
+- Performance: the bridge hashes Assembly-CSharp.dll once per process for its
+  identity block; the SHA256 was recomputed on every periodic export and every
+  `apm dump` (default every 30 s, forever) for an immutable value.
 - Supply chain: CI actions run from immutable commit SHAs instead of mutable
   tags (`actions/checkout` v4.4.0; `astral-sh/setup-uv` updated v6 to
   v10.0.1), Dependabot keeps `uv.lock` and those pins current weekly, and a

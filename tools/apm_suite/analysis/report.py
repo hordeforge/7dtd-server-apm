@@ -474,27 +474,32 @@ def memory_trend(session: Path) -> dict[str, Any]:
     monos: list[float | None] = []
     rss: list[float] = []
     fds: list[int] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        # proc.jsonl is re-read without schema guarantees (torn collector
-        # output, imported bundles): a non-numeric t/rss_mb must drop that one
-        # record instead of raising out of the required summary stage.
-        stamp = as_number(record.get("t"))
-        rss_value = as_number(record.get("rss_mb"))
-        if stamp is not None and rss_value is not None:
-            times.append(stamp)
-            # Samplers that also stamp a monotonic clock let the span below
-            # ignore wall-clock steps; legacy records fall back to `t`.
-            monos.append(as_number(record.get("mono")))
-            rss.append(rss_value)
-            raw_fd = record.get("fd_count")
-            if isinstance(raw_fd, (int, float)) and not isinstance(raw_fd, bool) and raw_fd >= 0:
-                fds.append(int(raw_fd))
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            # proc.jsonl is re-read without schema guarantees (torn collector
+            # output, imported bundles): a non-numeric t/rss_mb must drop that one
+            # record instead of raising out of the required summary stage.
+            stamp = as_number(record.get("t"))
+            rss_value = as_number(record.get("rss_mb"))
+            if stamp is not None and rss_value is not None:
+                times.append(stamp)
+                # Samplers that also stamp a monotonic clock let the span below
+                # ignore wall-clock steps; legacy records fall back to `t`.
+                monos.append(as_number(record.get("mono")))
+                rss.append(rss_value)
+                raw_fd = record.get("fd_count")
+                if (
+                    isinstance(raw_fd, (int, float))
+                    and not isinstance(raw_fd, bool)
+                    and raw_fd >= 0
+                ):
+                    fds.append(int(raw_fd))
     if len(rss) < 3:
         return {}
     # Elapsed-time denominator: prefer the sampler's monotonic stamps (a
@@ -608,21 +613,28 @@ def _rank_folded(folded: Path, limit: int) -> dict[str, list[tuple[str, float]]]
     inclusive: dict[str, int] = {}
     self_game: dict[str, int] = {}
     total = 0
-    for line in folded.read_text(encoding="utf-8", errors="replace").splitlines():
-        sp = line.rsplit(" ", 1)
-        if len(sp) != 2 or not sp[1].isdigit():
-            continue
-        frames = sp[0].split(";")
-        count = int(sp[1])
-        total += count
-        for fr in set(frames):  # inclusive: count a function once per stack
-            inclusive[fr] = inclusive.get(fr, 0) + count
-        # self_game: walk from the leaf down to the first game frame
-        for fr in reversed(frames):
-            if _is_game_frame(fr):
-                name = fr.split("+", 1)[0].strip()
-                self_game[name] = self_game.get(name, 0) + count
-                break
+    # Streamed line by line: folded stacks reach hundreds of MB and this runs
+    # for both the aggregate and the main-thread view in one finalize.
+    with folded.open("r", encoding="utf-8", errors="replace") as stream:
+        for raw in stream:
+            # rstrip only the newline (never strip()): the count token must keep
+            # its exact tail so `.isdigit()` judges malformed lines identically
+            # to the former splitlines-based read.
+            line = raw.rstrip("\n")
+            sp = line.rsplit(" ", 1)
+            if len(sp) != 2 or not sp[1].isdigit():
+                continue
+            frames = sp[0].split(";")
+            count = int(sp[1])
+            total += count
+            for fr in set(frames):  # inclusive: count a function once per stack
+                inclusive[fr] = inclusive.get(fr, 0) + count
+            # self_game: walk from the leaf down to the first game frame
+            for fr in reversed(frames):
+                if _is_game_frame(fr):
+                    name = fr.split("+", 1)[0].strip()
+                    self_game[name] = self_game.get(name, 0) + count
+                    break
     if total == 0:
         return {"inclusive": [], "self_game": []}
 

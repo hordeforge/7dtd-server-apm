@@ -406,12 +406,16 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
 
     scrape = session / "app/bridge.jsonl"
     if scrape.exists():
-        for line in scrape.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            sections.extend(parse_section_line(str(record.get("text") or "")))
+        # Streamed like every other bridge.jsonl reader (report.load_texts):
+        # each record carries a whole telnet reply, so the file can reach tens
+        # of MB without ever needing to be fully resident.
+        with scrape.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                sections.extend(parse_section_line(str(record.get("text") or "")))
 
     excerpt = session / "app/efficientserver_log_excerpt.txt"
     if excerpt.exists():

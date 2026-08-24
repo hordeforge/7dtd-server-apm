@@ -43,11 +43,8 @@ def load_proc(capture: Path) -> list[dict[str, Any]]:
     p = capture / "memory" / "proc.jsonl"
     if not p.exists():
         p = capture / "proc.jsonl"
-    return [
-        json.loads(line)
-        for line in p.read_text(encoding="utf-8", errors="replace").splitlines()
-        if line.strip()
-    ]
+    with p.open("r", encoding="utf-8", errors="replace") as stream:
+        return [json.loads(line) for line in stream if line.strip()]
 
 
 def nearest_proc(times: list[float], rows: list[dict[str, Any]], t: float) -> dict[str, Any] | None:

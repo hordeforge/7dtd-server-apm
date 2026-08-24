@@ -20,17 +20,21 @@ HEX = re.compile(r"\b0x([0-9a-fA-F]{6,})\b")
 def load_map(map_path: Path) -> tuple[list[int], list[tuple[int, str]]]:
     starts: list[int] = []
     entries: list[tuple[int, str]] = []  # (end, symbol)
-    for line in map_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        parts = line.split(maxsplit=2)
-        if len(parts) != 3:
-            continue
-        try:
-            start = int(parts[0], 16)
-            size = int(parts[1], 16)
-        except ValueError:
-            continue
-        starts.append(start)
-        entries.append((start + size, parts[2]))
+    # Streamed: a full-mode perf map carries ~10 MB / hundreds of thousands of
+    # short symbols, and read-all + splitlines doubled that resident for nothing.
+    with map_path.open("r", encoding="utf-8", errors="replace") as stream:
+        for raw in stream:
+            line = raw.rstrip("\n")
+            parts = line.split(maxsplit=2)
+            if len(parts) != 3:
+                continue
+            try:
+                start = int(parts[0], 16)
+                size = int(parts[1], 16)
+            except ValueError:
+                continue
+            starts.append(start)
+            entries.append((start + size, parts[2]))
     order = sorted(range(len(starts)), key=lambda i: starts[i])
     return [starts[i] for i in order], [entries[i] for i in order]
 

@@ -23,28 +23,32 @@ MAX_STACK_DEPTH = 4096
 
 
 def load_folded(path: Path) -> list[tuple[list[str], int]]:
+    # Streamed line by line: folded inputs reach hundreds of MB, and the former
+    # read-all + splitlines held the whole text plus its line list resident on
+    # top of the returned rows (same rationale as annotate_stacks).
     rows: list[tuple[list[str], int]] = []
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        # last token is count
-        try:
-            stack_s, count_s = line.rsplit(" ", 1)
-            value = float(count_s)
-        except ValueError:
-            continue
-        # int(float("inf")) raises OverflowError; a non-finite count is not a
-        # real sample count, so skip it rather than crash the conversion.
-        if not math.isfinite(value):
-            continue
-        count = int(value)
-        if count <= 0:
-            continue
-        frames = [f for f in stack_s.split(";") if f][:MAX_STACK_DEPTH]
-        if not frames:
-            continue
-        rows.append((frames, count))
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for raw in stream:
+            line = raw.strip()
+            if not line:
+                continue
+            # last token is count
+            try:
+                stack_s, count_s = line.rsplit(" ", 1)
+                value = float(count_s)
+            except ValueError:
+                continue
+            # int(float("inf")) raises OverflowError; a non-finite count is not a
+            # real sample count, so skip it rather than crash the conversion.
+            if not math.isfinite(value):
+                continue
+            count = int(value)
+            if count <= 0:
+                continue
+            frames = [f for f in stack_s.split(";") if f][:MAX_STACK_DEPTH]
+            if not frames:
+                continue
+            rows.append((frames, count))
     return rows
 
 

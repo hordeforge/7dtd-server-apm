@@ -20,6 +20,14 @@ from ..models import EventsV2, as_number, schema_dict
 RETAINED_MAX = 2000
 PER_SOURCE_MAX = 500
 
+# Non-reset count() aggregators printed once per interval as growing cumulative
+# lines ("@wait_n: 40"); the LAST occurrence is the true total.
+_COUNTER_PATTERNS = (
+    (r"@wait_n:\s*(\d+)", "futex_waits"),
+    (r"@little_n:\s*(\d+)", "gc_little"),
+    (r"@gc_n:\s*(\d+)", "gc_collect"),
+)
+
 
 class EventSink:
     """Counts every event but materializes at most PER_SOURCE_MAX per source."""
@@ -45,29 +53,32 @@ class EventSink:
 def parse_bt_slow(sink: EventSink, path: Path, kind: str) -> None:
     if not path.is_file():
         return
-    text = path.read_text(encoding="utf-8", errors="replace")
-    for i, line in enumerate(text.splitlines()):
-        if "SLOW_" in line or "SLOW " in line or "STALL_MAIN" in line or "STW_PAUSE" in line:
-            sink.add(
-                {
-                    "t": None,
-                    "kind": kind,
-                    "severity": "warn",
-                    "message": line.strip()[:300],
-                    "source": path.name,
-                    "line": i + 1,
-                }
-            )
-    for pattern, label in [
-        (r"@wait_n:\s*(\d+)", "futex_waits"),
-        (r"@little_n:\s*(\d+)", "gc_little"),
-        (r"@gc_n:\s*(\d+)", "gc_collect"),
-    ]:
-        # These are non-reset count() aggregators printed every interval, so the
-        # output is many growing cumulative lines; the last is the true total.
-        matches = re.findall(pattern, text)
-        if matches:
-            total = int(matches[-1])
+    # One streamed pass instead of read-all + splitlines + three extra
+    # full-text regex scans; per-line matching is equivalent because bpftrace
+    # prints each map record on a single line.
+    counters = [re.compile(pattern) for pattern, _ in _COUNTER_PATTERNS]
+    counter_last: list[str | None] = [None] * len(counters)
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for i, line in enumerate(stream):
+            if "SLOW_" in line or "SLOW " in line or "STALL_MAIN" in line or "STW_PAUSE" in line:
+                sink.add(
+                    {
+                        "t": None,
+                        "kind": kind,
+                        "severity": "warn",
+                        "message": line.strip()[:300],
+                        "source": path.name,
+                        "line": i + 1,
+                    }
+                )
+            for j, pattern in enumerate(counters):
+                match = pattern.search(line)
+                if match:
+                    counter_last[j] = match.group(1)
+    for (_pattern, label), total in zip(_COUNTER_PATTERNS, counter_last, strict=True):
+        # The value is cumulative and printed every interval, so the last is
+        # the true total (same contract as the former findall()[-1]).
+        if total is not None:
             sink.add(
                 {
                     "t": None,
@@ -75,7 +86,7 @@ def parse_bt_slow(sink: EventSink, path: Path, kind: str) -> None:
                     "severity": "info",
                     "message": f"{label}={total}",
                     "source": path.name,
-                    "value": total,
+                    "value": int(total),
                 }
             )
 
@@ -84,116 +95,121 @@ def parse_proc_jsonl(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
     prev_rss: float | None = None
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        t = record.get("t")
-        cpu = as_number(record.get("cpu_pct"))
-        rss = as_number(record.get("rss_mb"))
-        if cpu is not None and cpu > 150:
-            sink.add(
-                {
-                    "t": t,
-                    "kind": "cpu_spike",
-                    "severity": "warn",
-                    "message": f"process cpu%={cpu:.0f} rssMB={rss}",
-                    "source": "proc.jsonl",
-                    "value": cpu,
-                }
-            )
-        if rss is not None and prev_rss is not None and rss - prev_rss > 50:
-            sink.add(
-                {
-                    "t": t,
-                    "kind": "rss_jump",
-                    "severity": "warn",
-                    "message": f"RSS jump {prev_rss:.0f}→{rss:.0f} MB",
-                    "source": "proc.jsonl",
-                    "value": rss - prev_rss,
-                }
-            )
-        if rss is not None:
-            prev_rss = rss
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            t = record.get("t")
+            cpu = as_number(record.get("cpu_pct"))
+            rss = as_number(record.get("rss_mb"))
+            if cpu is not None and cpu > 150:
+                sink.add(
+                    {
+                        "t": t,
+                        "kind": "cpu_spike",
+                        "severity": "warn",
+                        "message": f"process cpu%={cpu:.0f} rssMB={rss}",
+                        "source": "proc.jsonl",
+                        "value": cpu,
+                    }
+                )
+            if rss is not None and prev_rss is not None and rss - prev_rss > 50:
+                sink.add(
+                    {
+                        "t": t,
+                        "kind": "rss_jump",
+                        "severity": "warn",
+                        "message": f"RSS jump {prev_rss:.0f}→{rss:.0f} MB",
+                        "source": "proc.jsonl",
+                        "value": rss - prev_rss,
+                    }
+                )
+            if rss is not None:
+                prev_rss = rss
 
 
 def parse_threads_jsonl(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        wchan = record.get("wchan_top") or {}
-        for name, raw in list(wchan.items())[:5]:
-            waiters = as_number(raw)
-            if (
-                waiters is not None
-                and waiters >= 3
-                and name not in ("0", "-", "0x0")
-                and ("futex" in name.lower() or "wait" in name.lower())
-            ):
-                sink.add(
-                    {
-                        "t": record.get("t"),
-                        "kind": "wchan",
-                        "severity": "info",
-                        "message": f"wchan {name}×{int(waiters)}",
-                        "source": "threads.jsonl",
-                        "value": int(waiters),
-                    }
-                )
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            wchan = record.get("wchan_top") or {}
+            for name, raw in list(wchan.items())[:5]:
+                waiters = as_number(raw)
+                if (
+                    waiters is not None
+                    and waiters >= 3
+                    and name not in ("0", "-", "0x0")
+                    and ("futex" in name.lower() or "wait" in name.lower())
+                ):
+                    sink.add(
+                        {
+                            "t": record.get("t"),
+                            "kind": "wchan",
+                            "severity": "info",
+                            "message": f"wchan {name}×{int(waiters)}",
+                            "source": "threads.jsonl",
+                            "value": int(waiters),
+                        }
+                    )
 
 
 def parse_app_scrape(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        text = str(record.get("text") or "")
-        t = record.get("t")
-        if "spike" in text.lower():
-            # The telnet drain interleaves server log lines (player names, IPs,
-            # Steam IDs) with bridge output; embed only the extracted duration,
-            # never the raw console text. bridge.jsonl stays the owner-only
-            # evidence store and is excluded from export bundles.
-            match = re.search(r"gmUpdateDuration=([\d.]+)ms", text)
-            duration = f"{float(match.group(1)):.1f}ms" if match else None
-            sink.add(
-                {
-                    "t": t,
-                    "kind": "managed_bridge_spike",
-                    "severity": "error",
-                    "message": (
-                        f"managed bridge spike gmUpdateDuration={duration}"
-                        if duration
-                        else "managed bridge spike (raw console text withheld; see app/bridge.jsonl)"
-                    ),
-                    "source": "bridge.jsonl",
-                    **({"value": float(match.group(1))} if match else {}),
-                }
-            )
-        match = re.search(r"avg=([\d.]+)ms", text)
-        if match and float(match.group(1)) >= 33:
-            sink.add(
-                {
-                    "t": t,
-                    "kind": "managed_bridge_slow_update",
-                    "severity": "warn",
-                    "message": f"managed bridge update avg={match.group(1)}ms",
-                    "source": "bridge.jsonl",
-                    "value": float(match.group(1)),
-                }
-            )
+    # Streamed like every other bridge.jsonl reader (report.load_texts): each
+    # record carries a whole telnet reply, so the file can reach tens of MB.
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            text = str(record.get("text") or "")
+            t = record.get("t")
+            if "spike" in text.lower():
+                # The telnet drain interleaves server log lines (player names, IPs,
+                # Steam IDs) with bridge output; embed only the extracted duration,
+                # never the raw console text. bridge.jsonl stays the owner-only
+                # evidence store and is excluded from export bundles.
+                match = re.search(r"gmUpdateDuration=([\d.]+)ms", text)
+                duration = f"{float(match.group(1)):.1f}ms" if match else None
+                sink.add(
+                    {
+                        "t": t,
+                        "kind": "managed_bridge_spike",
+                        "severity": "error",
+                        "message": (
+                            f"managed bridge spike gmUpdateDuration={duration}"
+                            if duration
+                            else "managed bridge spike (raw console text withheld; see app/bridge.jsonl)"
+                        ),
+                        "source": "bridge.jsonl",
+                        **({"value": float(match.group(1))} if match else {}),
+                    }
+                )
+            match = re.search(r"avg=([\d.]+)ms", text)
+            if match and float(match.group(1)) >= 33:
+                sink.add(
+                    {
+                        "t": t,
+                        "kind": "managed_bridge_slow_update",
+                        "severity": "warn",
+                        "message": f"managed bridge update avg={match.group(1)}ms",
+                        "source": "bridge.jsonl",
+                        "value": float(match.group(1)),
+                    }
+                )
 
 
 def parse_bridge_spikes(sink: EventSink, path: Path) -> None:

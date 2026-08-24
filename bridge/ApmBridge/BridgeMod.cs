@@ -234,16 +234,28 @@ namespace DtdApmBridge
             }
             catch { }
         }
+        // Immutable per process: Snapshot() embeds Capabilities() on every
+        // periodic export (default 30s, for the server's whole uptime) and every
+        // `apm dump`, so re-reading and re-hashing the full game assembly each
+        // time was pure repeated CPU + page-cache churn. Computed once; a failed
+        // read stays uncached so a transient IO error can retry on the next call.
+        static volatile object _gameIdentity;
         static object GameIdentity()
         {
+            object cached = _gameIdentity;
+            if (cached != null) return cached;
             try
             {
                 Assembly assembly = typeof(GameManager).Assembly;
                 string path = assembly.Location;
                 using (FileStream stream = File.OpenRead(path))
                 using (SHA256 hash = SHA256.Create())
-                    return new { assembly = assembly.GetName().Name, version = assembly.GetName().Version.ToString(),
+                {
+                    object identity = new { assembly = assembly.GetName().Name, version = assembly.GetName().Version.ToString(),
                         sha256 = BitConverter.ToString(hash.ComputeHash(stream)).Replace("-", "").ToLowerInvariant() };
+                    _gameIdentity = identity;
+                    return identity;
+                }
             }
             catch (Exception ex) { return new { error = ex.Message }; }
         }

@@ -21,24 +21,28 @@ def folded_stack_path(session: Path) -> Path | None:
 
 
 def load_weights(path: Path) -> dict[str, int]:
+    # Streamed line by line: folded inputs reach hundreds of MB and session
+    # compare loads two at once, so read-all + splitlines held several resident
+    # copies of each file for nothing (same rationale as annotate_stacks).
     weights: dict[str, int] = defaultdict(int)
-    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            stack, raw_count = line.rsplit(" ", 1)
-            value = float(raw_count)
-        except ValueError:
-            continue
-        # int(float("inf")) raises OverflowError; a non-finite weight is not a
-        # real sample count, so skip it rather than crash the whole load.
-        if not math.isfinite(value):
-            continue
-        count = int(value)
-        for frame in stack.split(";"):
-            if frame:
-                weights[frame] += count
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                stack, raw_count = line.rsplit(" ", 1)
+                value = float(raw_count)
+            except ValueError:
+                continue
+            # int(float("inf")) raises OverflowError; a non-finite weight is not a
+            # real sample count, so skip it rather than crash the whole load.
+            if not math.isfinite(value):
+                continue
+            count = int(value)
+            for frame in stack.split(";"):
+                if frame:
+                    weights[frame] += count
     return dict(weights)
 
 

@@ -2583,9 +2583,7 @@ def test_compare_marks_one_sided_attribution_not_comparable(tmp_path: Path) -> N
         b / "csharp_bridge.json",
         {
             "schema": "7dtd.apm.bridge.v2",
-            "attribution": {
-                "subsystems": [{"subsystem": "network", "scaled_total_ms": 500.0}]
-            },
+            "attribution": {"subsystems": [{"subsystem": "network", "scaled_total_ms": 500.0}]},
         },
     )
     result = compare_sessions(a, b)

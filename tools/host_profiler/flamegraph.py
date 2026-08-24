@@ -41,37 +41,42 @@ def render(folded: Path, out: Path) -> int:
     root: dict[str, Any] = {"name": "", "value": 0.0, "children": {}}
     grand = 0.0
     max_depth = 0
-    for line in folded.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        *parts, count_s = line.rsplit(" ", 1)
-        # A malformed collapsed line (missing/non-numeric count) must not crash
-        # the whole flamegraph; skip it. Drop empty frames from ";;" runs.
-        try:
-            c = float(count_s)
-        except ValueError:
-            continue
-        # NaN/inf would poison every downstream coordinate and serialize a
-        # broken SVG ("nan" widths); skip non-finite counts.
-        if not math.isfinite(c):
-            continue
-        stack = [f for f in parts[0].split(";") if f] if parts else []
-        if not stack:
-            continue
-        grand += c
-        node = root
-        node["value"] += c
-        depth = 0
-        for frame in stack:
-            child = node["children"].get(frame)
-            if child is None:
-                child = {"name": frame, "value": 0.0, "children": {}}
-                node["children"][frame] = child
-            child["value"] += c
-            node = child
-            depth += 1
-        if depth > max_depth:
-            max_depth = depth
+    # Streamed line by line like the other folded readers: read-all + splitlines
+    # held the whole file and its line list resident while only one line is ever
+    # needed at a time. float() tolerates the trailing newline, so no per-line
+    # copy is needed; the blank test is allocation-free (see stackcollapse_perf).
+    with folded.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            if not line or line.isspace():
+                continue
+            *parts, count_s = line.rsplit(" ", 1)
+            # A malformed collapsed line (missing/non-numeric count) must not crash
+            # the whole flamegraph; skip it. Drop empty frames from ";;" runs.
+            try:
+                c = float(count_s)
+            except ValueError:
+                continue
+            # NaN/inf would poison every downstream coordinate and serialize a
+            # broken SVG ("nan" widths); skip non-finite counts.
+            if not math.isfinite(c):
+                continue
+            stack = [f for f in parts[0].split(";") if f] if parts else []
+            if not stack:
+                continue
+            grand += c
+            node = root
+            node["value"] += c
+            depth = 0
+            for frame in stack:
+                child = node["children"].get(frame)
+                if child is None:
+                    child = {"name": frame, "value": 0.0, "children": {}}
+                    node["children"][frame] = child
+                child["value"] += c
+                node = child
+                depth += 1
+            if depth > max_depth:
+                max_depth = depth
 
     if grand <= 0:
         print("empty", file=sys.stderr)
