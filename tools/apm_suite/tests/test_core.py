@@ -2328,6 +2328,29 @@ def test_memory_trend_omits_fds_when_every_sample_is_unknown(tmp_path: Path) -> 
     assert trend["rss_growth_mb_per_s"] == pytest.approx(0.5)
 
 
+@pytest.mark.parametrize("step", [-2.0, 600.0])
+def test_memory_trend_ignores_wall_clock_step_when_mono_present(
+    tmp_path: Path, step: float
+) -> None:
+    """The rss growth rate divides elapsed time by a span; that span must come
+    from the sampler's monotonic stamps when present, so an NTP/manual clock
+    step mid-window (wall `t` jumping) cannot skew the leak verdict. Legacy
+    sessions without mono stamps fall back to wall time (covered above)."""
+    from apm_suite.analysis.report import memory_trend
+
+    session = tmp_path / f"session_clock_step_{step}"
+    _write_proc_jsonl(
+        session,
+        [
+            {"t": 1000.0, "mono": 0.0, "rss_mb": 1000.0},
+            {"t": 1000.0 + step / 2, "mono": 1.0, "rss_mb": 1000.5},
+            {"t": 1000.0 + step, "mono": 2.0, "rss_mb": 1001.0},
+        ],
+    )
+    trend = memory_trend(session)
+    assert trend["rss_growth_mb_per_s"] == pytest.approx(0.5)
+
+
 @pytest.mark.parametrize(
     "wchan_top",
     [

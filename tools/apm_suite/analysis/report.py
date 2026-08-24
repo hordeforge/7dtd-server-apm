@@ -459,6 +459,7 @@ def memory_trend(session: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     times: list[float] = []
+    monos: list[float | None] = []
     rss: list[float] = []
     fds: list[int] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -470,13 +471,22 @@ def memory_trend(session: Path) -> dict[str, Any]:
             continue
         if record.get("t") is not None and record.get("rss_mb") is not None:
             times.append(float(record["t"]))
+            # Samplers that also stamp a monotonic clock let the span below
+            # ignore wall-clock steps; legacy records fall back to `t`.
+            monos.append(as_number(record.get("mono")))
             rss.append(float(record["rss_mb"]))
             raw_fd = record.get("fd_count")
             if isinstance(raw_fd, (int, float)) and not isinstance(raw_fd, bool) and raw_fd >= 0:
                 fds.append(int(raw_fd))
     if len(rss) < 3:
         return {}
-    span = times[-1] - times[0]
+    # Elapsed-time denominator: prefer the sampler's monotonic stamps (a
+    # wall-clock step mid-window would skew the MB/s verdict); legacy sessions
+    # without them fall back to the wall stamps.
+    if monos[0] is not None and monos[-1] is not None:
+        span = monos[-1] - monos[0]
+    else:
+        span = times[-1] - times[0]
     rss_slope = (rss[-1] - rss[0]) / span if span > 0 else 0  # MB/s
     # fd_count is -1 (or absent) when its sample could not list /proc/pid/fd
     # (a /proc race), so it is UNKNOWN, not a real count: feeding the sentinel

@@ -40,6 +40,10 @@ class Sample:
     wchar: int
     cpu_pct: float
     rss_mb: float
+    # Monotonic companion to the wall stamp `t`: rate math (rss/fd growth per
+    # second) must divide by a clock that cannot step (NTP correction, manual
+    # change); `t` stays for cross-log correlation.
+    mono: float
 
 
 def read_stat(pid: int) -> dict[str, int]:
@@ -133,6 +137,7 @@ def sample(pid: int) -> Sample:
     cpu_pct = 0.0
     return Sample(
         t=time.time(),
+        mono=time.monotonic(),
         pid=pid,
         utime=st["utime"],
         stime=st["stime"],
