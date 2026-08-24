@@ -45,6 +45,8 @@ jobs:
       - run: make coverage
       - run: uv run --locked python scripts/coverage_badge.py "$RUNNER_TEMP/coverage.svg"
       - name: Publish the badge to the badges branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
