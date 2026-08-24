@@ -3703,6 +3703,103 @@ def test_remove_sessions_treats_already_gone_session_as_success(tmp_path: Path) 
     assert results == [(doomed, None)]
 
 
+def test_purge_expired_trash_treats_entry_gone_mid_purge_as_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent purge winning the race on the same trash entry (entry
+    vanishes between glob and rmtree) reads as success, matching the
+    remove_sessions contract instead of warning spuriously."""
+    from apm_suite.session import purge_expired_trash
+
+    entry = tmp_path / ".trash" / "session_old"
+    entry.mkdir(parents=True)
+
+    def vanishing_rmtree(path: Path, *args: Any, **kwargs: Any) -> None:
+        raise FileNotFoundError(2, "No such file or directory", str(path))
+
+    monkeypatch.setattr("apm_suite.session.shutil.rmtree", vanishing_rmtree)
+    results = list(purge_expired_trash(tmp_path, grace_hours=0))
+
+    assert results == [(entry, None)]
+
+
+def test_purge_stale_scenario_runs_treats_file_gone_mid_purge_as_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent purge winning the race on the same loadgen file (file
+    vanishes between glob and unlink) reads as success, not a failure."""
+    from apm_suite.session import purge_stale_scenario_runs
+
+    entry = tmp_path / ".scenario" / "loadgen_123.json"
+    entry.parent.mkdir(parents=True)
+    entry.write_text("{}", encoding="utf-8")
+
+    def vanishing_unlink(self: Path, missing_ok: bool = False) -> None:
+        raise FileNotFoundError(2, "No such file or directory", str(self))
+
+    monkeypatch.setattr("apm_suite.session.Path.unlink", vanishing_unlink)
+    results = list(purge_stale_scenario_runs(tmp_path, grace_hours=0))
+
+    assert results == [(entry, None)]
+
+
+def test_place_perf_map_link_swap_is_atomic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The /tmp link swap must never pass through an absent state: an
+    overlapping capture polls perf-<pid>.map continuously, and a reader that
+    lands between unlink and symlink records its whole window unresolved.
+    os.replace must observe the old link still live at the swap instant."""
+    from apm_suite.capture import _place_perf_map_link
+
+    old_target = tmp_path / "old.map"
+    old_target.write_text("old", encoding="utf-8")
+    new_target = tmp_path / "new.map"
+    new_target.write_text("new", encoding="utf-8")
+    link = tmp_path / "perf-1.map"
+    link.symlink_to(old_target)
+    observed: list[bool] = []
+    real_replace = os.replace
+
+    def spy_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        observed.append(Path(dst).is_symlink())
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", spy_replace)
+    _place_perf_map_link(new_target, link)
+
+    assert os.readlink(link) == str(new_target)
+    assert observed == [True]  # old link present at the swap instant
+    # no staging temp left behind
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "new.map",
+        "old.map",
+        "perf-1.map",
+    ]
+
+
+def test_place_perf_map_link_cleans_up_when_swap_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An impossible swap (sticky-dir owner rules, simulated here) raises
+    OSError to the caller for its warning and leaves no staging temp."""
+    from apm_suite.capture import _place_perf_map_link
+
+    target = tmp_path / "map"
+    target.write_text("m", encoding="utf-8")
+    link = tmp_path / "perf-1.map"
+
+    def refusing_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        raise PermissionError(1, "Operation not permitted", str(dst))
+
+    monkeypatch.setattr(os, "replace", refusing_replace)
+    with pytest.raises(OSError):
+        _place_perf_map_link(target, link)
+
+    assert not link.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["map"]
+
+
 def test_index_scan_skips_session_unreadable_mid_scan(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
