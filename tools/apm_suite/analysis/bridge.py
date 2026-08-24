@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import first_number
+from ..models import first_number, first_present
 from .catalog import RULES, SECTION_TO_CSHARP
 from .flame_delta import load_weights
 
@@ -451,10 +451,14 @@ def section_rank(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     scored = []
     for section in sections:
         name = str(section.get("name") or "")
-        avg = float(section.get("avgMs") or 0)
-        calls = int(section.get("calls") or 0)
-        total = float(section.get("totalMs") or (avg * calls))
-        p95 = float(section.get("p95Ms") or section.get("p95") or 0)
+        # Section dicts also come from imported bundles' app/*.json sweeps
+        # (unvalidated): a truthy non-numeric field ("avgMs": [5]) must degrade
+        # to 0 like compare.load_sections' present-at-0 tie, never raise
+        # TypeError/ValueError out of the ranking. A legitimate 0 stays 0.
+        avg = first_present(section.get("avgMs"))
+        calls = int(first_present(section.get("calls")))
+        total = first_present(section.get("totalMs"), avg * calls)
+        p95 = first_present(section.get("p95Ms"), section.get("p95"))
         scored.append(
             {
                 "name": name,

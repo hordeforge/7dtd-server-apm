@@ -1660,12 +1660,38 @@ def test_build_summary_survives_snapshot_with_infinite_fields(tmp_path: Path) ->
         ' "gc": {"heapDeltaBytes": 1e999, "windowSeconds": 1e999}}',
     )
     atomic_json(session / "meta.json", _meta())
-    summary = build_summary(session)  # must not raise (OverflowError escaped here)
+    summary = build_summary(session)  # must not raise
     path = session / "summary.json"
     text = path.read_text()
     assert "Infinity" not in text  # valid JSON for strict external consumers
     assert json.loads(text)["schema"] == "7dtd.apm.summary.v2"
     assert [layer.layer for layer in summary.layers] != []
+
+
+def test_build_summary_survives_snapshot_with_non_object_blocks(tmp_path: Path) -> None:
+    """A snapshot block that parsed as a non-object ("gc": [16.6]) has no .get:
+    _snapshot_metadata raises AttributeError from it, and like every other
+    malformed-value escape that must drop only the snapshot-derived blocks -
+    not fail the required summary stage and lose the host evidence."""
+    from apm_suite.analysis.report import build_summary
+
+    session = tmp_path / "session_listsnap"
+    (session / "app").mkdir(parents=True)
+    atomic_json(
+        session / "app/apm_app.json",
+        {
+            "sections": [],
+            "measurement": {"deepSampleRate": 1},
+            "update": [100],
+            "world": {"entities": 10},
+            "gc": [16.6],
+            "mapTransfers": ["junk"],
+        },
+    )
+    atomic_json(session / "meta.json", _meta())
+    summary = build_summary(session)  # must not raise
+    assert [layer.layer for layer in summary.layers] != []
+    assert "gc" not in summary.metadata  # snapshot-derived blocks dropped whole
 
 
 def test_build_summary_keeps_measured_zero_gross_alloc(tmp_path: Path) -> None:
@@ -1712,6 +1738,31 @@ def test_parse_managed_sections_reads_each_named_file_once(tmp_path: Path) -> No
     # Every source contributes; identical dicts still dedupe; nothing is lost
     # or duplicated by the named-list/glob overlap.
     assert sorted(names) == ["DecoManager.UpdateTick", "GmUpdate", "World.SaveWorldState"]
+
+
+def test_section_rank_survives_junk_typed_section_fields() -> None:
+    """Imported bundles sweep arbitrary app/*.json into the section table: a
+    truthy non-numeric field ("avgMs": [5]) must degrade to a present-at-0 tie
+    (compare.load_sections' posture), never raise TypeError/ValueError out of
+    the standalone `bridge` ranking. Valid sections rank unchanged."""
+    from apm_suite.analysis.bridge import section_rank
+
+    ranked = section_rank(
+        [
+            {"name": "Junk.All", "avgMs": [5], "calls": {"x": 1}, "totalMs": "abc", "p95Ms": [1]},
+            {"name": "Good.Section", "avgMs": 2.0, "calls": 10},
+            {"name": "P95.Zero", "avgMs": 9.0, "calls": 3, "p95Ms": 0, "totalMs": 27.0},
+        ]
+    )
+    scores = {s["name"]: s["score"] for s in ranked}
+    assert scores["Good.Section"] == 2.0
+    assert scores["Junk.All"] == 0.0
+    # A legitimate p95Ms of 0 stays 0 instead of falling through to the legacy
+    # `p95` field (ranked_section_heats' documented semantics); the score rule
+    # then falls back to avgMs because an unmeasured p95 cannot rank.
+    p95_zero = next(s for s in ranked if s["name"] == "P95.Zero")
+    assert p95_zero["p95"] == 0.0
+    assert scores["P95.Zero"] == 9.0
 
 
 def test_alloc_site_rankings_equal_with_preloaded_text(tmp_path: Path) -> None:

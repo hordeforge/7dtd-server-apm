@@ -1192,13 +1192,15 @@ def build_summary(session: Path) -> SummaryV2:
             if "gc" in metadata:
                 _apply_gc_pressure(layers, metadata["gc"])
             _apply_late_tick_pressure(layers, (snapshot or {}).get("update") or {})
-        except (json.JSONDecodeError, TypeError, ValueError, OverflowError):
+        except (json.JSONDecodeError, AttributeError, TypeError, ValueError, OverflowError):
             # TypeError: a snapshot block whose numeric fields parsed as strings
             # or containers (hand-edited / imported) raises from the arithmetic
             # above (e.g. "16.6" - 3.2); drop just the snapshot-derived blocks,
             # exactly like a JSON decode failure. OverflowError: JSON "1e999"
             # parses to float('inf'), and int()/round() on it raises that, not
             # ValueError (models.as_number rejects inf for the same reason).
+            # AttributeError: a block itself parsed as a non-object ("gc": [16.6])
+            # has no .get - the same hazard attribute_snapshot documents.
             pass
 
     net_window = max(1.0, float(meta.get("seconds") or 1))
