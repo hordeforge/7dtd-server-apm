@@ -16,6 +16,11 @@
 # release build) and here as their single sources of truth.
 # Override locally: TSC_VERSION=5.9.3 OXLINT_VERSION=1.79.0 bash scripts/lint-webui.sh
 #
+# The anti-slop plugin is vendored source fetched outside any registry, so its
+# tarball carries no publisher integrity metadata; ANTI_SLOP_SHA pins the
+# commit and ANTI_SLOP_SHA256 verifies the downloaded bytes before extraction.
+# Update both pins together after inspecting the new upstream source.
+#
 # Requires: node/npm (npx).
 
 set -euo pipefail
@@ -28,6 +33,9 @@ oxlint_standards_version="${OXLINT_STANDARDS_VERSION:-0.8.1}"
 oxlint_tsgolint_version="${OXLINT_TSGOLINT_VERSION:-7.0.2001}"
 oxlint_plugins_version="${OXLINT_PLUGINS_VERSION:-1.79.0}"
 anti_slop_sha="${ANTI_SLOP_SHA:-6d538555cb151d4121ed51a27db81890eacf8ae9}"
+# sha256 of the pinned anti-slop tarball (see header comment): the extracted
+# source is loaded as executable oxlint plugin code, so verify bytes before use.
+anti_slop_sha256="${ANTI_SLOP_SHA256:-a720663fd2562e22e3da670769faa88dc34c9a761fdd9a7d285e20d92871848e}"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-server-apm/oxlint-standards"
 webmod_dir="$root/bridge/ApmBridge/WebMod"
 
@@ -40,7 +48,8 @@ command -v npx >/dev/null 2>&1 || {
 npx --yes -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --noEmit
 
 # 2. Lint the source with oxlint. The @rikalabs plugin, the vendored
-#    dmmulroy/anti-slop plugin source (pinned by ANTI_SLOP_SHA; the project is
+#    dmmulroy/anti-slop plugin source (pinned by ANTI_SLOP_SHA and
+#    sha256-verified by ANTI_SLOP_SHA256; the project is
 #    vendored source, not an npm package), and oxlint-tsgolint (the type-aware
 #    backend, see options.typeAware in .oxlintrc.jsonc) are fetched into the
 #    cache (no-op when the pinned versions are already present) and oxlint runs
@@ -52,6 +61,11 @@ npx --yes -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --noEm
 mkdir -p "$cache_dir"
 if [ ! -d "$cache_dir/anti-slop-src" ]; then
   curl -fsSL "https://github.com/dmmulroy/anti-slop/archive/$anti_slop_sha.tar.gz" -o "$cache_dir/anti-slop.tar.gz"
+  if ! printf '%s  %s\n' "$anti_slop_sha256" "$cache_dir/anti-slop.tar.gz" | sha256sum --check --status; then
+    rm -f "$cache_dir/anti-slop.tar.gz"
+    echo "7dtd-server-apm: lint-webui: anti-slop tarball for $anti_slop_sha does not match ANTI_SLOP_SHA256 (GitHub re-gzip or tampering); inspect upstream and update ANTI_SLOP_SHA + ANTI_SLOP_SHA256 together to accept" >&2
+    exit 1
+  fi
   mkdir -p "$cache_dir/anti-slop-src"
   tar xzf "$cache_dir/anti-slop.tar.gz" -C "$cache_dir/anti-slop-src" --strip-components=2 "anti-slop-$anti_slop_sha/src"
 fi
