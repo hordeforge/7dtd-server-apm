@@ -3548,6 +3548,142 @@ def test_export_jitmap_survives_unplaceable_tmp_link_and_warns(
     assert (session / "runtime" / "perf-4242.map").is_file()
 
 
+def test_export_jitmap_skips_map_poll_when_telnet_send_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A jitmap command that never reached the server (telnet down, auth fail)
+    means the map can never appear: the 90s growth poll must be skipped so a
+    capture against an unreachable telnet does not stall before any collector."""
+    session = tmp_path / "session_jitmap"
+    (session / "runtime").mkdir(parents=True)
+    map_source = tmp_path / "telemetry" / "perf-4242.map"  # never created
+    monkeypatch.setattr(capture, "telnet_command", lambda *_args: False)
+    monkeypatch.setattr(capture, "bridge_telemetry_file", lambda _pid, _name: map_source)
+
+    def no_poll(_seconds: float) -> None:
+        raise AssertionError("map poll must not run after a failed telnet send")
+
+    monkeypatch.setattr(time, "sleep", no_poll)
+    capture._export_jitmap(session, 4242, "", 0, "")
+
+    assert "failed to send via telnet" in (session / "WARN.txt").read_text(encoding="utf-8")
+    assert "WARN:" in capsys.readouterr().err
+
+
+# --- store races between concurrent processes ---------------------------------------
+
+
+def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session deleted by another process between glob and the sort-key stat
+    must not crash every list_sessions caller (post-capture auto-prune, CLI
+    prune); it sorts oldest and is simply gone on the next pass."""
+    from apm_suite.session import _mtime, list_sessions
+
+    assert _mtime(tmp_path / "never-existed") == 0.0
+
+    (tmp_path / "session_a").mkdir()
+    real_stat = Path.stat
+    seen_b = {"n": 0}
+
+    def flaky_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        # The race window sits between the listing's is_dir() (first stat) and
+        # the sort-key stat (second): only the second one finds it gone.
+        if self == tmp_path / "session_b":
+            seen_b["n"] += 1
+            if seen_b["n"] >= 2:
+                raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    (tmp_path / "session_b").mkdir()
+    monkeypatch.setattr("apm_suite.session.Path.stat", flaky_stat)
+    names = [p.name for p in list_sessions(tmp_path)]
+
+    assert names == ["session_a", "session_b"]
+
+
+def test_remove_sessions_treats_already_gone_session_as_success(tmp_path: Path) -> None:
+    """A concurrent prune winning the race on the same session must read as
+    success (the intended end state holds), not as a scary prune failure."""
+    from apm_suite.session import remove_sessions
+
+    doomed = tmp_path / "store" / "session_gone"
+    doomed.mkdir(parents=True)
+
+    results = list(remove_sessions([doomed], grace_hours=0))
+
+    assert results == [(doomed, None)]
+
+
+def test_index_scan_skips_session_unreadable_mid_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A summary.json removed between iterdir and its read (concurrent prune)
+    must skip the row like any other unreadable summary, never crash index."""
+    import apm_suite.analysis.index as index_mod
+
+    session = tmp_path / "session_x"
+    session.mkdir()
+    atomic_json(
+        session / "summary.json",
+        {"schema": "7dtd.apm.summary.v2", "session_id": "session_x", "layers": []},
+    )
+
+    def vanishing_read(path: Path) -> dict[str, Any]:
+        raise FileNotFoundError(2, "No such file or directory", str(path))
+
+    monkeypatch.setattr(index_mod, "load_json", vanishing_read)
+    assert index_mod.scan(tmp_path) == []
+
+
+# --- monitor / bridge / matrix error contracts ---------------------------------------
+
+
+def test_monitor_reports_access_denied_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server owned by another user raises psutil.AccessDenied on the first
+    sample: end with exit 2 and a fix, never a bare traceback."""
+
+    def denied(self: psutil.Process, interval: float | None = None) -> float:
+        raise psutil.AccessDenied(pid=self.pid)
+
+    monkeypatch.setattr(psutil.Process, "cpu_percent", denied)
+    result = runner.invoke(app, ["monitor", "--pid", str(os.getpid()), "--count", "1"])
+
+    assert result.exit_code == 2
+    assert "access denied" in result.stderr
+
+
+def test_bridge_command_reports_unreadable_summary(tmp_path: Path) -> None:
+    """A malformed summary.json surfaces as an operator error naming the file
+    (same contract as compare/budget), never a JSONDecodeError traceback."""
+    session = tmp_path / "session_bad"
+    session.mkdir()
+    (session / "summary.json").write_text("{not json", encoding="utf-8")
+
+    result = runner.invoke(app, ["bridge", str(session)])
+
+    assert result.exit_code == 1
+    assert "bridge analysis failed" in result.stderr
+
+
+def test_scenario_matrix_rejects_mistyped_entry_value_before_any_run(
+    tmp_path: Path,
+) -> None:
+    """Plan entries bypass Typer's parsing on the direct scenario_run call, so
+    a mistyped value ("seconds": "60") must be rejected naming entry+field
+    BEFORE cleanup/loadgen side effects, not crash mid-matrix with TypeError."""
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"seconds": "60"}, {"seconds": 30}]), encoding="utf-8")
+
+    result = runner.invoke(app, ["scenario", "matrix", str(plan)])
+
+    assert result.exit_code == 2
+    assert "entry 1 field 'seconds': expected int, got '60'" in result.stderr
+
+
 # --- live server (opt-in) ----------------------------------------------------------
 
 

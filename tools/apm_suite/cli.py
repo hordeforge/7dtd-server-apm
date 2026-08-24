@@ -614,15 +614,24 @@ def monitor(
     export_period = bridge_export_period(bridge_latest.parent)
     try:
         while count == 0 or taken < count:
-            with process.oneshot():
-                cpu = process.cpu_percent(interval=interval)
-                sample: dict[str, object] = {
-                    "t": time.time(),
-                    "pid": pid,
-                    "cpu_pct": round(cpu, 1),
-                    "rss_mb": round(process.memory_info().rss / 1048576, 1),
-                    "threads": process.num_threads(),
-                }
+            try:
+                with process.oneshot():
+                    cpu = process.cpu_percent(interval=interval)
+                    sample: dict[str, object] = {
+                        "t": time.time(),
+                        "pid": pid,
+                        "cpu_pct": round(cpu, 1),
+                        "rss_mb": round(process.memory_info().rss / 1048576, 1),
+                        "threads": process.num_threads(),
+                    }
+            except psutil.AccessDenied:
+                # The server commonly runs as another user; a permission wall
+                # must end the loop with a fix, not a bare traceback.
+                err_console.print(
+                    f"[red]cannot inspect pid {pid}: access denied "
+                    "(process owned by another user?); run monitor as that user[/red]"
+                )
+                raise typer.Exit(2) from None
             if bridge_latest.is_file():
                 try:
                     snapshot = json.loads(bridge_latest.read_text(encoding="utf-8"))
@@ -697,8 +706,12 @@ def monitor(
                 with output.open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(sample) + "\n")
             taken += 1
-    except (KeyboardInterrupt, psutil.NoSuchProcess):
+    except KeyboardInterrupt:
         console.print("monitor stopped")
+    except psutil.NoSuchProcess:
+        # Distinct from Ctrl+C: a dead target must not read as a normal stop
+        # (the operator would re-check the wrong thing).
+        console.print("target process exited; monitor stopped")
 
 
 def _ms(value: object) -> str:
@@ -824,7 +837,14 @@ def bridge(
     if not session.is_dir():
         err_console.print(f"[red]not a session directory: {session}[/red]")
         raise typer.Exit(2)
-    result = analyze(session, snapshot)
+    # Same contract as compare/budget: a malformed summary.json is an operator
+    # error naming the file, never a traceback (analyze re-reads unvalidated
+    # session JSON; JSONDecodeError is a ValueError subclass).
+    try:
+        result = analyze(session, snapshot)
+    except ValueError as error:
+        err_console.print(f"[red]bridge analysis failed: {error}[/red]")
+        raise typer.Exit(1) from None
     console.print(result["playbook_md"])
     console.print(f"wrote {session / 'csharp_bridge.json'}")
 
@@ -1024,6 +1044,65 @@ def scenario_run(
     _exit(capture_rc or load_rc)
 
 
+# Plan entries reach scenario_run as a direct Python call, bypassing Typer's
+# option parsing, so their values are checked here against the same types the
+# CLI annotations declare. A mistyped value (e.g. "seconds": "60") would
+# otherwise raise TypeError deep inside run_capture - after that experiment's
+# loadgen started and any earlier experiments had already run.
+_MATRIX_ENTRY_TYPES: dict[str, type] = {
+    "seconds": int,
+    "clients": int,
+    "actions": int,
+    "seed": int,
+    "spawn_per_player": int,
+    "spawn_every_ms": int,
+    "horde_every_ms": int,
+    "horde_waves": int,
+    "max_dynamite": int,
+    "warmup": int,
+    "no_spawn": bool,
+    "rally": bool,
+    "reset_bridge": bool,
+    "preset": str,
+    "bot_mode": str,
+    "bot_mix": str,
+    "spawn_entity": str,
+    "rally_at": str,
+    "label": str,
+}
+
+
+def _coerce_matrix_entry(entry: dict[str, object], position: int) -> dict[str, Any]:
+    """Type-check one plan entry before any side effect; returns it unchanged
+    when every value already matches its declared type."""
+    coerced: dict[str, Any] = {}
+    for key, value in entry.items():
+        expected = _MATRIX_ENTRY_TYPES.get(key)
+        if expected is None:
+            coerced[key] = value  # unknown keys are rejected by the caller
+            continue
+        valid = (
+            isinstance(value, bool)
+            if expected is bool
+            else (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                or isinstance(value, float)
+                and value.is_integer()
+            )
+            if expected is int
+            else isinstance(value, str)
+        )
+        if not valid:
+            err_console.print(
+                f"[red]plan entry {position} field '{key}': expected "
+                f"{expected.__name__}, got {value!r}[/red]"
+            )
+            raise typer.Exit(2)
+        coerced[key] = value
+    return coerced
+
+
 @scenario_app.command("matrix")
 def scenario_matrix(
     plan: Path,
@@ -1072,12 +1151,19 @@ def scenario_matrix(
     }
     results: list[tuple[str, int]] = []
     for position, entry in enumerate(entries, 1):
+        if not isinstance(entry, dict):
+            err_console.print(f"[red]plan entry {position} is not a JSON object[/red]")
+            raise typer.Exit(2)
         unknown = set(entry) - allowed
         if unknown:
             err_console.print(
                 f"[red]plan entry {position} has unknown keys: {sorted(unknown)}[/red]"
             )
             raise typer.Exit(2)
+        # Fail before the cleanup telnet round-trip: a mistyped entry must not
+        # run the previous experiment's world-wiping console command for
+        # nothing (and must never reach the loadgen with junk values).
+        kwargs = _coerce_matrix_entry(entry, position)
         label = str(entry.get("label") or f"experiment-{position}")
         if cleanup:
             # A failed cleanup must be visible: leftover entities from one
@@ -1094,7 +1180,7 @@ def scenario_matrix(
             scenario_run(
                 game_port=game_port,
                 telnet_password=telnet_password,
-                **{**entry, "label": label},
+                **{**kwargs, "label": label},
             )
         except typer.Exit as stop:
             code = stop.exit_code or 0

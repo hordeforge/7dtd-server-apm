@@ -469,7 +469,15 @@ def _export_jitmap(
     goal. The burst runs pre-window (off the measurement) so perf resolves
     managed frames without paying for it inside the capture window.
     """
-    telnet_command(telnet_host, telnet_port, telnet_password, "apm jitmap full")
+    if not telnet_command(telnet_host, telnet_port, telnet_password, "apm jitmap full"):
+        # The command never reached the server (telnet down or auth failed):
+        # the map cannot appear, so skip the poll instead of stalling the
+        # capture start for the full 90s deadline.
+        _warn(
+            session,
+            "apm jitmap command failed to send via telnet; managed perf frames stay [jit]",
+        )
+        return
     # perf hardcodes /tmp/perf-<pid>.map; the bridge writes the map to its
     # disk-backed telemetry dir, we place only a symlink in tmpfs. The full
     # JIT burst can take tens of seconds; poll until the file stops growing.

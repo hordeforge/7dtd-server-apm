@@ -142,6 +142,16 @@ def _requested(name: str, layer: str, requested_set: set[str]) -> bool:
     return spec.requested(requested_set)
 
 
+def _mtime(path: Path) -> float:
+    """Sort key tolerant of concurrent prune: a session removed by another
+    process between glob and stat would otherwise crash every caller
+    (auto-prune after a finished capture, CLI prune) with FileNotFoundError."""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
 def list_sessions(root: Path) -> list[Path]:
     """Session directories under root, newest first (mtime).
 
@@ -150,7 +160,7 @@ def list_sessions(root: Path) -> list[Path]:
     """
     return sorted(
         (p for p in root.glob("session_*") if p.is_dir()),
-        key=lambda p: (p.stat().st_mtime, p.name),
+        key=lambda p: (_mtime(p), p.name),
         reverse=True,
     )
 
@@ -168,7 +178,21 @@ def sessions_beyond_budget(
     doomed = list(sessions[keep:])
     if max_bytes is None:
         return doomed
-    sizes = {p: sum(f.stat().st_size for f in p.rglob("*") if f.is_file()) for p in sessions}
+
+    # A file deleted by a concurrent prune mid-walk must not crash the budget
+    # scan; the vanished bytes count as 0 (the session is going away anyway).
+    def _size(path: Path) -> int:
+        total = 0
+        for f in path.rglob("*"):
+            if not f.is_file():
+                continue
+            try:
+                total += f.stat().st_size
+            except OSError:
+                continue
+        return total
+
+    sizes = {p: _size(p) for p in sessions}
     total = sum(sizes.values()) - sum(sizes[p] for p in doomed)
     for session in reversed(sessions[:keep]):  # oldest kept first
         if total <= max_bytes:
@@ -261,6 +285,8 @@ def remove_sessions(
         for session in doomed:
             try:
                 shutil.rmtree(session)
+            except FileNotFoundError:
+                yield session, None  # a concurrent prune already removed it
             except OSError as error:
                 yield session, error
             else:
@@ -282,6 +308,10 @@ def remove_sessions(
             os.utime(target, None)
             # The rename itself must survive power loss like every write.
             _sync_parent_directory(target)
+        except FileNotFoundError:
+            # A concurrent prune got there first: the intended end state
+            # (session gone from the store) already holds.
+            yield session, None
         except OSError as error:
             yield session, error
         else:
