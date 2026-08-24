@@ -670,8 +670,10 @@ def monitor(
             bridge_age = sample.get("bridge_age_s")
             # Older than one and a half export periods means the exporter
             # missed at least one expected refresh: a genuinely stale read.
+            # Escaped brackets: rich would otherwise parse "[bridge ...]" as an
+            # unknown style tag and silently drop the warning from the console.
             stale = (
-                f"  [bridge {bridge_age}s old]"
+                f"  \\[bridge {bridge_age}s old]"
                 if isinstance(bridge_age, float) and bridge_age > export_period * 1.5
                 else ""
             )

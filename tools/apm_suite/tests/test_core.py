@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -1871,6 +1872,33 @@ def test_finalize_pipeline_end_to_end(tmp_path: Path) -> None:
     assert health["confidence"] == "insufficient"  # partial coverage never grades
 
 
+def test_finalize_required_stage_failure_fails_run_optional_does_not(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A required stage crashing (render) must fail the whole finalize run with
+    the offending stage named; an optional stage crashing (jitsym) must only
+    log and continue: enrichment is never load-bearing."""
+    import apm_suite.finalize as finalize_module
+
+    session = tmp_path / "session_stage_fail"
+    session.mkdir()
+    atomic_json(session / "meta.json", _meta())
+
+    def crash(_session: Path) -> None:
+        raise RuntimeError("synthetic stage crash")
+
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(tmp_path))
+    monkeypatch.setattr(finalize_module, "annotate_session", crash)  # optional stage
+    monkeypatch.setattr(finalize_module, "render_session", crash)  # required stage
+    result = finalize_module.finalize(session)
+
+    assert result.failed_stages == ["render"]
+    assert result.exit_code == 1
+    assert "required finalization stages failed: render" in capsys.readouterr().err
+
+
 def test_compare_rejects_different_layer_coverage(tmp_path: Path) -> None:
     before = tmp_path / "before"
     after = tmp_path / "after"
@@ -2767,6 +2795,84 @@ def test_terminate_tree_kills_launcher_and_grandchild() -> None:
     assert not any(child.is_running() for child in grandchildren)
 
 
+def test_terminate_tree_escalates_to_sigkill_when_sigterm_is_ignored() -> None:
+    """A collector that ignores SIGTERM (wedged wrapper, root-owned tool) must
+    still be reaped: the group kill escalates to SIGKILL after the bounded term
+    grace instead of hanging capture shutdown forever."""
+    process = subprocess.Popen(
+        ["bash", "-c", "trap '' TERM; sleep 30 & wait"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    reaped = terminate_tree(process, term_grace=0.5, kill_grace=5)
+
+    assert reaped is not None
+    assert process.poll() is not None
+
+
+def test_monitor_samples_process_and_coerces_corrupt_bridge_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 24/7 sampling loop must survive a snapshot whose numeric fields hold
+    strings (coerce to numbers, never raise mid-loop), append one JSONL row per
+    sample, and flag a bridge read older than 1.5 export periods as stale
+    instead of presenting it as live data."""
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir()
+    snapshot = {
+        "update": {
+            "serverTickIntervalAvgMs": "33.3",
+            "lateTicks": 4,
+            "gmUpdateDurationAvgMs": 12.5,
+            "totalSpikes": 2,
+        },
+        "world": {"entities": 500, "clients": 6, "unityDeltaMs": "16.6"},
+        "gc": {"gen2Collections": 3},
+    }
+    latest = telemetry / "apm_app_latest.json"
+    latest.write_text(json.dumps(snapshot), encoding="utf-8")
+    old = time.time() - 120
+    os.utime(latest, (old, old))
+    config = tmp_path / "Config"
+    config.mkdir()
+    atomic_json(config / "apmbridge.json", {"PeriodicExportSeconds": 30})
+    monkeypatch.setattr("apm_suite.cli.bridge_telemetry_file", lambda _pid, name: telemetry / name)
+
+    output = tmp_path / "monitor.jsonl"
+    result = runner.invoke(
+        app,
+        [
+            "monitor",
+            "--pid",
+            str(os.getpid()),
+            "--count",
+            "2",
+            "--interval",
+            "0.5",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    for row in rows:
+        assert row["pid"] == os.getpid()
+        assert isinstance(row["cpu_pct"], float)
+        # String snapshot fields coerce to usable numbers instead of crashing.
+        assert row["tps"] == pytest.approx(60.2)  # 1000 / 16.6
+        assert row["tps_lifetime"] == pytest.approx(30.0)  # 1000 / 33.3
+        assert row["late_ticks"] == 4 and row["full_gc"] == 3
+        assert row["entities"] == 500 and row["players"] == 6
+        assert row["bridge_age_s"] > 45
+    squashed = _squashed(result.stdout)
+    assert "cpu=" in squashed and "tps=60.2" in squashed
+    # age ~120 > 30 * 1.5: every read is flagged stale on both samples.
+    assert len(re.findall(r"\[bridge\d\d+\.\dsold\]", squashed)) == 2
+
+
 def test_run_redacts_password_flags_from_echoed_command(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -3379,24 +3485,36 @@ def test_place_perf_map_link_swaps_stale_link(tmp_path: Path) -> None:
     assert stale.resolve() == map_source.resolve()
 
 
-def test_place_perf_map_link_failure_degrades_to_warn(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+def test_export_jitmap_survives_unplaceable_tmp_link_and_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """An unplaceable /tmp link (sticky-bit owner mismatch) must land in
-    WARN.txt instead of silently letting perf misattribute JIT frames."""
+    """An unplaceable /tmp/perf-<pid>.map link (sticky-bit owner mismatch after
+    pid reuse) makes the symlink swap raise; _export_jitmap itself must degrade
+    to a session warning and still finish its remaining work, because perf
+    would otherwise silently resolve this capture's JIT frames against the dead
+    process's map."""
     session = tmp_path / "session_jitmap"
-    session.mkdir()
+    (session / "runtime").mkdir(parents=True)
     map_source = tmp_path / "telemetry" / "perf-4242.map"
     map_source.parent.mkdir()
     map_source.write_text("sym 0x0\n", encoding="utf-8")
-    unreachable_link = tmp_path / "no-such-dir" / "perf-4242.map"
+    monkeypatch.setattr(capture, "telnet_command", lambda *_args: True)
+    monkeypatch.setattr(capture, "bridge_telemetry_file", lambda _pid, _name: map_source)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
-    with pytest.raises(OSError):
-        capture._place_perf_map_link(map_source, unreachable_link)
+    def refused(_source: Path, _link: Path) -> None:
+        raise PermissionError(1, "Operation not permitted")  # sticky /tmp owner mismatch
 
-    capture._warn(session, f"cannot replace {unreachable_link}: simulated")
-    assert "cannot replace" in (session / "WARN.txt").read_text(encoding="utf-8")
+    monkeypatch.setattr(capture, "_place_perf_map_link", refused)
+    capture._export_jitmap(session, 4242, "", 0, "")
+
+    warning = (session / "WARN.txt").read_text(encoding="utf-8")
+    assert "cannot replace /tmp/perf-4242.map" in warning
     assert "WARN:" in capsys.readouterr().err
+    # The failed swap must not abort the rest of the jitmap export.
+    assert (session / "runtime" / "perf-4242.map").is_file()
 
 
 # --- live server (opt-in) ----------------------------------------------------------
