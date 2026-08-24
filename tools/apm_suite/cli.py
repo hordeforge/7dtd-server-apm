@@ -468,7 +468,9 @@ def scaling(
     from .analysis.scaling import analyze_scaling
 
     if by not in {"players", "entities"}:
-        err_console.print(f"[red]--by must be 'players' or 'entities', got {escape(by!r)}[/red]")
+        err_console.print(
+            f"[red]--by must be 'players' or 'entities', got {escape(repr(by))}[/red]"
+        )
         raise typer.Exit(2)
     usable = [s for s in sessions if (s / "summary.json").is_file()]
     if len(usable) < 3:

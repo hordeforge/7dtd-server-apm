@@ -15,19 +15,10 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text
-from ..models import EventsV2, schema_dict
+from ..models import EventsV2, as_number, schema_dict
 
 RETAINED_MAX = 2000
 PER_SOURCE_MAX = 500
-
-
-def _num(value: Any) -> float | None:
-    """Numeric-coerce a collector field; a format-changed record with a string
-    or null value (e.g. {"cpu_pct":"999"}) must not crash the whole parse."""
-    try:
-        return float(value) if value is not None else None
-    except (TypeError, ValueError):
-        return None
 
 
 class EventSink:
@@ -101,8 +92,8 @@ def parse_proc_jsonl(sink: EventSink, path: Path) -> None:
         except json.JSONDecodeError:
             continue
         t = record.get("t")
-        cpu = _num(record.get("cpu_pct"))
-        rss = _num(record.get("rss_mb"))
+        cpu = as_number(record.get("cpu_pct"))
+        rss = as_number(record.get("rss_mb"))
         if cpu is not None and cpu > 150:
             sink.add(
                 {
@@ -141,7 +132,7 @@ def parse_threads_jsonl(sink: EventSink, path: Path) -> None:
             continue
         wchan = record.get("wchan_top") or {}
         for name, raw in list(wchan.items())[:5]:
-            waiters = _num(raw)
+            waiters = as_number(raw)
             if (
                 waiters is not None
                 and waiters >= 3
@@ -217,8 +208,8 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
         # spikes[] sits outside BridgeSnapshotV3 validation (extra="allow"), so
         # a format-changed or hand-edited record must coerce like every other
         # collector field instead of raising float(TypeError) mid-timeline.
-        duration = _num(spike.get("gmUpdateDurationMs")) or 0.0
-        tick_ms = _num(spike.get("serverTickIntervalMs")) or 0.0
+        duration = as_number(spike.get("gmUpdateDurationMs")) or 0.0
+        tick_ms = as_number(spike.get("serverTickIntervalMs")) or 0.0
         epoch: float | None = None
         with contextlib.suppress(ValueError, TypeError):
             # Naive stamps (no offset) are UTC by repo convention, matching
