@@ -22,7 +22,7 @@ from apm_suite.capture import CaptureContext, CollectorSpec
 from apm_suite.cli import app
 from apm_suite.finalize import finalize
 from apm_suite.io import atomic_json, load_json
-from apm_suite.models import EventsV2, LayerScore, ManifestV2, Target, schema_dict
+from apm_suite.models import Artifact, EventsV2, LayerScore, ManifestV2, Target, schema_dict
 from apm_suite.reporting import render_session
 from apm_suite.runner import terminate_tree
 from apm_suite.session import REQUIRED, audit_session
@@ -1355,6 +1355,30 @@ def test_build_summary_survives_snapshot_with_non_numeric_fields(tmp_path: Path)
     assert [layer.layer for layer in summary.layers] != []
 
 
+def test_build_summary_survives_snapshot_with_infinite_fields(tmp_path: Path) -> None:
+    """JSON "1e999" parses to float('inf'): int() on it raises OverflowError
+    (not ValueError) and round() leaves inf that json.dumps would persist as a
+    bare `Infinity` strict JSON consumers reject. The summary stage must keep
+    the host evidence and emit valid JSON instead."""
+    from apm_suite.analysis.report import build_summary
+
+    session = tmp_path / "session_infsnap"
+    (session / "app").mkdir(parents=True)
+    # Raw text on purpose: json.dumps never emits these literals.
+    (session / "app/apm_app.json").write_text(
+        '{"sections": [], "measurement": {"deepSampleRate": 1},'
+        ' "update": {"windowUpdates": 100}, "world": {"entities": 10},'
+        ' "gc": {"heapDeltaBytes": 1e999, "windowSeconds": 1e999}}',
+    )
+    atomic_json(session / "meta.json", _meta())
+    summary = build_summary(session)  # must not raise (OverflowError escaped here)
+    path = session / "summary.json"
+    text = path.read_text()
+    assert "Infinity" not in text  # valid JSON for strict external consumers
+    assert json.loads(text)["schema"] == "7dtd.apm.summary.v2"
+    assert [layer.layer for layer in summary.layers] != []
+
+
 def test_build_summary_keeps_measured_zero_gross_alloc(tmp_path: Path) -> None:
     """grossAllocBytesPerSecond == 0 is real evidence (idle window), never the
     bridge's -1 unmeasured sentinel: it must land in metadata as a healthy zero
@@ -1986,6 +2010,38 @@ def test_templates_escape_runtime_content(tmp_path: Path) -> None:
     assert "<img src=x>" not in html
     assert "<script>alert(1)</script>" not in report
     assert "&lt;script&gt;" in report
+
+
+def test_dashboard_render_survives_non_numeric_frame_and_share(tmp_path: Path) -> None:
+    """summary.json/csharp_bridge.json are re-read without schema guarantees
+    (imported bundles, hand edits): a null tickIntervalAvgMs or a missing
+    subsystem share must render as '?' instead of crashing the required
+    render stage (Jinja's round() raises on None) and losing the dashboard."""
+    session = tmp_path / "session_nullrender"
+    session.mkdir()
+    atomic_json(
+        session / "summary.json",
+        {
+            "schema": "7dtd.apm.summary.v2",
+            "session_id": session.name,
+            "recommendation": "",
+            "layers": [{"layer": "cpu", "score": None, "signals": {}, "optimize": []}],
+            "meta": _meta(),
+            "metadata": {"frame": {"gmUpdateAvgMs": None, "tickIntervalAvgMs": "junk"}},
+        },
+    )
+    atomic_json(session / "events.json", _events(session.name, []))
+    atomic_json(
+        session / "csharp_bridge.json",
+        {
+            "bridges": [],
+            "attribution": {"subsystems": [{"subsystem": "mesh", "sections": []}]},
+            "stall_correlation": [],
+        },
+    )
+    render_session(session)
+    html = (session / "dashboard.html").read_text()
+    assert "? ms" in html  # frame numbers degraded to placeholders, not a crash
 
 
 # --- integration: finalize pipeline on a synthetic session ---------------------
@@ -3919,6 +3975,260 @@ def test_scenario_matrix_rejects_mistyped_entry_value_before_any_run(
 
     assert result.exit_code == 2
     assert "entry 1 field 'seconds': expected int, got '60'" in result.stderr
+
+
+# --- error-path hardening (resilience audit) ----------------------------------------
+
+
+def test_export_jitmap_survives_vanished_map_at_symbol_count(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The map can vanish between the poll and the final symbol-count read
+    (server died, telemetry cleaned up). That count is a cosmetic headline:
+    it must degrade to a stderr note, never abort run_capture BEFORE its
+    signal/collector block and lose the whole window."""
+    session = tmp_path / "session_jitmap"
+    (session / "runtime").mkdir(parents=True)
+    map_source = tmp_path / "telemetry" / "perf-4242.map"
+    map_source.parent.mkdir()
+    map_source.write_text("sym 0x0\n", encoding="utf-8")
+    monkeypatch.setattr(capture, "telnet_command", lambda *_args: True)
+    monkeypatch.setattr(capture, "bridge_telemetry_file", lambda _pid, _name: map_source)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    def place_then_target_dies(_source: Path, _link: Path) -> None:
+        map_source.unlink()  # server exited; telemetry dir removed
+
+    monkeypatch.setattr(capture, "_place_perf_map_link", place_then_target_dies)
+    capture._export_jitmap(session, 4242, "", 0, "")
+
+    assert "symbol count unavailable" in capsys.readouterr().err
+
+
+def test_import_bundle_corrupt_member_cleans_partial_restore(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A member whose stored bytes fail the CRC check raises BadZipFile (not
+    OSError) mid-extract. The partial-import cleanup must cover it too, or a
+    torn bundle strands a half-restored session that later audits INVALID."""
+    import zipfile
+
+    session = tmp_path / "session_badmember"
+    (session / "io").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "io/vfs.bt.out").write_text("openat /steamapps/common\n")
+    bundle = tmp_path / "session_badmember.zip"
+    exported = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert exported.exit_code == 0, exported.output
+
+    # Flip one byte inside the second member's stored data so extraction of
+    # meta.json succeeds first and vfs.bt.out then fails CRC verification.
+    with zipfile.ZipFile(bundle) as archive:
+        infos = archive.infolist()
+        victim = next(info for info in infos if info.filename.endswith(".bt.out"))
+        data_start = victim.header_offset + 30 + len(victim.filename) + len(victim.extra)
+    raw = bytearray(bundle.read_bytes())
+    raw[data_start] ^= 0xFF
+    bundle.write_bytes(raw)
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+    result = runner.invoke(app, ["import", str(bundle)])
+
+    assert result.exit_code == 2
+    assert "removed partial import" in result.stderr
+    assert not list(store.glob("session_*"))
+
+
+def test_memory_trend_skips_non_numeric_records(tmp_path: Path) -> None:
+    """A junk record (string t/rss_mb from a hand-edited or imported jsonl)
+    must drop out of the trend instead of raising float(ValueError) out of
+    the required summary stage; good records still produce the slope."""
+    from apm_suite.analysis.report import memory_trend
+
+    session = tmp_path / "session_junk_proc"
+    _write_proc_jsonl(
+        session,
+        [
+            {"t": "early", "rss_mb": 999.0},  # non-numeric stamp
+            {"t": 1.0, "rss_mb": "huge"},  # non-numeric rss
+            {"t": 1.0, "rss_mb": 1000.0},
+            {"t": 2.0, "rss_mb": 1000.5},
+            {"t": 3.0, "rss_mb": 1001.0},
+        ],
+    )
+    trend = memory_trend(session)
+    assert trend["rss_growth_mb_per_s"] == pytest.approx(0.5)
+
+
+def test_diagnose_lag_tolerates_junk_snapshot_scalars() -> None:
+    """Bridge snapshot extra=allow blocks and re-read summaries are not
+    schema-guarded: string/container scalars must coerce to 'no data' instead
+    of raising int()/float() errors through the required summary stage."""
+    from apm_suite.analysis.report import diagnose_lag
+
+    metadata = {
+        "frame": {
+            "lateTicks": "many",
+            "windowUpdates": {"n": 5},
+            "tickIntervalAvgMs": None,
+            "gmUpdateAvgMs": "busy",
+        },
+        "gc": {"allocMBPerSecond": [1], "grossAllocMBPerSecond": "high"},
+    }
+    result = diagnose_lag([], metadata, {})
+    assert result["laggy"] is False
+    assert result["verdict"] == "server met its tick deadline this window"
+
+
+def test_verify_recorded_hashes_records_unreadable_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An artifact that cannot be read (perms, vanished mid-audit under a
+    concurrent prune) is itself an integrity finding; crashing would lose the
+    report for every other recorded artifact too."""
+    from apm_suite.session import verify_recorded_hashes
+
+    session = tmp_path / "session_locked"
+    (session / "io").mkdir(parents=True)
+    (session / "io/vfs.bt.out").write_text("evidence\n")
+
+    def unreadable(path: Path) -> str:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr("apm_suite.session.file_sha256", unreadable)
+    artifact = Artifact(
+        path="io/vfs.bt.out",
+        bytes=(session / "io/vfs.bt.out").stat().st_size,
+        sha256="0" * 64,
+    )
+    manifest = ManifestV2(
+        session_id="session_locked",
+        started_at=datetime.now(UTC),
+        target=Target(pid=1),
+        requested_layers=["all"],
+        artifacts=[artifact],
+    )
+    atomic_json(session / "manifest.json", schema_dict(manifest))
+
+    errors = verify_recorded_hashes(session)
+
+    assert len(errors) == 1
+    assert "unreadable" in errors[0]
+    assert "io/vfs.bt.out" in errors[0]
+
+
+def test_audit_manifest_walk_skips_file_gone_mid_walk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file pruned by a concurrent process between rglob and its hash must
+    be skipped (same contract as _mtime), not crash every overlapping audit."""
+    from apm_suite.io import file_sha256 as real_sha256
+
+    seen = {"first": True}
+
+    def vanishing_after_first(path: Path) -> str:
+        if seen["first"]:
+            seen["first"] = False
+            return real_sha256(path)
+        raise FileNotFoundError(2, "No such file or directory", str(path))
+
+    monkeypatch.setattr("apm_suite.session.file_sha256", vanishing_after_first)
+    session = tmp_path / "session_race"
+    (session / "io").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "io/a.txt").write_text("a\n")
+    (session / "io/b.txt").write_text("b\n")
+
+    manifest, _valid = audit_session(session)
+
+    recorded = {artifact.path for artifact in manifest.artifacts}
+    # The vanished file was skipped, not fatal; the survivor is recorded.
+    assert "io/a.txt" in recorded
+    assert not any("crash" in error for error in manifest.errors)
+
+
+def test_doctor_bridge_hash_failure_reports_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A bridge DLL owned by another user cannot be hashed; doctor must report
+    the failed check with a fix, never crash the whole readiness report."""
+    from apm_suite import doctor
+
+    ds = tmp_path / "ds"
+    mods = ds / "Mods" / "7dtd-server-apm-bridge"
+    mods.mkdir(parents=True)
+    (mods / "7dtd-server-apm-bridge.dll").write_bytes(b"installed")
+    repo = tmp_path / "repo"
+    built_dir = repo / "dist" / "7dtd-server-apm-bridge"
+    built_dir.mkdir(parents=True)
+    (built_dir / "7dtd-server-apm-bridge.dll").write_bytes(b"built")
+    monkeypatch.setenv("SEVENDTD_DS_DIR", str(ds))
+    monkeypatch.setattr(doctor, "REPO", repo)
+
+    def denied(path: Path) -> str:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(doctor, "file_sha256", denied)
+
+    result = doctor._bridge_status()
+
+    assert result["ok"] is False
+    assert "cannot hash" in (result["fix"] or "")
+
+
+def test_check_budget_missing_budget_file_raises_not_silent(tmp_path: Path) -> None:
+    """check_budget's contract: a custom budget path must never fall back to
+    DEFAULT_BUDGET silently - a missing file raises naming the path (the CLI
+    pre-check exists, but the library owns the guarantee)."""
+    from apm_suite.analysis.budget import check_budget
+
+    session = tmp_path / "session_budget"
+    session.mkdir()
+
+    with pytest.raises(ValueError, match="does not exist"):
+        check_budget(session, tmp_path / "absent.json")
+
+
+def test_annotate_stream_error_leaves_no_partial_annotated_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed annotation pass must not strand a PARTIAL .annotated.txt:
+    readers prefer that file whenever it exists, so a truncated twin would
+    shadow the raw evidence with less content than the original."""
+    from apm_suite.analysis import jitsym
+
+    source = tmp_path / "probe.bt.out"
+    source.write_text(
+        "@alloc[\n 0xffffffff81000000 Foo.bar\n]: 10\n@x 0xdeadbeef tail\n",
+        encoding="utf-8",
+    )
+    target = tmp_path / "probe.annotated.txt"
+
+    def flaky_resolver(_starts: object, _entries: object) -> Any:
+        state = {"n": 0}
+
+        def resolve(match: re.Match[str]) -> str:
+            # First substitution succeeds (target file is opened and written),
+            # then the pass dies mid-file like an unreadable source would.
+            state["n"] += 1
+            if state["n"] >= 2:
+                raise OSError("read failed mid-pass")
+            return match.group(0)
+
+        return resolve
+
+    monkeypatch.setattr(jitsym, "_resolver", flaky_resolver)
+
+    with pytest.raises(OSError):
+        jitsym._annotate_stream(
+            source, target, [0xFFFFFFFF81000000], [(0xFFFFFFFF81000010, "Foo.bar")]
+        )
+
+    assert not target.exists()
 
 
 # --- live server (opt-in) ----------------------------------------------------------

@@ -375,6 +375,18 @@ def _as_tid(value: Any) -> int:
     return int(number) if number is not None else -1
 
 
+def _num0(value: Any) -> float:
+    """diagnose_lag's coercion for externally sourced scalars (bridge snapshot
+    extra=allow fields, layer signals from re-read summaries, prior
+    csharp_bridge.json shares): junk degrades to 0 instead of raising out of
+    the required summary stage."""
+    return as_number(value) or 0.0
+
+
+def _int0(value: Any) -> int:
+    return int(_num0(value))
+
+
 def thread_summary(session: Path) -> dict[str, Any]:
     path = session / "threads/threads.jsonl"
     if not path.exists():
@@ -469,12 +481,17 @@ def memory_trend(session: Path) -> dict[str, Any]:
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if record.get("t") is not None and record.get("rss_mb") is not None:
-            times.append(float(record["t"]))
+        # proc.jsonl is re-read without schema guarantees (torn collector
+        # output, imported bundles): a non-numeric t/rss_mb must drop that one
+        # record instead of raising out of the required summary stage.
+        stamp = as_number(record.get("t"))
+        rss_value = as_number(record.get("rss_mb"))
+        if stamp is not None and rss_value is not None:
+            times.append(stamp)
             # Samplers that also stamp a monotonic clock let the span below
             # ignore wall-clock steps; legacy records fall back to `t`.
             monos.append(as_number(record.get("mono")))
-            rss.append(float(record["rss_mb"]))
+            rss.append(rss_value)
             raw_fd = record.get("fd_count")
             if isinstance(raw_fd, (int, float)) and not isinstance(raw_fd, bool) and raw_fd >= 0:
                 fds.append(int(raw_fd))
@@ -694,8 +711,8 @@ def diagnose_lag(
     churn_sites: list[str] = metadata.get("top_churn_sites") or []
     causes: list[dict[str, Any]] = []
 
-    late = int(frame.get("lateTicks") or 0)
-    tick_stall = float(frame.get("tickStallMsTotal") or 0)
+    late = _int0(frame.get("lateTicks"))
+    tick_stall = _num0(frame.get("tickStallMsTotal"))
     laggy = late > 0
 
     # Saturation / death-spiral: tick interval far over the 50 ms (20 TPS)
@@ -703,8 +720,8 @@ def diagnose_lag(
     # laggy, it is past its capacity (e.g. the ~0.3 TPS collapse at ~500
     # players). Surface it as the dominant cause so it is not mistaken for a
     # transient spike.
-    tick_interval = float(frame.get("tickIntervalAvgMs") or 0)
-    window_updates = int(frame.get("windowUpdates") or 0)
+    tick_interval = _num0(frame.get("tickIntervalAvgMs"))
+    window_updates = _int0(frame.get("windowUpdates"))
     tps = 1000 / tick_interval if tick_interval > 0 else 0
     late_share = late / window_updates if window_updates else 0
     saturated = tick_interval >= 150 and late_share >= 0.9
@@ -724,15 +741,15 @@ def diagnose_lag(
     # state alloc==collect so it reads ~0 even under heavy churn. The full-GC
     # count is the direct pause signal, and grossAllocMBPerSecond (bridge
     # GetTotalAllocatedBytes, monotonic) is the true pressure when available.
-    net_heap = float(gc.get("allocMBPerSecond") or 0)
-    gross = float(gc.get("grossAllocMBPerSecond") or 0)
-    full_gc = int(gc.get("fullCollections") or 0)
-    window_s = float(gc.get("windowSeconds") or 0)
+    net_heap = _num0(gc.get("allocMBPerSecond"))
+    gross = _num0(gc.get("grossAllocMBPerSecond"))
+    full_gc = _int0(gc.get("fullCollections"))
+    window_s = _num0(gc.get("windowSeconds"))
     gc_rate = full_gc / window_s if window_s > 0 else 0  # full GCs per second
     gc_signals = signals.get("runtime_gc") or {}
-    worst_stw = float(gc_signals.get("stw_pause_worst_ms") or 0)
-    stw_total = float(gc_signals.get("stw_pause_total_ms") or 0)
-    little = int(gc_signals.get("collect_a_little_hits") or 0)
+    worst_stw = _num0(gc_signals.get("stw_pause_worst_ms"))
+    stw_total = _num0(gc_signals.get("stw_pause_total_ms"))
+    little = _int0(gc_signals.get("collect_a_little_hits"))
     little_rate = little / window_s if window_s > 0 else 0
     if gross >= 1.5 or full_gc >= 1 or worst_stw >= 50:
         pressure = f"{gross} MB/s gross alloc" if gross > 0 else f"{net_heap} MB/s net heap growth"
@@ -764,8 +781,8 @@ def diagnose_lag(
             }
         )
 
-    main_share = float(threads.get("main_thread_share_of_process_avg") or 0)
-    main_cpu = float(threads.get("main_thread_cpu_pct_avg") or 0)
+    main_share = _num0(threads.get("main_thread_share_of_process_avg"))
+    main_cpu = _num0(threads.get("main_thread_cpu_pct_avg"))
     if main_share >= 0.5:
         # Name the hot game code ON the tick (main-thread perf), not aggregate CPU.
         hot = (metadata.get("cpu_hot_paths") or {}).get("main_thread") or []
@@ -782,7 +799,7 @@ def diagnose_lag(
             }
         )
 
-    disk_ms = float((signals.get("scheduler") or {}).get("disk_block_ms") or 0)
+    disk_ms = _num0((signals.get("scheduler") or {}).get("disk_block_ms"))
     if disk_ms >= 50:
         causes.append(
             {
@@ -795,8 +812,8 @@ def diagnose_lag(
         )
 
     mem = metadata.get("memory") or {}
-    rss_slope = float(mem.get("rss_growth_mb_per_s") or 0)
-    fd_growth = int(mem.get("fd_end") or 0) - int(mem.get("fd_start") or 0)
+    rss_slope = _num0(mem.get("rss_growth_mb_per_s"))
+    fd_growth = _int0(mem.get("fd_end")) - _int0(mem.get("fd_start"))
     if rss_slope >= 5 or fd_growth >= 100:
         causes.append(
             {
@@ -808,7 +825,7 @@ def diagnose_lag(
             }
         )
 
-    runq_stall = float((signals.get("scheduler") or {}).get("main_runq_stall_ms") or 0)
+    runq_stall = _num0((signals.get("scheduler") or {}).get("main_runq_stall_ms"))
     if runq_stall >= 50:
         causes.append(
             {
@@ -821,9 +838,9 @@ def diagnose_lag(
         )
 
     sync_signals = signals.get("sync_locks") or {}
-    slow_futex = int(sync_signals.get("slow_futex_lines") or 0)
-    wait_ms = float(sync_signals.get("main_thread_futex_wait_ms") or 0)
-    wait_share = float(sync_signals.get("main_thread_futex_wait_share") or 0)
+    slow_futex = _int0(sync_signals.get("slow_futex_lines"))
+    wait_ms = _num0(sync_signals.get("main_thread_futex_wait_ms"))
+    wait_share = _num0(sync_signals.get("main_thread_futex_wait_share"))
     # Fire on either the count of slow waits OR the main thread spending a real
     # slice of wall-clock blocked on locks (the direct "laggy without CPU" tell).
     if slow_futex >= 5 or wait_share >= 0.05:
@@ -849,8 +866,8 @@ def diagnose_lag(
         )
 
     transfers = metadata.get("transfers") or {}
-    bridge_mb_s = float(transfers.get("mb_per_second") or 0)  # since-reset average
-    kernel_send = float((metadata.get("net") or {}).get("udp_send_mb_per_second") or 0)
+    bridge_mb_s = _num0(transfers.get("mb_per_second"))  # since-reset average
+    kernel_send = _num0((metadata.get("net") or {}).get("udp_send_mb_per_second"))
     # Kernel UDP send is always the capture window; the bridge counter averages
     # since the last reset and is inflated by the initial join chunk burst.
     # Prefer the windowed kernel rate as the current headline when we have it.
@@ -881,9 +898,9 @@ def diagnose_lag(
     disjoint = [s for s in subsystems if str(s.get("subsystem")) not in ("frame_core",)]
     # Pick by share, not list order, so a mis-sorted attribution can't name the
     # wrong bottleneck.
-    top = max(disjoint, key=lambda s: float(s.get("share") or 0), default=None)
+    top = max(disjoint, key=lambda s: _num0(s.get("share")), default=None)
     if top:
-        share = float(top.get("share") or 0)
+        share = _num0(top.get("share"))
         name = str(top.get("subsystem"))
         friendly = {
             "network": "network serialization + entity distribution to clients",
@@ -918,7 +935,7 @@ def diagnose_lag(
     # with late ticks = SPIKE-driven lag (GC pauses / stalls punctuating an
     # otherwise-paced server), the classic "laggy without CPU". High compute =
     # sustained saturation. This tells the reader which regime they are in.
-    gm_avg = float(frame.get("gmUpdateAvgMs") or 0)
+    gm_avg = _num0(frame.get("gmUpdateAvgMs"))
     budget_ms = 50.0
     headroom_pct = round(max(0.0, (budget_ms - gm_avg) / budget_ms) * 100, 1) if gm_avg else None
     if headroom_pct is not None and laggy:
@@ -1012,7 +1029,11 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
         "lateTicks": update.get("lateTicks"),
         "tickStallMsTotal": update.get("tickStallMsTotal"),
     }
-    window_s = float((snapshot.get("gc") or {}).get("windowSeconds") or 0)
+    # as_number (not bare float()): JSON "1e999" parses to inf, which passes
+    # every truthiness/>0 check below, divides rates into misleading zeros,
+    # and would persist into summary.json as a bare `Infinity` that strict
+    # JSON consumers reject. Non-finite evidence is absent evidence.
+    window_s = as_number((snapshot.get("gc") or {}).get("windowSeconds")) or 0.0
     transfers = snapshot.get("mapTransfers") or []
     if transfers and window_s > 0:
         total_bytes = sum(int(x.get("bytes") or 0) for x in transfers)
@@ -1026,13 +1047,13 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
         }
     gc_window = snapshot.get("gc") or {}
     if gc_window:
-        heap_delta = int(gc_window.get("heapDeltaBytes") or 0)
+        heap_delta = int(as_number(gc_window.get("heapDeltaBytes")) or 0)
         # Boehm (Mono's default here) is non-generational: gen0==gen2, so
         # the collection counts are not a generational signal. The real
         # allocation-pressure gauge is heap growth rate; each full
         # collection it triggers is a stop-the-world frame hitch.
         alloc_mb_s = (heap_delta / 1048576 / window_s) if window_s > 0 else 0
-        collections = int(gc_window.get("gen2Collections") or 0)
+        collections = int(as_number(gc_window.get("gen2Collections")) or 0)
         # Gross allocation is the real GC-pause driver. Unity 2022 Mono
         # lacks GC.GetTotalAllocatedBytes (bridge counter is -1), so the
         # opt-in mono_alloc probe (Boehm GC_malloc arg0) is the source
@@ -1171,11 +1192,13 @@ def build_summary(session: Path) -> SummaryV2:
             if "gc" in metadata:
                 _apply_gc_pressure(layers, metadata["gc"])
             _apply_late_tick_pressure(layers, (snapshot or {}).get("update") or {})
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except (json.JSONDecodeError, TypeError, ValueError, OverflowError):
             # TypeError: a snapshot block whose numeric fields parsed as strings
             # or containers (hand-edited / imported) raises from the arithmetic
             # above (e.g. "16.6" - 3.2); drop just the snapshot-derived blocks,
-            # exactly like a JSON decode failure.
+            # exactly like a JSON decode failure. OverflowError: JSON "1e999"
+            # parses to float('inf'), and int()/round() on it raises that, not
+            # ValueError (models.as_number rejects inf for the same reason).
             pass
 
     net_window = max(1.0, float(meta.get("seconds") or 1))

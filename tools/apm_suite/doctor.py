@@ -71,11 +71,22 @@ def _bridge_status() -> dict[str, Any]:
     if not installed.is_file():
         return {"ok": False, "fix": "make bridge-install (bridge not installed)"}
     result: dict[str, Any] = {"ok": True, "fix": None}
-    if built.is_file() and file_sha256(installed) != file_sha256(built):
-        result = {
-            "ok": False,
-            "fix": "installed bridge differs from dist build; make bridge-install + restart server",
-        }
+    if built.is_file():
+        # The server (and its Mods dir) commonly runs as another user; an
+        # unreadable installed DLL is a diagnosable condition, not a reason to
+        # crash the whole doctor report.
+        try:
+            differs = file_sha256(installed) != file_sha256(built)
+        except OSError as error:
+            return {
+                "ok": False,
+                "fix": f"cannot hash the installed bridge ({error}); check permissions",
+            }
+        if differs:
+            result = {
+                "ok": False,
+                "fix": "installed bridge differs from dist build; make bridge-install + restart server",
+            }
     config = dedicated_dir() / "Mods/7dtd-server-apm-bridge/Config/apmbridge.json"
     with suppress(OSError, json.JSONDecodeError, ValueError):
         settings = json.loads(config.read_text(encoding="utf-8"))

@@ -191,14 +191,17 @@ def check_budget(
     """Run the gate and persist budget_check.txt/.json. Returns pass/fail.
 
     Raises ValueError (with the offending path) when a custom budget file is
-    unreadable or not a JSON object: the caller decides how to surface it, but
-    it must never fall through to running against DEFAULT_BUDGET silently.
+    missing, unreadable, or not a JSON object: the caller decides how to
+    surface it, but it must never fall through to running against
+    DEFAULT_BUDGET silently.
     """
     budget = DEFAULT_BUDGET
-    if budget_path and budget_path.is_file():
+    if budget_path is not None:
+        if not budget_path.is_file():
+            raise ValueError(f"budget file {budget_path} does not exist")
         try:
             loaded = json.loads(budget_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as error:
+        except (json.JSONDecodeError, OSError) as error:
             raise ValueError(f"budget file {budget_path} is not valid JSON: {error}") from None
         if not isinstance(loaded, dict):
             raise ValueError(f"budget file {budget_path} must contain a JSON object")

@@ -530,8 +530,15 @@ def _export_jitmap(
             f"cannot replace {map_link}: {error}; managed perf frames are "
             "unresolved or misattributed; remove the stale map manually",
         )
-    with map_source.open(encoding="utf-8", errors="replace") as handle:
-        symbols = sum(1 for _ in handle)
+    # The count is a cosmetic headline: the map was already published, so a
+    # vanished/raced file here must not abort run_capture (this runs BEFORE
+    # its try block) and lose the whole window over one stat/read.
+    try:
+        with map_source.open(encoding="utf-8", errors="replace") as handle:
+            symbols = sum(1 for _ in handle)
+    except OSError as error:
+        print(f">> jitmap: symbol count unavailable ({error})", file=sys.stderr)
+        return
     print(f">> jitmap: {symbols} managed symbols mapped")
 
 

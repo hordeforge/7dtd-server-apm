@@ -413,14 +413,20 @@ def verify_recorded_hashes(session: Path) -> list[str]:
         if not current.is_file():
             errors.append(f"integrity: {artifact.path} is recorded but missing")
             continue
-        size = current.stat().st_size
-        if size != artifact.bytes:
-            errors.append(
-                f"integrity: {artifact.path} changed since the manifest was recorded "
-                f"({artifact.bytes} -> {size} bytes)"
-            )
-        elif file_sha256(current) != artifact.sha256:
-            errors.append(f"integrity: {artifact.path} differs from its recorded hash")
+        try:
+            size = current.stat().st_size
+            if size != artifact.bytes:
+                errors.append(
+                    f"integrity: {artifact.path} changed since the manifest was recorded "
+                    f"({artifact.bytes} -> {size} bytes)"
+                )
+            elif file_sha256(current) != artifact.sha256:
+                errors.append(f"integrity: {artifact.path} differs from its recorded hash")
+        except OSError as error:
+            # An unreadable artifact (perms, vanished mid-audit under a
+            # concurrent prune) is itself an integrity finding; crashing here
+            # would lose the report for every other recorded artifact too.
+            errors.append(f"integrity: {artifact.path} unreadable ({error})")
     return errors
 
 
@@ -466,16 +472,26 @@ def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[Mani
             spikes = int((load_json(events_path).get("by_kind") or {}).get("frame_spike") or 0)
             if spikes:
                 warnings.append(f"{spikes} frame spikes >= bridge threshold during capture")
-    artifacts = [
-        Artifact(
-            path=p.relative_to(session).as_posix(), bytes=p.stat().st_size, sha256=file_sha256(p)
-        )
-        for p in sorted(session.rglob("*"))
+    artifacts = []
+    for p in sorted(session.rglob("*")):
         # Skip symlinks: a crafted link would otherwise pull a file outside the
         # session into the integrity manifest (and a dir-symlink cycle would hang
         # the walk). Session artifacts are always real files.
-        if p.is_file() and not p.is_symlink() and p.name != "manifest.json"
-    ]
+        if not p.is_file() or p.is_symlink() or p.name == "manifest.json":
+            continue
+        try:
+            artifacts.append(
+                Artifact(
+                    path=p.relative_to(session).as_posix(),
+                    bytes=p.stat().st_size,
+                    sha256=file_sha256(p),
+                )
+            )
+        except OSError:
+            # A concurrent prune removed the file between glob and read: skip it
+            # (same contract as _mtime) instead of crashing every audit that
+            # overlaps a prune.
+            continue
     manifest = ManifestV2(
         session_id=session.name,
         started_at=_date(meta.get("utc")),

@@ -8,6 +8,7 @@ import tempfile
 import time
 import unicodedata
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -407,10 +408,12 @@ def import_bundle(
             target = claim_dir((store or apm_root()) / stem)
             try:
                 archive.extractall(target)
-            except OSError as error:
-                # A mid-extract failure (disk full, unreadable member) must not
-                # strand a partial session that later audits INVALID and pollutes
-                # index/prune: remove what landed, then report cleanly.
+            except (OSError, zipfile.BadZipFile, zlib.error) as error:
+                # A mid-extract failure must not strand a partial session that
+                # later audits INVALID and pollutes index/prune: remove what
+                # landed, then report cleanly. BadZipFile/zlib.error cover the
+                # corrupt-member cases (CRC mismatch, broken deflate stream);
+                # OSError covers disk-full and unreadable targets.
                 shutil.rmtree(target, ignore_errors=True)
                 err_console.print(
                     f"[red]extraction failed, removed partial import {target}: {error}[/red]"

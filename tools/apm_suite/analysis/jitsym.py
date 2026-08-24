@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from bisect import bisect_right
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 
 HEX = re.compile(r"\b0x([0-9a-fA-F]{6,})\b")
@@ -85,6 +86,17 @@ def _annotate_stream(
                         dst.write(buffered)
                     pending.clear()
                 dst.write(annotated)
+    except BaseException:
+        # A failed pass (unreadable source mid-file, KeyboardInterrupt) must
+        # not leave a PARTIAL .annotated.txt behind: readers prefer that file
+        # whenever it exists, so a truncated twin would shadow the raw
+        # evidence with less content than the original.
+        if dst is not None:
+            dst.close()
+            dst = None
+        with suppress(OSError):
+            target.unlink()
+        raise
     finally:
         if dst is not None:
             dst.close()
