@@ -88,8 +88,13 @@ def _bridge_status() -> dict[str, Any]:
                 "fix": "installed bridge differs from dist build; make bridge-install + restart server",
             }
     config = dedicated_dir() / "Mods/7dtd-server-apm-bridge/Config/apmbridge.json"
-    with suppress(OSError, json.JSONDecodeError, ValueError):
+    settings: Any = None
+    with suppress(OSError, ValueError):
         settings = json.loads(config.read_text(encoding="utf-8"))
+    # Valid JSON that is not an object (a hand-edited "[1,2]") has no .get;
+    # like every other malformed config read here it is a diagnosable
+    # condition, not a reason to crash the whole doctor report.
+    if isinstance(settings, dict):
         result["deep_mode"] = bool(settings.get("DeepMode"))
         if not settings.get("DeepMode"):
             result["fix"] = (

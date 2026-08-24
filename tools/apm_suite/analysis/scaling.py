@@ -93,7 +93,11 @@ def analyze_scaling(sessions: list[Path], scale_key: str = "players") -> dict[st
     points.sort(key=lambda p: p[0])
     scales = [p[0] for p in points]
 
-    names = {name for _, secs in points for name in secs}
+    # Iterate in name order and tiebreak the rank on name: set iteration order
+    # is per-process randomized, and exponents rounded to 2 decimals collide
+    # often - without this, identical inputs yield run-dependent output order
+    # (the same hazard flame_delta.delta guards against).
+    names = sorted({name for _, secs in points for name in secs})
     findings: list[dict[str, Any]] = []
     for name in names:
         per_call = [(scale, secs[name]["avgMs"]) for scale, secs in points if name in secs]
@@ -113,7 +117,9 @@ def analyze_scaling(sessions: list[Path], scale_key: str = "players") -> dict[st
             }
         )
     # Rank by the worse of the two exponents (algorithmic super-linearity first).
-    findings.sort(key=lambda f: -max(f["per_call_exponent"] or 0, f["total_exponent"] or 0))
+    findings.sort(
+        key=lambda f: (-max(f["per_call_exponent"] or 0, f["total_exponent"] or 0), f["section"])
+    )
     super_linear = [
         f
         for f in findings

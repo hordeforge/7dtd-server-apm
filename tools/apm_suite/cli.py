@@ -14,6 +14,7 @@ from typing import Annotated, Any
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 
 from . import __version__
 from .analysis.bridge import analyze
@@ -111,9 +112,14 @@ def doctor(
         atomic_json(json_output, result)
     for layer, available in result["available_layers"].items():
         console.print(f"[green]OK[/green] {layer}" if available else f"[yellow]--[/yellow] {layer}")
+    # Every populated fix prints, not only failed checks: _bridge_status sets a
+    # fix on a healthy bridge when DeepMode is off, and the README promises
+    # doctor flags that. Fix text embeds OS/telnet error strings (user-set
+    # hostnames, paths), so escape it like every other untrusted echo.
     for name, check in (result.get("checks") or {}).items():
-        if isinstance(check, dict) and not check.get("ok") and check.get("fix"):
-            console.print(f"[yellow]![/yellow] {name}: {check['fix']}")
+        if isinstance(check, dict) and check.get("fix"):
+            marker = "[yellow]![/yellow]" if not check.get("ok") else "[blue]*[/blue]"
+            console.print(f"{marker} {name}: {escape(str(check['fix']))}")
     _exit(1 if strict and not result["ready"] else 0)
 
 
@@ -152,8 +158,10 @@ def capture(
 ) -> None:
     """Run a timed collector session against the server and finalize it."""
     if unknown := unknown_only_tokens(only):
+        # The tokens are raw argv; a stray closing tag would otherwise raise
+        # MarkupError out of the printer instead of reaching this exit-2 hint.
         err_console.print(
-            f"[red]unknown --only value(s): {', '.join(unknown)}; "
+            f"[red]unknown --only value(s): {escape(', '.join(unknown))}; "
             "use collector names or layers as listed by 'capture --dry-run'[/red]"
         )
         raise typer.Exit(2)
@@ -219,8 +227,11 @@ def audit(
     )
     # An INVALID verdict without the offending paths is not actionable; name
     # every error (missing file, failed schema, recorded-hash mismatch).
+    # Each error quotes untrusted content (imported-bundle artifact paths,
+    # schema-validation input values), so escape it: rich would otherwise
+    # interpret square brackets in those strings as console markup.
     for error in manifest.errors:
-        err_console.print(f"[red]{error}[/red]")
+        err_console.print(f"[red]{escape(error)}[/red]")
     _exit(1 if not valid or (strict and manifest.warnings) else 0)
 
 
@@ -404,8 +415,12 @@ def import_bundle(
                 raise typer.Exit(2)
             unsafe = [m for m in archive.namelist() if not member_is_safe(m)]
             if unsafe:
+                # Member paths are attacker-controlled (a bundle "from other
+                # people"); escape so a crafted "[/red]" cannot break the
+                # printer or vanish into styling.
                 err_console.print(
-                    f"[red]refusing bundle with unsafe member path(s): {', '.join(unsafe)}[/red]"
+                    f"[red]refusing bundle with unsafe member path(s): "
+                    f"{escape(', '.join(unsafe))}[/red]"
                 )
                 raise typer.Exit(2)
             # Exclusive-create claim, made only after the bundle is proven safe,
@@ -427,7 +442,7 @@ def import_bundle(
                 )
                 raise typer.Exit(2) from None
     except zipfile.BadZipFile as error:
-        err_console.print(f"[red]{bundle} is not a readable zip bundle: {error}[/red]")
+        err_console.print(f"[red]{escape(str(bundle))} is not a readable zip bundle: {error}[/red]")
         raise typer.Exit(2) from None
     manifest, valid = audit_session(target)
     outcome = (
@@ -453,7 +468,7 @@ def scaling(
     from .analysis.scaling import analyze_scaling
 
     if by not in {"players", "entities"}:
-        err_console.print(f"[red]--by must be 'players' or 'entities', got {by!r}[/red]")
+        err_console.print(f"[red]--by must be 'players' or 'entities', got {escape(by!r)}[/red]")
         raise typer.Exit(2)
     usable = [s for s in sessions if (s / "summary.json").is_file()]
     if len(usable) < 3:
@@ -472,13 +487,15 @@ def scaling(
         raise typer.Exit(2)
     if output:
         atomic_json(output, result)
+    # Section names come from csharp_bridge.json (imported bundles are
+    # untrusted); escape them so bracketed names cannot render as markup.
     console.print(f"scale ({by}): {result['scales']}")
     console.print(f"{'section':44s} {'per-call':>10s} {'total':>10s}  class")
     for f in result["sections"][:25]:
         pc = f["per_call_exponent"]
         tot = f["total_exponent"]
         console.print(
-            f"{f['section']:44s} {(pc if pc is not None else '-'):>10} "
+            f"{escape(f['section']):44s} {(pc if pc is not None else '-'):>10} "
             f"{(tot if tot is not None else '-'):>10}  "
             f"call:{f['per_call_class']} total:{f['total_class']}"
         )
@@ -486,7 +503,7 @@ def scaling(
         console.print(f"\n[yellow]super-linear ({len(result['super_linear'])}):[/yellow]")
         for f in result["super_linear"]:
             console.print(
-                f"  {f['section']} - per-call O(N^{f['per_call_exponent']}), "
+                f"  {escape(f['section'])} - per-call O(N^{f['per_call_exponent']}), "
                 f"total O(N^{f['total_exponent']})"
             )
     else:
@@ -827,7 +844,7 @@ def compare(
     try:
         run_compare(before, after, output)
     except ValueError as error:
-        err_console.print(f"[red]compare failed: {error}[/red]")
+        err_console.print(f"[red]compare failed: {escape(str(error))}[/red]")
         raise typer.Exit(1) from None
 
 
@@ -861,7 +878,7 @@ def budget(
     try:
         passed = check_budget(session, budget_file, baseline, max_regression)
     except ValueError as error:
-        err_console.print(f"[red]{error}[/red]")
+        err_console.print(f"[red]{escape(str(error))}[/red]")
         raise typer.Exit(2) from None
     _exit(0 if passed else 1)
 
@@ -883,9 +900,12 @@ def bridge(
     try:
         result = analyze(session, snapshot)
     except ValueError as error:
-        err_console.print(f"[red]bridge analysis failed: {error}[/red]")
+        err_console.print(f"[red]bridge analysis failed: {escape(str(error))}[/red]")
         raise typer.Exit(1) from None
-    console.print(result["playbook_md"])
+    # Playbook lines embed managed section names and frame names taken from
+    # session evidence (server-side snapshots, imported bundles); escape them so
+    # bracketed names cannot render as console markup.
+    console.print(escape(result["playbook_md"]))
     console.print(f"wrote {session / 'csharp_bridge.json'}")
 
 

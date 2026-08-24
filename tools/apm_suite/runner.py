@@ -8,6 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 
 console = Console()
 
@@ -21,11 +22,22 @@ def run(
     """Print the command (secrets redacted), execute it, return its exit code."""
     shown = command.copy()
     for flag in ("--telnet-pass", "--telnet-password", "--password"):
-        if flag in shown:
-            position = shown.index(flag)
+        # Every occurrence, not just the first: a repeated flag would otherwise
+        # print its second value verbatim despite the redaction promise.
+        start = 0
+        while True:
+            try:
+                position = shown.index(flag, start)
+            except ValueError:
+                break
             if position + 1 < len(shown):
                 shown[position + 1] = "<redacted>"
-    console.print("[dim]$ " + " ".join(shown) + "[/dim]")
+            start = position + 2
+    # Escape before wrapping: arguments can carry bracketed text (paths,
+    # telnet hosts), and rich would either consume it as console markup or
+    # raise MarkupError for a stray closing tag - before subprocess.run ever
+    # executes the command.
+    console.print("[dim]$ " + escape(" ".join(shown)) + "[/dim]")
     process_env = os.environ.copy()
     process_env.update(env or {})
     return subprocess.run(command, cwd=cwd, check=False, env=process_env).returncode

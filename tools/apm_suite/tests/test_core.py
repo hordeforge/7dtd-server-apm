@@ -553,7 +553,48 @@ def test_doctor_json_stdout_is_machine_readable() -> None:
     result = runner.invoke(app, ["doctor", "--json", "-"])
     assert result.exit_code == 0
     doc = json.loads(result.stdout)
-    assert doc["schema"].startswith("7dtd.apm.doctor")
+    assert doc["schema"].startswith("7dtd.apm.doctor.v2")
+
+
+def test_bridge_status_tolerates_non_object_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hand-edited apmbridge.json holding valid-but-non-object JSON ("[1,2]")
+    is a diagnosable condition: doctor must report, not crash with
+    AttributeError out of settings.get (the whole-report posture every other
+    malformed input in _bridge_status follows)."""
+    from apm_suite import doctor
+
+    mods = tmp_path / "Mods/7dtd-server-apm-bridge"
+    (mods / "Config").mkdir(parents=True)
+    (mods / "7dtd-server-apm-bridge.dll").write_bytes(b"dll")
+    monkeypatch.setattr(doctor, "dedicated_dir", lambda: tmp_path)
+    for body in ("[1, 2]", '"DeepMode"', "42", "null", ""):
+        (mods / "Config/apmbridge.json").write_text(body)
+        status = doctor._bridge_status()
+        assert status["ok"] is True
+        assert "deep_mode" not in status
+
+
+def test_doctor_prints_deepmode_advisory_for_healthy_bridge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """README: "doctor also flags a stale installed bridge DLL and disabled
+    DeepMode". The DeepMode advisory rides on an ok=True bridge check, so it
+    must render even though the check itself passed."""
+    from apm_suite import doctor
+
+    monkeypatch.setattr(
+        doctor,
+        "_bridge_status",
+        lambda: {
+            "ok": True,
+            "fix": "DeepMode off: per-entity AI/path sections will not be measured",
+        },
+    )
+    result = runner.invoke(app, ["doctor", "--json", "-"], env={"COLUMNS": "4096"})
+    assert result.exit_code == 0
+    assert "DeepMode off" in result.output
 
 
 def test_alloc_sites_rank_by_bytes_skip_noise(tmp_path: Path) -> None:
@@ -1221,6 +1262,33 @@ def test_audit_rejects_manifest_paths_escaping_the_session(tmp_path: Path) -> No
     assert result.exit_code == 1
     assert "escapes the session directory" in result.stderr
     assert "outside.secret" in result.stderr
+
+
+def test_audit_error_output_renders_markup_as_text(tmp_path: Path) -> None:
+    """Audit errors quote untrusted strings (imported-bundle artifact paths,
+    schema input values). A name carrying rich markup must print literally:
+    if the console interpreted it, the tag would vanish into styling instead
+    of reaching the operator (terminal markup injection)."""
+    session = _session(tmp_path / "session_markup")
+    assert audit_session(session)[1]
+    atomic_json(
+        session / "manifest.json",
+        {
+            "schema": "7dtd.apm.manifest.v2",
+            "session_id": session.name,
+            "started_at": "2026-08-24T00:00:00+00:00",
+            "target": {"pid": 1, "comm": "7DaysToDieServe", "exe": "", "cmdline": ""},
+            "requested_layers": [],
+            "artifacts": [
+                {"path": "[green]pwned[/green].map", "bytes": 4, "sha256": "a" * 64},
+            ],
+        },
+    )
+    result = runner.invoke(app, ["audit", str(session)])
+    assert result.exit_code == 1
+    # The brackets survive rendering verbatim: proof they were escaped, not
+    # consumed as console markup (an interpreted tag would disappear).
+    assert "[green]pwned[/green]" in result.stderr
 
 
 def test_bridge_export_period_from_config_or_default(tmp_path: Path) -> None:
@@ -4576,6 +4644,72 @@ def test_annotate_stream_error_leaves_no_partial_annotated_target(
         )
 
     assert not target.exists()
+
+
+# --- runner echo --------------------------------------------------------------------
+
+
+def test_run_executes_and_redacts_every_password_flag(capsys: pytest.CaptureFixture[str]) -> None:
+    """run() promises "print the command (secrets redacted), execute it".
+    Both halves are pinned here: a repeated --password must not print its
+    second value, and bracketed argument text must survive the rich echo
+    literally (the old unescaped print raised MarkupError for a stray closing
+    tag BEFORE subprocess.run, so nothing executed at all)."""
+    from apm_suite import runner as runner_mod
+
+    rc = runner_mod.run(
+        [
+            "true",
+            "--password",
+            "secret-one",
+            "--mode",
+            "x[green]y[/dim]",
+            "--password",
+            "secret-two",
+        ]
+    )
+    assert rc == 0
+    printed = capsys.readouterr().out
+    assert "secret-one" not in printed
+    assert "secret-two" not in printed
+    assert "<redacted>" in printed
+    assert "[/dim]" in printed  # rendered as text, not consumed as markup
+
+
+# --- scaling determinism -------------------------------------------------------------
+
+
+def test_scaling_tied_exponents_rank_deterministically(tmp_path: Path) -> None:
+    from apm_suite.analysis.scaling import analyze_scaling
+
+    # Every section fits the same exponent (all linear), so the rounded sort
+    # key ties everywhere; name order (not per-process set order) must decide.
+    sessions = []
+    for n in (100, 200, 400):
+        s = tmp_path / f"session_n{n}"
+        s.mkdir()
+        atomic_json(
+            s / "summary.json",
+            {
+                "schema": "7dtd.apm.summary.v2",
+                "session_id": s.name,
+                "metadata": {"world": {"clients": n}},
+            },
+        )
+        atomic_json(
+            s / "csharp_bridge.json",
+            {
+                "schema": "7dtd.apm.bridge.v2",
+                "top_managed_sections": [
+                    {"name": f"Sect{c}", "avgMs": float(10 - c), "totalMs": float(10 - c) * n}
+                    for c in range(10)
+                ],
+            },
+        )
+        sessions.append(s)
+    result = analyze_scaling(sessions, "players")
+    names = [f["section"] for f in result["sections"]]
+    assert names == sorted(names)
 
 
 # --- live server (opt-in) ----------------------------------------------------------
