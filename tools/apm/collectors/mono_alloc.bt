@@ -4,8 +4,9 @@
  * names WHAT allocates. GC_malloc fires millions of times/sec, so a full
  * uprobe would crush the server: we only sum total bytes cheaply, and capture
  * a stack (resolvable via the bridge jitmap) for LARGE allocations (>=4 KB),
- * which are the arrays / big lists that actually drive heap growth. Restrict
- * to the main thread so the sites map to tick work.
+ * which are the arrays / big lists behind heap-growth hitches. All target
+ * threads are sampled: measured churn is largely on worker threads
+ * (serialization), and Boehm freezes the whole process regardless.
  *
  * MONO_SO must be the absolute path to libmonobdwgc-2.0.so.
  */

@@ -18,7 +18,7 @@ mkdir -p "$OUTDIR"
 
 PERF_MAP="/tmp/perf-$PID.map"
 if [[ ! -s "$PERF_MAP" ]]; then
-  echo "WARNING: $PERF_MAP missing; managed Mono frames will be [jit]. Run 'apm jitmap' via the bridge (capture --reset-bridge does this automatically)." >&2
+  echo "WARNING: $PERF_MAP missing; managed Mono frames will be [jit]. Run 'apm jitmap' via the bridge (scenario run captures do this automatically; bare capture needs --symbolize)." >&2
 fi
 
 echo "perf record pid=$PID seconds=$SECONDS_N -> $OUTDIR"
