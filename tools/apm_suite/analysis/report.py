@@ -627,7 +627,10 @@ def _rank_folded(folded: Path, limit: int) -> dict[str, list[tuple[str, float]]]
         return {"inclusive": [], "self_game": []}
 
     def rank(d: dict[str, int]) -> list[tuple[str, float]]:
-        top = sorted(d.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+        # Tiebreak on name: inclusive counts are built from set(frames)
+        # iteration (hash-randomized per process), so equal-count entries
+        # would otherwise reorder the top-N between renders of the same data.
+        top = sorted(d.items(), key=lambda kv: (-kv[1], kv[0]))[:limit]
         return [(k.split("+", 1)[0], round(100.0 * v / total, 1)) for k, v in top]
 
     return {"inclusive": rank(inclusive), "self_game": rank(self_game)}

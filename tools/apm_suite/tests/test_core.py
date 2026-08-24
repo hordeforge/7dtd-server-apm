@@ -1346,6 +1346,22 @@ def test_audit_reports_structured_collector_failures(tmp_path: Path, status: str
     assert any("futex" in w for w in manifest.warnings)
 
 
+def test_audit_sees_perf_result_nested_two_dirs_deep(tmp_path: Path) -> None:
+    # The perf collector's result lands at cpu/perf/perf.result.json; a glob
+    # matching only one directory level would drop perf from the manifest and
+    # never warn about its failures.
+    session = _session(tmp_path / "session_perf_nested")
+    (session / "cpu/perf").mkdir(parents=True)
+    atomic_json(
+        session / "cpu/perf/perf.result.json", _result_json("failed", name="perf", layer="cpu")
+    )
+    manifest, valid = audit_session(session)
+    assert valid
+    perf = next(c for c in manifest.collectors if c.name == "perf")
+    assert perf.status == "failed"
+    assert any("perf" in w for w in manifest.warnings)
+
+
 def test_audit_rejects_malformed_collector_result(tmp_path: Path) -> None:
     session = _session(tmp_path / "session_bad_result")
     (session / "sync").mkdir()
@@ -1372,6 +1388,16 @@ def test_audit_survives_malformed_meta_types(tmp_path: Path) -> None:
     manifest, valid = audit_session(session)
     assert manifest.target.pid == 1
     assert manifest.requested_layers == ["all"]
+
+
+def test_audit_survives_torn_meta_json(tmp_path: Path) -> None:
+    # Torn/hand-edited meta.json (invalid JSON) degrades to no-metadata plus a
+    # recorded schema-validation error; it must not traceback out of the audit.
+    session = _session(tmp_path / "session_torn_meta")
+    (session / "meta.json").write_text("{oops\n", encoding="utf-8")
+    manifest, valid = audit_session(session)
+    assert not valid
+    assert any("meta.json" in e for e in manifest.errors)
 
 
 # --- parser fixtures ----------------------------------------------------------
@@ -2542,6 +2568,33 @@ def test_compare_marks_one_sided_section_not_comparable(tmp_path: Path) -> None:
         "a_heat": 0.0,
         "b_heat": 5.0,
         "delta_b_minus_a": 5.0,
+        "better": "not_comparable",
+    }
+
+
+def test_compare_marks_one_sided_attribution_not_comparable(tmp_path: Path) -> None:
+    from apm_suite.analysis.compare import compare_sessions
+
+    a = _cmp_session(tmp_path, "cmp_attr_a")
+    b = _cmp_session(tmp_path, "cmp_attr_b")
+    # Attribution exists only in B (no csharp_bridge.json on A): missing
+    # evidence is unavailable, never an implied 0 ms that ranks as a winner.
+    atomic_json(
+        b / "csharp_bridge.json",
+        {
+            "schema": "7dtd.apm.bridge.v2",
+            "attribution": {
+                "subsystems": [{"subsystem": "network", "scaled_total_ms": 500.0}]
+            },
+        },
+    )
+    result = compare_sessions(a, b)
+    row = next(d for d in result["attribution_deltas"] if d["subsystem"] == "network")
+    assert row == {
+        "subsystem": "network",
+        "a_ms": 0.0,
+        "b_ms": 500.0,
+        "delta_b_minus_a": 500.0,
         "better": "not_comparable",
     }
 

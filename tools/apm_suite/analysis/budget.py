@@ -110,22 +110,25 @@ def check(
     if baseline is not None:
         base_layers = load_layers(baseline)
         if set(base_layers) != set(layers):
-            return False, lines + [
-                "UNKNOWN regression: baseline and candidate layer coverage differ"
-            ]
-        for name, base_value in base_layers.items():
-            value = layers[name]
-            regression = value - base_value
-            if regression > max_regression:
-                ok = False
-                lines.append(
-                    f"FAIL regression {name}: baseline={base_value} now={value} "
-                    f"Δ=+{regression:.1f} > {max_regression}"
-                )
-            else:
-                lines.append(
-                    f"ok   regression {name}: baseline={base_value} now={value} Δ={regression:+.1f}"
-                )
+            # One UNKNOWN line for the regression family only: the absolute
+            # gates below read the candidate's own summary and stay computable,
+            # so this mismatch must not discard their diagnostics.
+            ok = False
+            lines.append("UNKNOWN regression: baseline and candidate layer coverage differ")
+        else:
+            for name, base_value in base_layers.items():
+                value = layers[name]
+                regression = value - base_value
+                if regression > max_regression:
+                    ok = False
+                    lines.append(
+                        f"FAIL regression {name}: baseline={base_value} now={value} "
+                        f"Δ=+{regression:.1f} > {max_regression}"
+                    )
+                else:
+                    lines.append(
+                        f"ok   regression {name}: baseline={base_value} now={value} Δ={regression:+.1f}"
+                    )
 
     for key, (block_name, field) in (
         ("max_gross_alloc_mb_per_second", ("gc", "grossAllocMBPerSecond")),

@@ -97,7 +97,10 @@ def _validate_documents(session: Path) -> list[str]:
 def _structured_results(session: Path) -> tuple[list[CollectorResult], list[str]]:
     results: list[CollectorResult] = []
     errors: list[str] = []
-    for path in sorted(session.glob("*/*.result.json")):
+    # `*/**` (not bare `*`): the perf collector's result lands three levels
+    # deep (cpu/perf/perf.result.json), and a missed result row would silently
+    # drop perf from capture planning/audit instead of flagging its failures.
+    for path in sorted(session.glob("*/**/*.result.json")):
         try:
             results.append(CollectorResult.model_validate(load_json(path)))
         except (ValueError, ValidationError) as error:
@@ -449,12 +452,25 @@ def verify_recorded_hashes(session: Path) -> list[str]:
 
 
 def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[ManifestV2, bool]:
-    meta = load_json(session / "meta.json") if (session / "meta.json").is_file() else {}
-    errors = [
-        f"missing or empty: {rel}"
-        for rel in REQUIRED
-        if not (session / rel).is_file() or not (session / rel).stat().st_size
-    ]
+    # Same untrusted-input contract as _int below: torn/hand-edited JSON must
+    # degrade to "no metadata" (and a schema-validation error from
+    # _validate_documents), never crash the audit whose job is to record it.
+    meta: dict[str, Any] = {}
+    if (session / "meta.json").is_file():
+        with suppress(ValueError):
+            loaded = load_json(session / "meta.json")
+            if isinstance(loaded, dict):
+                meta = loaded
+    errors: list[str] = []
+    for rel in REQUIRED:
+        try:
+            missing_or_empty = not (session / rel).is_file() or not (session / rel).stat().st_size
+        except OSError:
+            # Vanished between is_file() and stat() (concurrent prune): same
+            # contract as the artifacts walk below - count it, don't raise.
+            missing_or_empty = True
+        if missing_or_empty:
+            errors.append(f"missing or empty: {rel}")
     # Read the baseline before anything below rewrites manifest.json.
     tampered = verify_recorded_hashes(session) if verify_recorded else []
     errors += tampered

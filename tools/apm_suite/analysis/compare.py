@@ -165,13 +165,17 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
     for name in sorted(set(attr_a) | set(attr_b)):
         value_a, value_b = attr_a.get(name, 0.0), attr_b.get(name, 0.0)
         difference = value_b - value_a
+        # Same one-sided rule as section heat: a subsystem measured in only one
+        # session (no csharp_bridge.json on the other side) is NOT an
+        # improvement/regression - missing attribution must not read as "0 ms".
+        in_a, in_b = name in attr_a, name in attr_b
         attribution_deltas.append(
             {
                 "subsystem": name,
                 "a_ms": value_a,
                 "b_ms": value_b,
                 "delta_b_minus_a": round(difference, 1),
-                "better": _winner(difference),
+                "better": _winner(difference) if in_a and in_b else "not_comparable",
             }
         )
     attribution_deltas.sort(key=lambda d: abs(float(d["delta_b_minus_a"])), reverse=True)
