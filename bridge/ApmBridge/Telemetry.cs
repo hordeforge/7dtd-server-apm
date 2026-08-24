@@ -397,12 +397,36 @@ namespace DtdApmBridge
             }
             return 0;
         }
+        // A crash or hard kill between WriteAllText and Replace strands a unique
+        // *.tmp beside its target forever: PruneTimestampedDumps only matches
+        // finished dumps and the jitmap sweep only matches perf maps, so
+        // nothing else ever deletes these. A live temp exists for milliseconds,
+        // so anything older than an hour is garbage by construction; swept on
+        // the periodic export path (best effort) instead of accumulating
+        // across restarts on a 24/7 host.
+        const double StaleTempMaxAgeHours = 1.0;
+
+        static void SweepStaleTempFiles()
+        {
+            try
+            {
+                foreach (string stale in Directory.GetFiles(BridgeMod.OutputDir, "apm_app_*.tmp"))
+                {
+                    if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(stale)).TotalHours < StaleTempMaxAgeHours) continue;
+                    try { File.Delete(stale); }
+                    catch (Exception ex) { BridgeMod.Log("stale temp delete failed: " + ex.Message); }
+                }
+            }
+            catch (Exception ex) { BridgeMod.Log("stale temp sweep failed: " + ex.Message); }
+        }
+
         static void Write(string path)
         {
             // Unique temp (a console `apm dump` can race the ThreadPool export) and
             // File.Replace so `latest` never has a does-not-exist window for external
             // consumers (scrapers/dashboards read it continuously in production).
             Directory.CreateDirectory(BridgeMod.OutputDir);
+            SweepStaleTempFiles();
             string temp = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
             try
             {

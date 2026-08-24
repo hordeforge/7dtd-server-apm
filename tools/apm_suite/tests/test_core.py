@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -207,6 +208,125 @@ def test_thread_summary_skips_torn_final_line(tmp_path: Path) -> None:
     assert summary["n_threads"] == 4
 
 
+def test_thread_summary_survives_junk_values_and_finds_string_tid(
+    tmp_path: Path,
+) -> None:
+    """threads.jsonl is re-read without schema guarantees: a valid-JSON row with
+    a non-numeric cpu_pct must degrade to "no contribution", not crash the
+    required summary stage, and a float/string tid (older writer, hand edit)
+    must still match the main pid instead of silently reporting the main thread
+    at 0% share."""
+    from apm_suite.analysis.report import thread_summary
+
+    session = tmp_path / "session_junk_rows"
+    (session / "threads").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta(pid=5))
+    row = json.dumps(
+        {
+            "t": 1.0,
+            "top": [
+                {"tid": 5, "cpu_pct": 30.0},
+                {"tid": 6.0, "cpu_pct": "90.0"},  # coercible string tid/pct still count
+                {"tid": 7, "cpu_pct": {"corrupt": True}},  # junk pct drops out
+            ],
+        }
+    )
+    (session / "threads/threads.jsonl").write_text(row + "\n")
+    summary = thread_summary(session)
+    assert summary["main_thread_cpu_pct_avg"] == 30.0
+    # main 30 of process total 120
+    assert summary["main_thread_share_of_process_avg"] == pytest.approx(0.25)
+
+
+def test_thread_summary_averages_across_samples_and_folds_streaming(
+    tmp_path: Path,
+) -> None:
+    """The summary folds the file instead of materializing every sample: only
+    samples whose process total is positive enter both running means, a
+    non-list "top" row contributes nothing, and the LAST intact record wins
+    for n_threads/wchan_top. A JSON-valid but non-object line (corrupt writer)
+    is dropped like every other jsonl reader here instead of crashing."""
+    from apm_suite.analysis.report import thread_summary
+
+    session = tmp_path / "session_fold"
+    (session / "threads").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta(pid=5))
+
+    def sample(t: float, top: object, threads: int) -> str:
+        return json.dumps({"t": t, "n_threads": threads, "top": top})
+
+    lines = [
+        sample(1.0, [{"tid": 5, "cpu_pct": 20.0}, {"tid": 6, "cpu_pct": 60.0}], 9),
+        "[not,an,object]",  # valid JSON, wrong shape: skipped entirely
+        sample(2.0, "not-a-list", 8),  # unparsable top row: no contribution
+        sample(3.0, [{"tid": 5, "cpu_pct": 50.0}], 7),
+        sample(4.0, [{"tid": 6, "cpu_pct": 0.0}], 6),  # total == 0: not averaged
+    ]
+    (session / "threads/threads.jsonl").write_text("\n".join(lines) + "\n")
+    summary = thread_summary(session)
+    # main cpu: (20 + 50) / 2 averaged samples
+    assert summary["main_thread_cpu_pct_avg"] == 35.0
+    # main share of process: (20/80 + 50/50) / 2
+    assert summary["main_thread_share_of_process_avg"] == pytest.approx(0.625)
+    # last intact record, not the highest-t one that contributed
+    assert summary["n_threads"] == 6
+
+
+def test_bridge_spikes_with_corrupt_duration_do_not_kill_timeline(
+    tmp_path: Path,
+) -> None:
+    """spikes[] sits outside BridgeSnapshotV3 validation (extra="allow"), so a
+    format-changed duration field must coerce to "no data" like every other
+    collector field instead of raising out of the required events stage; the
+    intact sibling spike is still recorded."""
+    from apm_suite.analysis.events import build_timeline
+
+    session = tmp_path / "session_corrupt_spike"
+    (session / "app").mkdir(parents=True)
+    atomic_json(
+        session / "app/apm_app.json",
+        {
+            "spikes": [
+                {"utc": "2026-07-16T10:00:00Z", "gmUpdateDurationMs": {"corrupt": True}},
+                {
+                    "utc": "2026-07-16T10:00:01Z",
+                    "gmUpdateDurationMs": 250.0,
+                    "serverTickIntervalMs": None,
+                },
+            ]
+        },
+    )
+    doc = build_timeline(session)
+    spikes = [e for e in doc.events if e.kind == "frame_spike"]
+    assert len(spikes) == 2
+    intact = next(e for e in spikes if e.model_dump(mode="json")["value"] == 250.0)
+    assert "tickInterval 0.0ms" in intact.message
+
+
+def test_index_scan_survives_non_numeric_layer_score(tmp_path: Path) -> None:
+    """A tampered/imported summary.json whose layer score is not numeric must
+    drop out of sum_pressure instead of poisoning the whole store index scan
+    (one bad session would otherwise brick `index` and every dashboard)."""
+    from apm_suite.analysis.index import scan
+
+    bad = tmp_path / "session_bad"
+    bad.mkdir()
+    (bad / "summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "7dtd.apm.summary.v2",
+                "layers": [
+                    {"layer": "cpu", "state": "collected", "score": "12abc"},
+                    {"layer": "io", "state": "collected", "score": 40},
+                ],
+            }
+        )
+    )
+    rows = scan(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["sum_pressure"] == 40.0
+
+
 def test_scenario_matrix_rejects_missing_plan_file(tmp_path: Path) -> None:
     result = runner.invoke(app, ["scenario", "matrix", str(tmp_path / "plan.json")])
     assert result.exit_code == 2
@@ -386,6 +506,52 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
     assert f"openat {home}" not in vfs and "openat ~/steamapps/common" in vfs
     assert "~/libgame.so" in svg
     assert "app/bridge.jsonl" not in names
+
+
+def test_export_streamed_text_members_match_full_text_scrub_bytes(tmp_path: Path) -> None:
+    """The streaming scrubber must emit byte-identical output to the former
+    full-text path: universal newlines normalized to LF, every kept line
+    terminated with "\\n" (including a final line that had none), per-line
+    JSONL redaction, and the home prefix replaced everywhere."""
+    import zipfile
+
+    from apm_suite.cli import _scrub_jsonl_line
+
+    home = str(Path.home())
+    session = tmp_path / "session_stream"
+    (session / "io").mkdir(parents=True)
+    (session / "app").mkdir()
+    atomic_json(session / "meta.json", _meta())
+    # CRLF, a bare CR, no trailing newline: the text layer normalizes all of
+    # them to LF before the line-wise scrub runs.
+    vfs_raw = f"openat 1\nopenat {home}/steamapps\r\nclose\rno-newline-tail"
+    (session / "io/vfs.bt.out").write_bytes(vfs_raw.encode("utf-8"))
+    jsonl_lines = [
+        json.dumps({"t": 1.0, "cmdline": "-quiet", "note": f"at {home}/x"}),
+        f"malformed trailing {home}/y",  # no newline at EOF
+    ]
+    (session / "events.jsonl").write_text("\n".join(jsonl_lines))
+
+    bundle = tmp_path / "bundle.zip"
+    result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert result.exit_code == 0, result.output
+
+    # Expected bytes from the former implementation's contract.
+    def legacy_text(raw: str) -> str:
+        return "".join(line.replace(home, "~") + "\n" for line in raw.splitlines())
+
+    def legacy_jsonl(raw: str) -> str:
+        return "".join(_scrub_jsonl_line(line, home) + "\n" for line in raw.splitlines())
+
+    expected = {
+        "io/vfs.bt.out": legacy_text(vfs_raw),
+        "events.jsonl": legacy_jsonl("\n".join(jsonl_lines)),
+    }
+    with zipfile.ZipFile(bundle) as archive:
+        for name, want in expected.items():
+            got = archive.read(name).decode("utf-8")
+            assert got == want, name
+            assert home not in got
 
 
 def test_import_bundle_round_trip_restores_evidence(
@@ -811,6 +977,37 @@ def test_audit_accepts_newly_attached_artifacts(tmp_path: Path) -> None:
     assert "valid" in result.stdout
 
 
+def test_audit_rejects_manifest_paths_escaping_the_session(tmp_path: Path) -> None:
+    """A planted manifest.json (imported bundles carry one) must not aim the
+    recorded-hash check at files outside the session via absolute paths or
+    '..' segments: those records are integrity failures, never reads."""
+    session = _session(tmp_path / "session_escape")
+    assert audit_session(session)[1]
+    outside = tmp_path / "outside.secret"
+    outside.write_text("host file the manifest must not reach")
+    atomic_json(
+        session / "manifest.json",
+        {
+            "schema": "7dtd.apm.manifest.v2",
+            "session_id": session.name,
+            "started_at": "2026-08-24T00:00:00+00:00",
+            "target": {"pid": 1, "comm": "7DaysToDieServe", "exe": "", "cmdline": ""},
+            "requested_layers": [],
+            "artifacts": [
+                # Absolute path and traversal both resolve outside the session;
+                # sha256 is a syntactically valid digest so only the containment
+                # check can reject these records.
+                {"path": str(outside), "bytes": outside.stat().st_size, "sha256": "0" * 64},
+                {"path": "../outside.secret", "bytes": 40, "sha256": "a" * 64},
+            ],
+        },
+    )
+    result = runner.invoke(app, ["audit", str(session)])
+    assert result.exit_code == 1
+    assert "escapes the session directory" in result.stderr
+    assert "outside.secret" in result.stderr
+
+
 def test_bridge_export_period_from_config_or_default(tmp_path: Path) -> None:
     """The monitor's stale-read threshold keys off the bridge's export cadence
     (PeriodicExportSeconds), falling back to 30 on absent/invalid config; a
@@ -1133,6 +1330,45 @@ def test_build_summary_lag_attribution_uses_snapshot(tmp_path: Path) -> None:
     causes = (summary.metadata.get("lag_diagnosis") or {}).get("causes") or []
     # The dominant managed subsystem is named even with no host probe fired.
     assert any(c["cause"] == "deco_world_bound" for c in causes)
+
+
+def test_build_summary_survives_snapshot_with_non_numeric_fields(tmp_path: Path) -> None:
+    """A hand-edited/imported snapshot whose numeric fields hold strings raises
+    TypeError from the frame math; that must drop only the snapshot-derived
+    blocks, not fail the required summary stage and lose the host evidence."""
+    from apm_suite.analysis.report import build_summary
+
+    session = tmp_path / "session_strsnap"
+    (session / "app").mkdir(parents=True)
+    atomic_json(
+        session / "app/apm_app.json",
+        {
+            "sections": [],
+            "measurement": {"deepSampleRate": 1},
+            "update": {"windowUpdates": 100, "gmUpdateDurationAvgMs": "3.2"},
+            "world": {"entities": 10, "unityDeltaMs": "16.6"},
+        },
+    )
+    atomic_json(session / "meta.json", _meta())
+    summary = build_summary(session)  # must not raise
+    # Host-side evidence survived; only snapshot-derived blocks were dropped.
+    assert [layer.layer for layer in summary.layers] != []
+
+
+def test_build_summary_keeps_measured_zero_gross_alloc(tmp_path: Path) -> None:
+    """grossAllocBytesPerSecond == 0 is real evidence (idle window), never the
+    bridge's -1 unmeasured sentinel: it must land in metadata as a healthy zero
+    instead of degrading to UNKNOWN, while -1 stays absent."""
+    from apm_suite.analysis.report import _snapshot_metadata
+
+    measured = _snapshot_metadata(
+        {"gc": {"grossAllocBytesPerSecond": 0, "heapDeltaBytes": 0, "windowSeconds": 30}}, ""
+    )
+    assert measured["gc"]["grossAllocMBPerSecond"] == 0.0
+    unmeasured = _snapshot_metadata(
+        {"gc": {"grossAllocBytesPerSecond": -1, "heapDeltaBytes": 0, "windowSeconds": 30}}, ""
+    )
+    assert "grossAllocMBPerSecond" not in unmeasured["gc"]
 
 
 def test_parse_managed_sections_reads_each_named_file_once(tmp_path: Path) -> None:
@@ -1745,6 +1981,33 @@ def test_finalize_pipeline_end_to_end(tmp_path: Path) -> None:
     assert sync["signals"]["slow_futex_lines"] == 1
     health = load_json(session / "health.json")
     assert health["confidence"] == "insufficient"  # partial coverage never grades
+
+
+def test_finalize_required_stage_failure_fails_run_optional_does_not(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A required stage crashing (render) must fail the whole finalize run with
+    the offending stage named; an optional stage crashing (jitsym) must only
+    log and continue: enrichment is never load-bearing."""
+    import apm_suite.finalize as finalize_module
+
+    session = tmp_path / "session_stage_fail"
+    session.mkdir()
+    atomic_json(session / "meta.json", _meta())
+
+    def crash(_session: Path) -> None:
+        raise RuntimeError("synthetic stage crash")
+
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(tmp_path))
+    monkeypatch.setattr(finalize_module, "annotate_session", crash)  # optional stage
+    monkeypatch.setattr(finalize_module, "render_session", crash)  # required stage
+    result = finalize_module.finalize(session)
+
+    assert result.failed_stages == ["render"]
+    assert result.exit_code == 1
+    assert "required finalization stages failed: render" in capsys.readouterr().err
 
 
 def test_compare_rejects_different_layer_coverage(tmp_path: Path) -> None:
@@ -2643,6 +2906,84 @@ def test_terminate_tree_kills_launcher_and_grandchild() -> None:
     assert not any(child.is_running() for child in grandchildren)
 
 
+def test_terminate_tree_escalates_to_sigkill_when_sigterm_is_ignored() -> None:
+    """A collector that ignores SIGTERM (wedged wrapper, root-owned tool) must
+    still be reaped: the group kill escalates to SIGKILL after the bounded term
+    grace instead of hanging capture shutdown forever."""
+    process = subprocess.Popen(
+        ["bash", "-c", "trap '' TERM; sleep 30 & wait"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    reaped = terminate_tree(process, term_grace=0.5, kill_grace=5)
+
+    assert reaped is not None
+    assert process.poll() is not None
+
+
+def test_monitor_samples_process_and_coerces_corrupt_bridge_snapshot(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The 24/7 sampling loop must survive a snapshot whose numeric fields hold
+    strings (coerce to numbers, never raise mid-loop), append one JSONL row per
+    sample, and flag a bridge read older than 1.5 export periods as stale
+    instead of presenting it as live data."""
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir()
+    snapshot = {
+        "update": {
+            "serverTickIntervalAvgMs": "33.3",
+            "lateTicks": 4,
+            "gmUpdateDurationAvgMs": 12.5,
+            "totalSpikes": 2,
+        },
+        "world": {"entities": 500, "clients": 6, "unityDeltaMs": "16.6"},
+        "gc": {"gen2Collections": 3},
+    }
+    latest = telemetry / "apm_app_latest.json"
+    latest.write_text(json.dumps(snapshot), encoding="utf-8")
+    old = time.time() - 120
+    os.utime(latest, (old, old))
+    config = tmp_path / "Config"
+    config.mkdir()
+    atomic_json(config / "apmbridge.json", {"PeriodicExportSeconds": 30})
+    monkeypatch.setattr("apm_suite.cli.bridge_telemetry_file", lambda _pid, name: telemetry / name)
+
+    output = tmp_path / "monitor.jsonl"
+    result = runner.invoke(
+        app,
+        [
+            "monitor",
+            "--pid",
+            str(os.getpid()),
+            "--count",
+            "2",
+            "--interval",
+            "0.5",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    for row in rows:
+        assert row["pid"] == os.getpid()
+        assert isinstance(row["cpu_pct"], float)
+        # String snapshot fields coerce to usable numbers instead of crashing.
+        assert row["tps"] == pytest.approx(60.2)  # 1000 / 16.6
+        assert row["tps_lifetime"] == pytest.approx(30.0)  # 1000 / 33.3
+        assert row["late_ticks"] == 4 and row["full_gc"] == 3
+        assert row["entities"] == 500 and row["players"] == 6
+        assert row["bridge_age_s"] > 45
+    squashed = _squashed(result.stdout)
+    assert "cpu=" in squashed and "tps=60.2" in squashed
+    # age ~120 > 30 * 1.5: every read is flagged stale on both samples.
+    assert len(re.findall(r"\[bridge\d\d+\.\dsold\]", squashed)) == 2
+
+
 def test_run_redacts_password_flags_from_echoed_command(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -2652,7 +2993,6 @@ def test_run_redacts_password_flags_from_echoed_command(
 
     rc = runner.run(
         [sys.executable, "-c", "pass", "--telnet-password", "sekret", "--other", "value"],
-        check=False,
     )
     assert rc == 0
     echoed = capsys.readouterr().out
@@ -3236,6 +3576,192 @@ def test_scaling_skips_unreadable_summaries_like_missing_ones(tmp_path: Path) ->
 
     result = analyze_scaling(sessions, scale_key="players")
     assert result["scales"] == [5.0, 20.0]  # torn session excluded, fit survives
+
+
+# --- perf map link swap ------------------------------------------------------------
+
+
+def test_place_perf_map_link_swaps_stale_link(tmp_path: Path) -> None:
+    """pid reuse leaves the previous capture's link at /tmp/perf-<pid>.map;
+    a fresh capture must be able to replace it with its own map."""
+    map_source = tmp_path / "telemetry" / "perf-4242.map"
+    map_source.parent.mkdir()
+    map_source.write_text("sym 0x0\n", encoding="utf-8")
+    stale = tmp_path / "perf-4242.map"
+    stale.write_text("old-process symbols\n", encoding="utf-8")
+
+    capture._place_perf_map_link(map_source, stale)
+
+    assert stale.is_symlink()
+    assert stale.resolve() == map_source.resolve()
+
+
+def test_export_jitmap_survives_unplaceable_tmp_link_and_warns(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """An unplaceable /tmp/perf-<pid>.map link (sticky-bit owner mismatch after
+    pid reuse) makes the symlink swap raise; _export_jitmap itself must degrade
+    to a session warning and still finish its remaining work, because perf
+    would otherwise silently resolve this capture's JIT frames against the dead
+    process's map."""
+    session = tmp_path / "session_jitmap"
+    (session / "runtime").mkdir(parents=True)
+    map_source = tmp_path / "telemetry" / "perf-4242.map"
+    map_source.parent.mkdir()
+    map_source.write_text("sym 0x0\n", encoding="utf-8")
+    monkeypatch.setattr(capture, "telnet_command", lambda *_args: True)
+    monkeypatch.setattr(capture, "bridge_telemetry_file", lambda _pid, _name: map_source)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+
+    def refused(_source: Path, _link: Path) -> None:
+        raise PermissionError(1, "Operation not permitted")  # sticky /tmp owner mismatch
+
+    monkeypatch.setattr(capture, "_place_perf_map_link", refused)
+    capture._export_jitmap(session, 4242, "", 0, "")
+
+    warning = (session / "WARN.txt").read_text(encoding="utf-8")
+    assert "cannot replace /tmp/perf-4242.map" in warning
+    assert "WARN:" in capsys.readouterr().err
+    # The failed swap must not abort the rest of the jitmap export.
+    assert (session / "runtime" / "perf-4242.map").is_file()
+
+
+def test_export_jitmap_skips_map_poll_when_telnet_send_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A jitmap command that never reached the server (telnet down, auth fail)
+    means the map can never appear: the 90s growth poll must be skipped so a
+    capture against an unreachable telnet does not stall before any collector."""
+    session = tmp_path / "session_jitmap"
+    (session / "runtime").mkdir(parents=True)
+    map_source = tmp_path / "telemetry" / "perf-4242.map"  # never created
+    monkeypatch.setattr(capture, "telnet_command", lambda *_args: False)
+    monkeypatch.setattr(capture, "bridge_telemetry_file", lambda _pid, _name: map_source)
+
+    def no_poll(_seconds: float) -> None:
+        raise AssertionError("map poll must not run after a failed telnet send")
+
+    monkeypatch.setattr(time, "sleep", no_poll)
+    capture._export_jitmap(session, 4242, "", 0, "")
+
+    assert "failed to send via telnet" in (session / "WARN.txt").read_text(encoding="utf-8")
+    assert "WARN:" in capsys.readouterr().err
+
+
+# --- store races between concurrent processes ---------------------------------------
+
+
+def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session deleted by another process between glob and the sort-key stat
+    must not crash every list_sessions caller (post-capture auto-prune, CLI
+    prune); it sorts oldest and is simply gone on the next pass."""
+    from apm_suite.session import _mtime, list_sessions
+
+    assert _mtime(tmp_path / "never-existed") == 0.0
+
+    (tmp_path / "session_a").mkdir()
+    real_stat = Path.stat
+    seen_b = {"n": 0}
+
+    def flaky_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        # The race window sits between the listing's is_dir() (first stat) and
+        # the sort-key stat (second): only the second one finds it gone.
+        if self == tmp_path / "session_b":
+            seen_b["n"] += 1
+            if seen_b["n"] >= 2:
+                raise FileNotFoundError(2, "No such file or directory", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    (tmp_path / "session_b").mkdir()
+    monkeypatch.setattr("apm_suite.session.Path.stat", flaky_stat)
+    names = [p.name for p in list_sessions(tmp_path)]
+
+    assert names == ["session_a", "session_b"]
+
+
+def test_remove_sessions_treats_already_gone_session_as_success(tmp_path: Path) -> None:
+    """A concurrent prune winning the race on the same session must read as
+    success (the intended end state holds), not as a scary prune failure."""
+    from apm_suite.session import remove_sessions
+
+    doomed = tmp_path / "store" / "session_gone"
+    doomed.mkdir(parents=True)
+
+    results = list(remove_sessions([doomed], grace_hours=0))
+
+    assert results == [(doomed, None)]
+
+
+def test_index_scan_skips_session_unreadable_mid_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A summary.json removed between iterdir and its read (concurrent prune)
+    must skip the row like any other unreadable summary, never crash index."""
+    import apm_suite.analysis.index as index_mod
+
+    session = tmp_path / "session_x"
+    session.mkdir()
+    atomic_json(
+        session / "summary.json",
+        {"schema": "7dtd.apm.summary.v2", "session_id": "session_x", "layers": []},
+    )
+
+    def vanishing_read(path: Path) -> dict[str, Any]:
+        raise FileNotFoundError(2, "No such file or directory", str(path))
+
+    monkeypatch.setattr(index_mod, "load_json", vanishing_read)
+    assert index_mod.scan(tmp_path) == []
+
+
+# --- monitor / bridge / matrix error contracts ---------------------------------------
+
+
+def test_monitor_reports_access_denied_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A server owned by another user raises psutil.AccessDenied on the first
+    sample: end with exit 2 and a fix, never a bare traceback."""
+
+    def denied(self: psutil.Process, interval: float | None = None) -> float:
+        raise psutil.AccessDenied(pid=self.pid)
+
+    monkeypatch.setattr(psutil.Process, "cpu_percent", denied)
+    result = runner.invoke(app, ["monitor", "--pid", str(os.getpid()), "--count", "1"])
+
+    assert result.exit_code == 2
+    assert "access denied" in result.stderr
+
+
+def test_bridge_command_reports_unreadable_summary(tmp_path: Path) -> None:
+    """A malformed summary.json surfaces as an operator error naming the file
+    (same contract as compare/budget), never a JSONDecodeError traceback."""
+    session = tmp_path / "session_bad"
+    session.mkdir()
+    (session / "summary.json").write_text("{not json", encoding="utf-8")
+
+    result = runner.invoke(app, ["bridge", str(session)])
+
+    assert result.exit_code == 1
+    assert "bridge analysis failed" in result.stderr
+
+
+def test_scenario_matrix_rejects_mistyped_entry_value_before_any_run(
+    tmp_path: Path,
+) -> None:
+    """Plan entries bypass Typer's parsing on the direct scenario_run call, so
+    a mistyped value ("seconds": "60") must be rejected naming entry+field
+    BEFORE cleanup/loadgen side effects, not crash mid-matrix with TypeError."""
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"seconds": "60"}, {"seconds": 30}]), encoding="utf-8")
+
+    result = runner.invoke(app, ["scenario", "matrix", str(plan)])
+
+    assert result.exit_code == 2
+    assert "entry 1 field 'seconds': expected int, got '60'" in result.stderr
 
 
 # --- live server (opt-in) ----------------------------------------------------------

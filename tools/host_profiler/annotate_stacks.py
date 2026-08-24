@@ -19,6 +19,7 @@ import argparse
 import re
 import sys
 from pathlib import Path
+from typing import Any
 
 # Order matters: first match wins (more specific first).
 TAG_RULES: list[tuple[str, re.Pattern[str]]] = [
@@ -81,7 +82,7 @@ def annotate_folded_line(line: str) -> str:
     return " ".join([";".join(frames), count_s])
 
 
-def annotate_file(src: Path, dst: Path) -> dict:
+def annotate_file(src: Path, dst: Path) -> dict[str, Any]:
     lines_in = src.read_text(encoding="utf-8", errors="replace").splitlines()
     out_lines = []
     tagged = 0

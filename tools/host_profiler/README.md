@@ -21,16 +21,21 @@ Sessions land under `~/.local/share/7dtd-server-apm/session_*` (override with
 
 ## Modules (collector adapters)
 
-| Module | Tool | Needs root | What you get |
+Names are the `--only` tokens from the shared catalog (`tools/apm_suite/collectors.py`).
+
+| Collector | Backend | Root | What you get |
 |--------|------|------------|--------------|
-| `proc` | `/proc` poller | no | CPU%, RSS, threads, fds, disk B/s, ctx switches |
-| `perf` | `perf record -g` | usually no | native call graph + flame artifacts |
-| `cpu` | bpftrace profile | yes (`sudo -n`) | on-CPU `ustack` histogram |
-| `offcpu` | bpftrace sched | yes | blocked time / sleep stacks |
-| `runqlat` | bpftrace sched | yes | wakeup to run latency |
-| `syscalls` | bpftrace | yes | syscall counts + latency |
-| `io` | bpftrace | yes | VFS/TCP/pagefaults + top `openat` paths |
-| `gc` | bpftrace uprobe | yes | `mono_gc_collect` / `GC_gcollect` latency |
+| `threads` (+ `proc` ride-along) | `/proc` pollers | no | per-thread CPU/state samples; RSS, fds, disk B/s, ctx switches |
+| `hw` | `perf stat` | usually no | PMU counters: cycles/IPC, cache misses, stalls, faults |
+| `perf` | `perf record --call-graph fp` | usually no | folded stacks + flame artifacts (frame pointers unwind through Mono JIT) |
+| `oncpu` | bpftrace profile (`scripts/cpu_profile.bt`) | yes (`sudo -n`) | on-CPU `ustack` histogram |
+| `offcpu` | bpftrace sched (`scripts/offcpu.bt`) | yes | main-thread blocked time split by sleep vs disk state |
+| `runqlat` | bpftrace sched (`scripts/runqlat.bt`) | yes | wakeup-to-run latency |
+| `states` | bpftrace sched (`../apm/collectors/sched_states.bt`) | yes | thread-state time + main-thread run-queue latency |
+| `futex` | bpftrace tracepoint (`../apm/collectors/futex.bt`) | yes | futex wait counts + main-thread wait share |
+| `vfs` / `block` / `io_net` | bpftrace (`../apm/collectors/vfs_lat.bt`, `block_lat.bt`; `scripts/io_net.bt`) | yes | VFS/block latency, slow main-thread file IO, TCP/UDP byte sums |
+| `mono_gc` | bpftrace uprobe (`scripts/mono_gc.bt`) | yes | GC collect latency + `GC_stop_world`/`GC_start_world` freeze timing |
+| `mono_alloc` | bpftrace uprobe (`../apm/collectors/mono_alloc.bt`) | yes | gross allocation churn + sampled allocation stacks (opt-in token `alloc`) |
 
 `TARGET_COMM` is `7DaysToDieServe` (kernel 15-char `comm`).
 
@@ -39,8 +44,12 @@ Sessions land under `~/.local/share/7dtd-server-apm/session_*` (override with
 ```bash
 uv run python tools/host_profiler/proc_sample.py --seconds 60 --threads --json /tmp/p.jsonl
 ./tools/host_profiler/perf_record.sh /tmp/perf 30
-sudo -n bpftrace -D TARGET_PID=$(./tools/host_profiler/find_server.sh) \
-  -D 'TARGET_COMM="7DaysToDieServe"' tools/host_profiler/scripts/cpu_profile.bt
+# The .bt scripts read TARGET_PID/TARGET_COMM from #defines, so preprocess
+# them (as capture does) before running bpftrace directly:
+uv run python tools/host_profiler/preprocess_bt.py \
+  tools/host_profiler/scripts/cpu_profile.bt -o /tmp/cpu_profile.bt \
+  --pid "$(./tools/host_profiler/find_server.sh)" --comm 7DaysToDieServe
+sudo -n bpftrace /tmp/cpu_profile.bt
 ```
 
 ## Correlate host capture with bridge evidence

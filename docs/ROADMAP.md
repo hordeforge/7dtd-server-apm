@@ -8,9 +8,9 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 
 ## A. Analysis + diagnosis
 1. [ ] Per-connection network cost breakdown (`taskSerialize` per player)
-2. [ ] Detect super-linear (O(N^2)) scaling signature across a ramp
-3. [ ] Death-spiral detection (tick interval growing monotonically + backlog)
-4. [ ] Correlate each GC STW pause to its frame spike by timestamp
+2. [x] Detect super-linear (O(N^2)) scaling signature across a ramp
+3. [x] Death-spiral detection (tick interval growing monotonically + backlog)
+4. [x] Correlate each GC STW pause to its frame spike by timestamp
 5. [ ] Memory-leak detection (RSS/heap trend regression over long captures)
 6. [ ] Per-thread CPU attribution (which threads burn CPU)
 7. [ ] Main-thread starvation vs worker imbalance classifier
@@ -18,7 +18,7 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 9. [x] p99/p99.9 tick health (not just avg + late count)
 10. [ ] Tick jitter/variance metric
 11. [ ] Flag when observer overhead (bridge/telnet) is material
-12. [ ] Allocation-per-tick metric (gross alloc / tick)
+12. [x] Allocation-per-tick metric (gross alloc / tick)
 13. [ ] Chunk-thrash detection (same chunks loaded/unloaded repeatedly)
 14. [ ] Lock-holder attribution (which section holds contended locks)
 15. [ ] Cross-session regression auto-flagging in the index
@@ -48,7 +48,7 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 35. [ ] Cut the bridge's own export allocation (observer effect)
 
 ## D. CLI / UX
-36. [x] `scenario ladder` command (ramp + capture at milestones)
+36. [x] Milestone capture ramp (`scenario matrix` plan + `scaling` fit)
 37. [ ] `capture --follow` streams metrics during capture
 38. [ ] `compare --attribution` diffs two captures' subsystem shares
 39. [ ] `watch` alias for monitor

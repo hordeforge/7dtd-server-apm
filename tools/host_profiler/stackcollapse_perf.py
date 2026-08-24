@@ -57,12 +57,17 @@ def collapse(stream: IO[str]) -> Counter[str]:
 
     for line in stream:
         line = line.rstrip("\n")
-        if not line.strip():
+        # Allocation-free blank check: line.strip() would copy every one of the
+        # millions of lines in a full perf.script just to test for emptiness.
+        if not line or line.isspace():
             if in_stack:
                 flush()
                 in_stack = False
             continue
-        if HEADER.match(line) and not line[:1].isspace():
+        # First-char test before the regex: frame lines are indented and can
+        # never be sample headers (\S+ cannot start at whitespace), so this
+        # skips the match on the ~95% of lines that are frames.
+        if not line[:1].isspace() and HEADER.match(line):
             if in_stack:
                 flush()
             in_stack = True

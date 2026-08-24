@@ -2,7 +2,14 @@
 
 > **Part of [HordeForge](https://github.com/hordeforge)** — High-Performance Systems Engineering for 7 Days to Die.
 
-Observability and performance analysis for Linux 7 Days to Die dedicated servers. The host tool captures process, CPU, scheduler, synchronization, runtime, memory, filesystem, block, and network evidence. The optional `HordeForge_Geiger` bridge adds managed game-method timing without optimization or load-generation behavior.
+![CI](https://github.com/hordeforge/7dtd-server-apm/actions/workflows/ci.yml/badge.svg)
+![coverage](https://raw.githubusercontent.com/hordeforge/7dtd-server-apm/badges/coverage.svg)
+![license](https://img.shields.io/github/license/hordeforge/7dtd-server-apm)
+![release](https://img.shields.io/github/v/release/hordeforge/7dtd-server-apm)
+![languages](https://img.shields.io/github/languages/count/hordeforge/7dtd-server-apm)
+![top language](https://img.shields.io/github/languages/top/hordeforge/7dtd-server-apm)
+
+Observability and performance analysis for Linux 7 Days to Die dedicated servers. The host tool captures process, CPU, scheduler, synchronization, runtime, memory, filesystem, block, and network evidence. The optional `7dtd-server-apm-bridge` server mod adds managed game-method timing without optimization or load-generation behavior.
 
 Project boundaries are deliberate:
 
@@ -107,8 +114,10 @@ balance (FindPath enqueues vs drains vs computes) for path-admission
 experiments. `--rally` teleports the whole cohort into one cluster after
 warmup (pair with the loadgen `bait` mode to isolate AI/combat cost from
 chunk streaming). `scenario matrix PLAN.json` runs a labeled experiment
-sequence with world cleanup between runs; a reusable plan ships at
-`plans/campaign.default.json`. `doctor` also flags a stale installed bridge
+sequence, running a cleanup console command between experiments (`killall`
+by default; it removes spawned entities but does not reset the save world -
+use the loadgen `reset_world.sh` between terrain-mutating runs); a reusable
+plan ships at `plans/campaign.default.json`. `doctor` also flags a stale installed bridge
 DLL and disabled DeepMode; the audit warns when frame spikes occurred during
 the capture window. Attribution deltas appear in `compare` output when both
 sessions used `--reset-bridge`.
@@ -148,7 +157,10 @@ spike counts) in `loadgen_stats.json`, separating wire lag from sim stall.
 
 Flamegraph symbolization: Unity's embedded Mono ignores
 `MONO_ENV_OPTIONS=--jitmap`, so the bridge exports the perf map itself
-(`apm jitmap [full]`, run automatically by `--reset-bridge` captures). The map
+(`apm jitmap [full]`, sent by every `scenario run` capture and by bare
+`capture --symbolize`; the latter defaults OFF because the
+JIT burst runs on the server's main thread and can stall a loaded server,
+so pass it only for bench/flamegraph runs). The map
 lives in the mod's disk-backed telemetry directory; only a symlink is placed
 at the tmpfs path perf hardcodes (`/tmp/perf-<pid>.map`). Recording uses
 frame-pointer unwinding (measured ~40x more resolvable frames than dwarf on

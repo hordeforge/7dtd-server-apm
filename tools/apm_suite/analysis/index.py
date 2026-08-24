@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import layer_signals
+from ..models import as_number, layer_signals
 from ..paths import apm_root
 
 
@@ -28,12 +28,14 @@ def scan(root: Path) -> list[dict[str, Any]]:
             continue
         try:
             summary = load_json(summary_path)
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError, OSError):
+            # OSError: the session was pruned by a concurrent process between
+            # iterdir and this read; skip it like any other unreadable summary.
             continue
         health: dict[str, Any] = {}
         health_path = directory / "health.json"
         if health_path.is_file():
-            with contextlib.suppress(json.JSONDecodeError, ValueError):
+            with contextlib.suppress(json.JSONDecodeError, ValueError, OSError):
                 health = load_json(health_path)
         if not health:
             health = summary.get("health") or {}  # sessions finalized before v2.2
@@ -72,7 +74,17 @@ def scan(root: Path) -> list[dict[str, Any]]:
                 "health": health.get("health"),
                 "grade": health.get("grade"),
                 "layers": layers,
-                "sum_pressure": round(sum(float(v or 0) for v in layers.values()), 2),
+                # Scores come from unvalidated session JSON (imported bundles,
+                # hand edits): a non-numeric value must drop out of the sum,
+                # not poison the whole index scan with a float() ValueError.
+                "sum_pressure": round(
+                    sum(
+                        score
+                        for score in (as_number(v) for v in layers.values())
+                        if score is not None
+                    ),
+                    2,
+                ),
                 "has_flame": (directory / "cpu/perf/flame.html").is_file(),
                 "has_bridge": (directory / "csharp_bridge.md").is_file(),
                 "has_report": (directory / "report.html").is_file(),

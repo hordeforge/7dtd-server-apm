@@ -1,8 +1,9 @@
 """In-process session finalization pipeline.
 
-Order matters: summary → health → events → managed bridge → budget → HTML →
-index. Each stage is typed and failures are collected, never swallowed; the
-integrity audit runs separately, after every session file is closed.
+Order matters: jitsym annotation → summary → health → events → managed bridge
+→ budget → HTML → index. Each stage is typed and failures are collected, never
+swallowed; the integrity audit runs separately, after every session file is
+closed.
 """
 
 from __future__ import annotations

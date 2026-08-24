@@ -17,7 +17,7 @@ import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 
 @dataclass
@@ -42,7 +42,7 @@ class Sample:
     rss_mb: float
 
 
-def read_stat(pid: int) -> dict:
+def read_stat(pid: int) -> dict[str, int]:
     # man proc_pid_stat
     fields = (
         Path(f"/proc/{pid}/stat")
@@ -74,7 +74,7 @@ def read_status_ctx(pid: int) -> tuple[int, int]:
     return vol, non
 
 
-def read_io(pid: int) -> dict:
+def read_io(pid: int) -> dict[str, int]:
     out = {"rchar": 0, "wchar": 0, "read_bytes": 0, "write_bytes": 0}
     p = Path(f"/proc/{pid}/io")
     if not p.exists():
@@ -94,9 +94,9 @@ def fd_count(pid: int) -> int:
         return -1
 
 
-def top_threads(pid: int, n: int = 8) -> list[dict]:
+def top_threads(pid: int, n: int = 8) -> list[dict[str, Any]]:
     tasks = Path(f"/proc/{pid}/task")
-    rows = []
+    rows: list[dict[str, Any]] = []
     try:
         for tid in tasks.iterdir():
             try:

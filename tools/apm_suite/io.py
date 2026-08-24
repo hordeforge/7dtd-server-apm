@@ -4,8 +4,20 @@ import hashlib
 import json
 import os
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+
+def member_is_safe(name: str) -> bool:
+    """True when a recorded/archive member path stays inside its base directory.
+
+    Shared guard for every untrusted relative path this tool joins onto a
+    session directory (zip members on import, artifact paths recorded in a
+    manifest.json that an imported bundle may have planted): an absolute path
+    or any ".." segment would otherwise escape the target.
+    """
+    candidate = PurePosixPath(name)
+    return not candidate.is_absolute() and ".." not in candidate.parts
 
 
 def _sync_parent_directory(path: Path) -> None:

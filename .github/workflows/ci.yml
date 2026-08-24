@@ -25,3 +25,39 @@ jobs:
       - run: uv sync --locked
       - run: make check-ci
         # check-bt needs a host kernel; see Makefile check-ci
+
+  coverage-badge:
+    # Publishes the line-coverage badge to the badges branch, which
+    # raw.githubusercontent serves to the README. Main pushes only: a PR gets
+    # its verdict from the python job and never sees the write token this job
+    # needs.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: python
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+# Actions are pinned to immutable commit SHAs (mutable tags are a
+# supply-chain risk); Dependabot keeps the SHAs current via the comments.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv sync --locked
+      - run: make coverage
+      - run: uv run --locked python scripts/coverage_badge.py "$RUNNER_TEMP/coverage.svg"
+      - name: Publish the badge to the badges branch
+        run: |
+          set -euo pipefail
+          url="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git ls-remote --exit-code --heads origin badges >/dev/null 2>&1; then
+            git clone --depth 1 --branch badges "$url" badge-repo
+          else
+            git init -q -b badges badge-repo
+          fi
+          cp "$RUNNER_TEMP/coverage.svg" badge-repo/
+          cd badge-repo
+          git remote add origin "$url"
+          git config user.name "hordeforge-ci"
+          git config user.email "ci@hordeforge.noreply.github.com"
+          git add coverage.svg
+          git diff --cached --quiet || git commit -m "update coverage badge"
+          git push origin badges

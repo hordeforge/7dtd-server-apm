@@ -9,8 +9,6 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-import psutil
-
 from .io import file_sha256
 from .paths import REPO, apm_root, dedicated_dir
 from .session import keep_sessions_budget, prune_grace_hours
@@ -107,6 +105,10 @@ def _mono_gc_probe(pid: int | None) -> dict[str, Any]:
 
 
 def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
+    # Imported here, not at module level, so every non-doctor CLI command skips
+    # the ~70ms psutil import on startup.
+    import psutil
+
     candidates: list[dict[str, Any]] = []
     if pid is None:
         for process in psutil.process_iter(("pid", "name")):

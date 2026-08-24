@@ -5,6 +5,9 @@
          language surface of the shipped DLL. -->
     <LangVersion>7.3</LangVersion>
     <Nullable>disable</Nullable>
+    <!-- The tree compiles warning-free; a new compiler diagnostic must be
+         resolved, not scrolled past (release DLLs ship from this project). -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <AssemblyName>7dtd-apm-bridge</AssemblyName>
     <RootNamespace>DtdApmBridge</RootNamespace>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>

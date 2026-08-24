@@ -56,7 +56,6 @@ GRACE_SECONDS = 60
 @dataclass
 class CaptureOutcome:
     session: Path
-    results: list[CollectorResult] = field(default_factory=list)
     interrupted: bool = False
     exit_code: int = 0
 
@@ -448,6 +447,18 @@ def _sudo_available() -> bool:
         return False
 
 
+def _place_perf_map_link(map_source: Path, map_link: Path) -> None:
+    """Point perf's hardcoded /tmp/perf-<pid>.map at this capture's map.
+
+    Raises OSError when the swap is impossible (a stale link owned by another
+    user after pid reuse survives the sticky /tmp); the caller records that as
+    a session warning instead of letting perf silently resolve this capture's
+    JIT frames against the previous process's map.
+    """
+    map_link.unlink(missing_ok=True)
+    map_link.symlink_to(map_source)
+
+
 def _export_jitmap(
     session: Path, pid: int, telnet_host: str, telnet_port: int, telnet_password: str
 ) -> None:
@@ -458,7 +469,15 @@ def _export_jitmap(
     goal. The burst runs pre-window (off the measurement) so perf resolves
     managed frames without paying for it inside the capture window.
     """
-    telnet_command(telnet_host, telnet_port, telnet_password, "apm jitmap full")
+    if not telnet_command(telnet_host, telnet_port, telnet_password, "apm jitmap full"):
+        # The command never reached the server (telnet down or auth failed):
+        # the map cannot appear, so skip the poll instead of stalling the
+        # capture start for the full 90s deadline.
+        _warn(
+            session,
+            "apm jitmap command failed to send via telnet; managed perf frames stay [jit]",
+        )
+        return
     # perf hardcodes /tmp/perf-<pid>.map; the bridge writes the map to its
     # disk-backed telemetry dir, we place only a symlink in tmpfs. The full
     # JIT burst can take tens of seconds; poll until the file stops growing.
@@ -478,9 +497,18 @@ def _export_jitmap(
         _warn(session, "bridge jitmap export failed; managed perf frames stay [jit]")
         return
     map_link = Path(f"/tmp/perf-{pid}.map")
-    with suppress(OSError):
-        map_link.unlink(missing_ok=True)
-        map_link.symlink_to(map_source)
+    try:
+        _place_perf_map_link(map_source, map_link)
+    except OSError as error:
+        # A stale link owned by another user (pid reuse on a shared host,
+        # sticky /tmp) must not pass silently: perf would resolve this
+        # capture's JIT frames against the previous process's map, i.e.
+        # misattribute them, which is worse than declaring frames [jit].
+        _warn(
+            session,
+            f"cannot replace {map_link}: {error}; managed perf frames are "
+            "unresolved or misattributed; remove the stale map manually",
+        )
     # Keep a copy in-session so finalize can annotate JIT addresses in
     # any bpftrace output (allocation/stall sites), not just perf flames.
     with suppress(OSError):
@@ -649,7 +677,6 @@ def run_capture(
         else:
             status, message = "failed", f"collector exited unexpectedly (rc={rc})"
         result = _result(ctx, item.spec, status, exit_code=rc, duration=duration, message=message)
-        outcome.results.append(result)
         print(f"   {item.spec.name}: {status} exit={rc} samples={result.sample_count}")
 
     _ingest_bridge_snapshot(session, pid, no_app, started_at, seconds)

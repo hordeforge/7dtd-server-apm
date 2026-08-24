@@ -8,7 +8,7 @@ import tempfile
 import time
 import unicodedata
 import zipfile
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Annotated, Any
 
 import typer
@@ -26,9 +26,7 @@ from .capture import (
     unknown_only_tokens,
     write_plan_text,
 )
-from .doctor import inspect
-from .finalize import finalize as finalize_session
-from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json
+from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json, member_is_safe
 from .models import as_number, layer_signals
 from .paths import REPO, apm_root, require_backends
 from .runner import backend_python, run, terminate_tree
@@ -100,6 +98,10 @@ def doctor(
     ] = None,
 ) -> None:
     """Check host readiness for each APM capture layer."""
+    # Lazy like the other command-scoped imports: doctor is the only psutil
+    # consumer, and a module-level import would tax every CLI invocation.
+    from .doctor import inspect
+
     result = inspect(pid, telnet_host, telnet_port)
     if json_output == Path("-"):
         print(json.dumps(result, indent=2, ensure_ascii=False))
@@ -191,6 +193,10 @@ def finalize(
     if not session.is_dir():
         err_console.print(f"[red]not a session directory: {session}[/red]")
         raise typer.Exit(2)
+    # Deferred so commands that never finalize (audit, prune, monitor, export...)
+    # skip the finalize chain's reporting/jinja2 import at startup.
+    from .finalize import finalize as finalize_session
+
     _exit(finalize_session(session, skip_bridge=skip_bridge).exit_code)
 
 
@@ -246,16 +252,46 @@ def _scrub(obj: object) -> object:
     return obj
 
 
-def _scrub_jsonl(text: str, home: str) -> str:
-    """Apply the JSON scrub per line; a malformed trailing line keeps its content
+def _scrub_jsonl_line(line: str, home: str) -> str:
+    """Apply the JSON scrub to one line; a malformed line keeps its content
     but still loses the host home prefix."""
-    out: list[str] = []
-    for line in text.splitlines():
-        try:
-            out.append(json.dumps(_scrub(json.loads(line))).replace(home, "~"))
-        except json.JSONDecodeError:
-            out.append(line.replace(home, "~"))
-    return "".join(line + "\n" for line in out)
+    try:
+        return json.dumps(_scrub(json.loads(line))).replace(home, "~")
+    except json.JSONDecodeError:
+        return line.replace(home, "~")
+
+
+def _stream_scrubbed_member(
+    archive: zipfile.ZipFile, member: str, source: Path, home: str, *, jsonl: bool
+) -> bool:
+    """Stream one text artifact into the archive line by line.
+
+    perf.script and friends reach hundreds of MB in a session; reading one
+    resident copy plus its scrubbed twin before writestr spiked RSS by several
+    times the artifact size. Line-wise streaming produces the same bytes (every
+    kept line is terminated with "\\n", exactly like the former full-text
+    splitlines join) while capping memory at one line. Returns False when the
+    source could not be opened so the caller can fall back to a raw copy; once
+    streaming has started an OSError propagates (the bundle is unusable anyway).
+
+    Unlike str.splitlines this splits only on CR/LF, so exotic separators
+    (form feed, NEL, line separator) pass through instead of becoming newlines;
+    collector artifacts are line-oriented text and never contain them.
+    """
+    try:
+        source_stream = source.open("r", encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+    with source_stream, archive.open(member, "w") as member_stream:
+        if jsonl:
+            for line in source_stream:
+                body = _scrub_jsonl_line(line[:-1] if line.endswith("\n") else line, home)
+                member_stream.write(body.encode("utf-8") + b"\n")
+        else:
+            for line in source_stream:
+                body = (line[:-1] if line.endswith("\n") else line).replace(home, "~")
+                member_stream.write(body.encode("utf-8") + b"\n")
+    return True
 
 
 @app.command("export")
@@ -271,11 +307,10 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
     os.close(fd)
     tmp_zip_path = Path(tmp_zip)
     try:
-        with (
-            tempfile.TemporaryDirectory() as tmp,
-            zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as archive,
-        ):
-            temp = Path(tmp)
+        # Scrubbed text members stream straight into the archive: each one is
+        # already fully resident for scrubbing, so a temp-dir copy would add a
+        # full session-sized write+read for nothing.
+        with zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
             # perf.script / report txt / stacks.folded / flame.html / bpftrace
             # *.out / flame.svg embed dso or file paths like /home/<user>/... -
             # replace the home prefix so bundles do not leak the host username.
@@ -293,30 +328,24 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
                         data = json.loads(source.read_text(encoding="utf-8"))
                     except (json.JSONDecodeError, OSError) as error:
                         raise typer.BadParameter(f"cannot parse {relative}: {error}") from None
-                    sanitized = temp / relative
-                    sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(
+                    archive.writestr(
+                        str(relative),
                         json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n",
-                        encoding="utf-8",
                     )
-                    archive.write(sanitized, relative)
                 elif source.suffix == ".jsonl" or source.suffix in text_suffixes:
-                    try:
-                        text = source.read_text(errors="replace", encoding="utf-8")
-                    except OSError:
-                        archive.write(source, relative)
-                        continue
-                    scrub = (
-                        (lambda t: _scrub_jsonl(t, home))
-                        if source.suffix == ".jsonl"
-                        else (lambda t: t.replace(home, "~"))
-                    )
-                    sanitized = temp / relative
-                    sanitized.parent.mkdir(parents=True, exist_ok=True)
-                    sanitized.write_text(scrub(text), encoding="utf-8")
-                    archive.write(sanitized, relative)
+                    # Streamed scrub (see _stream_scrubbed_member): the same
+                    # per-line transforms as the former read_text+writestr,
+                    # without ever holding a full artifact resident.
+                    if not _stream_scrubbed_member(
+                        archive,
+                        str(relative),
+                        source,
+                        home,
+                        jsonl=source.suffix == ".jsonl",
+                    ):
+                        archive.write(source, str(relative))
                 else:
-                    archive.write(source, relative)
+                    archive.write(source, str(relative))
         os.replace(tmp_zip_path, output)
     finally:
         tmp_zip_path.unlink(missing_ok=True)
@@ -325,8 +354,7 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
 
 def _member_is_safe(name: str) -> bool:
     # Zip-slip guard: bundle members must stay inside the restore target.
-    candidate = PurePosixPath(name)
-    return not candidate.is_absolute() and ".." not in candidate.parts
+    return member_is_safe(name)
 
 
 # Decompression-bomb guard for imported evidence bundles (they arrive from
@@ -616,15 +644,24 @@ def monitor(
     export_period = bridge_export_period(bridge_latest.parent)
     try:
         while count == 0 or taken < count:
-            with process.oneshot():
-                cpu = process.cpu_percent(interval=interval)
-                sample: dict[str, object] = {
-                    "t": time.time(),
-                    "pid": pid,
-                    "cpu_pct": round(cpu, 1),
-                    "rss_mb": round(process.memory_info().rss / 1048576, 1),
-                    "threads": process.num_threads(),
-                }
+            try:
+                with process.oneshot():
+                    cpu = process.cpu_percent(interval=interval)
+                    sample: dict[str, object] = {
+                        "t": time.time(),
+                        "pid": pid,
+                        "cpu_pct": round(cpu, 1),
+                        "rss_mb": round(process.memory_info().rss / 1048576, 1),
+                        "threads": process.num_threads(),
+                    }
+            except psutil.AccessDenied:
+                # The server commonly runs as another user; a permission wall
+                # must end the loop with a fix, not a bare traceback.
+                err_console.print(
+                    f"[red]cannot inspect pid {pid}: access denied "
+                    "(process owned by another user?); run monitor as that user[/red]"
+                )
+                raise typer.Exit(2) from None
             if bridge_latest.is_file():
                 try:
                     snapshot = json.loads(bridge_latest.read_text(encoding="utf-8"))
@@ -642,9 +679,11 @@ def monitor(
                     # from the world sample (current by construction), fall back to
                     # the lifetime average, and expose both so long-run dashboards
                     # can tell them apart. Survives when telnet is too saturated to
-                    # answer, unlike a listplayers poll.
-                    frame_now = world.get("unityDeltaMs") or 0
-                    tick_life = update.get("serverTickIntervalAvgMs") or 0
+                    # answer, unlike a listplayers poll. Values coerce like every
+                    # other unvalidated snapshot field: a string/None must read as
+                    # "no data", never raise TypeError out of the sample loop.
+                    frame_now = as_number(world.get("unityDeltaMs")) or 0.0
+                    tick_life = as_number(update.get("serverTickIntervalAvgMs")) or 0.0
                     sample["tps"] = (
                         round(1000 / frame_now, 1)
                         if frame_now
@@ -669,8 +708,10 @@ def monitor(
             bridge_age = sample.get("bridge_age_s")
             # Older than one and a half export periods means the exporter
             # missed at least one expected refresh: a genuinely stale read.
+            # Escaped brackets: rich would otherwise parse "[bridge ...]" as an
+            # unknown style tag and silently drop the warning from the console.
             stale = (
-                f"  [bridge {bridge_age}s old]"
+                f"  \\[bridge {bridge_age}s old]"
                 if isinstance(bridge_age, float) and bridge_age > export_period * 1.5
                 else ""
             )
@@ -695,8 +736,12 @@ def monitor(
                 with output.open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(sample) + "\n")
             taken += 1
-    except (KeyboardInterrupt, psutil.NoSuchProcess):
+    except KeyboardInterrupt:
         console.print("monitor stopped")
+    except psutil.NoSuchProcess:
+        # Distinct from Ctrl+C: a dead target must not read as a normal stop
+        # (the operator would re-check the wrong thing).
+        console.print("target process exited; monitor stopped")
 
 
 def _ms(value: object) -> str:
@@ -822,7 +867,14 @@ def bridge(
     if not session.is_dir():
         err_console.print(f"[red]not a session directory: {session}[/red]")
         raise typer.Exit(2)
-    result = analyze(session, snapshot)
+    # Same contract as compare/budget: a malformed summary.json is an operator
+    # error naming the file, never a traceback (analyze re-reads unvalidated
+    # session JSON; JSONDecodeError is a ValueError subclass).
+    try:
+        result = analyze(session, snapshot)
+    except ValueError as error:
+        err_console.print(f"[red]bridge analysis failed: {error}[/red]")
+        raise typer.Exit(1) from None
     console.print(result["playbook_md"])
     console.print(f"wrote {session / 'csharp_bridge.json'}")
 
@@ -1022,6 +1074,65 @@ def scenario_run(
     _exit(capture_rc or load_rc)
 
 
+# Plan entries reach scenario_run as a direct Python call, bypassing Typer's
+# option parsing, so their values are checked here against the same types the
+# CLI annotations declare. A mistyped value (e.g. "seconds": "60") would
+# otherwise raise TypeError deep inside run_capture - after that experiment's
+# loadgen started and any earlier experiments had already run.
+_MATRIX_ENTRY_TYPES: dict[str, type] = {
+    "seconds": int,
+    "clients": int,
+    "actions": int,
+    "seed": int,
+    "spawn_per_player": int,
+    "spawn_every_ms": int,
+    "horde_every_ms": int,
+    "horde_waves": int,
+    "max_dynamite": int,
+    "warmup": int,
+    "no_spawn": bool,
+    "rally": bool,
+    "reset_bridge": bool,
+    "preset": str,
+    "bot_mode": str,
+    "bot_mix": str,
+    "spawn_entity": str,
+    "rally_at": str,
+    "label": str,
+}
+
+
+def _coerce_matrix_entry(entry: dict[str, object], position: int) -> dict[str, Any]:
+    """Type-check one plan entry before any side effect; returns it unchanged
+    when every value already matches its declared type."""
+    coerced: dict[str, Any] = {}
+    for key, value in entry.items():
+        expected = _MATRIX_ENTRY_TYPES.get(key)
+        if expected is None:
+            coerced[key] = value  # unknown keys are rejected by the caller
+            continue
+        valid = (
+            isinstance(value, bool)
+            if expected is bool
+            else (
+                isinstance(value, int)
+                and not isinstance(value, bool)
+                or isinstance(value, float)
+                and value.is_integer()
+            )
+            if expected is int
+            else isinstance(value, str)
+        )
+        if not valid:
+            err_console.print(
+                f"[red]plan entry {position} field '{key}': expected "
+                f"{expected.__name__}, got {value!r}[/red]"
+            )
+            raise typer.Exit(2)
+        coerced[key] = value
+    return coerced
+
+
 @scenario_app.command("matrix")
 def scenario_matrix(
     plan: Path,
@@ -1070,12 +1181,19 @@ def scenario_matrix(
     }
     results: list[tuple[str, int]] = []
     for position, entry in enumerate(entries, 1):
+        if not isinstance(entry, dict):
+            err_console.print(f"[red]plan entry {position} is not a JSON object[/red]")
+            raise typer.Exit(2)
         unknown = set(entry) - allowed
         if unknown:
             err_console.print(
                 f"[red]plan entry {position} has unknown keys: {sorted(unknown)}[/red]"
             )
             raise typer.Exit(2)
+        # Fail before the cleanup telnet round-trip: a mistyped entry must not
+        # run the previous experiment's world-wiping console command for
+        # nothing (and must never reach the loadgen with junk values).
+        kwargs = _coerce_matrix_entry(entry, position)
         label = str(entry.get("label") or f"experiment-{position}")
         if cleanup:
             # A failed cleanup must be visible: leftover entities from one
@@ -1092,7 +1210,7 @@ def scenario_matrix(
             scenario_run(
                 game_port=game_port,
                 telnet_password=telnet_password,
-                **{**entry, "label": label},
+                **{**kwargs, "label": label},
             )
         except typer.Exit as stop:
             code = stop.exit_code or 0
@@ -1106,7 +1224,7 @@ def scenario_matrix(
 def flame_build(directory: Path) -> None:
     """Render flamegraphs from a session's captured stacks."""
     _require_backends()
-    _exit(run([str(REPO / "tools/host_profiler/make_flames.sh"), str(directory)], check=False))
+    _exit(run([str(REPO / "tools/host_profiler/make_flames.sh"), str(directory)]))
 
 
 @flame_app.command("diff")

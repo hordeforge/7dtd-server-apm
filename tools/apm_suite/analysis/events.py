@@ -214,7 +214,11 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
     except (json.JSONDecodeError, ValueError):
         return
     for spike in snapshot.get("spikes") or []:
-        duration = float(spike.get("gmUpdateDurationMs") or 0)
+        # spikes[] sits outside BridgeSnapshotV3 validation (extra="allow"), so
+        # a format-changed or hand-edited record must coerce like every other
+        # collector field instead of raising float(TypeError) mid-timeline.
+        duration = _num(spike.get("gmUpdateDurationMs")) or 0.0
+        tick_ms = _num(spike.get("serverTickIntervalMs")) or 0.0
         epoch: float | None = None
         with contextlib.suppress(ValueError, TypeError):
             # Naive stamps (no offset) are UTC by repo convention, matching
@@ -229,8 +233,7 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
                 "kind": "frame_spike",
                 "severity": "error" if duration >= 200 else "warn",
                 "message": (
-                    f"gmUpdate {duration:.1f}ms tickInterval "
-                    f"{float(spike.get('serverTickIntervalMs') or 0):.1f}ms "
+                    f"gmUpdate {duration:.1f}ms tickInterval {tick_ms:.1f}ms "
                     f"entities={((spike.get('world') or {}).get('entities'))}"
                 ),
                 "source": "apm_app.json",

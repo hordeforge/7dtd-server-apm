@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Optional application-layer scrape of the 7dtd-server-apm bridge via telnet.
 
-Writes app_metrics.jsonl snapshots for APM correlation.
+Persists only the `apm status` / `apm capabilities` / `apm dump` replies as
+JSONL snapshots (the --out target, app/bridge.jsonl in a capture session) for
+APM correlation; streamed console-log lines are filtered out.
 """
 
 from __future__ import annotations

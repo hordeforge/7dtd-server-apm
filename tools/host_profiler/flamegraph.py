@@ -8,7 +8,12 @@ import math
 import sys
 import xml.sax.saxutils as xu
 from collections import defaultdict
+from collections.abc import Iterator
 from pathlib import Path
+
+# One iterative-DFS work item: (stack prefix, consumed x at entry, remaining
+# siblings to visit under that prefix).
+_DfsFrame = tuple[tuple[str, ...], float, "Iterator[tuple[str, ...]]"]
 
 
 def color(name: str) -> str:
@@ -70,19 +75,18 @@ def main() -> int:
     # Iterative DFS over the prefix tree: stack depth in the folded file is
     # unbounded input, and the recursive form hit CPython's recursion limit on
     # deep stacks. Each frame carries its own running x, mirroring place().
-    root_frame: list[object] = [(), 0.0, iter(by_parent.get((), []))]
-    work: list[list[object]] = [root_frame]
+    work: list[_DfsFrame] = [((), 0.0, iter(by_parent.get((), [])))]
     while work:
-        frame = work[-1]
-        parent, x, children = frame
+        parent, x, children = work[-1]
         child = next(children, None)
         if child is None:
             work.pop()
             continue
-        assert isinstance(parent, tuple)
         x_of[child] = float(x)
-        work.append([child, float(x), iter(by_parent.get(child, []))])
-        frame[1] = float(x) + width * (totals[child] / grand)
+        work.append((child, float(x), iter(by_parent.get(child, []))))
+        # The parent keeps its own running x for its next sibling; it sits
+        # one below the child just pushed.
+        work[-2] = (parent, float(x) + width * (totals[child] / grand), children)
 
     rects = []
     for key, val in totals.items():

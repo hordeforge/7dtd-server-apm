@@ -9,7 +9,9 @@ using System.Runtime.CompilerServices;
 namespace DtdApmBridge
 {
     /// <summary>
-    /// Writes /tmp/perf-&lt;pid&gt;.map so Linux perf resolves managed frames.
+    /// Writes perf-&lt;pid&gt;.map into the mod's telemetry directory so Linux
+    /// perf resolves managed frames (the capture host symlinks it to
+    /// /tmp/perf-&lt;pid&gt;.map before recording).
     /// Unity's embedded Mono ignores MONO_ENV_OPTIONS=--jitmap (a mono_main-only
     /// flag), so we force-JIT the hot game types and export their code addresses.
     /// Run via console `apm jitmap` before a capture window; the JIT burst runs

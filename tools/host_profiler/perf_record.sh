@@ -18,7 +18,7 @@ mkdir -p "$OUTDIR"
 
 PERF_MAP="/tmp/perf-$PID.map"
 if [[ ! -s "$PERF_MAP" ]]; then
-  echo "WARNING: $PERF_MAP missing; managed Mono frames will be [jit]. Run 'apm jitmap' via the bridge (capture --reset-bridge does this automatically)." >&2
+  echo "WARNING: $PERF_MAP missing; managed Mono frames will be [jit]. Run 'apm jitmap' via the bridge (scenario run captures do this automatically; bare capture needs --symbolize)." >&2
 fi
 
 echo "perf record pid=$PID seconds=$SECONDS_N -> $OUTDIR"
@@ -41,7 +41,27 @@ perf report -i "$OUTDIR/perf.data" --stdio --children -n --percent-limit 1 \
 perf script -i "$OUTDIR/perf.data" >"$OUTDIR/perf.script" 2>"$OUTDIR/perf_script.err" || true
 
 # Preserve the exact managed address map used by this process/capture.
+# The mtime of /proc/PID equals the process start: a map older than that
+# belongs to a dead previous occupant of this reused pid and would silently
+# misresolve every managed frame during symbol annotation, so it must not be
+# copied into the session (those frames honestly stay [jit] instead).
+MAP_FRESH=0
 if [[ -s "$PERF_MAP" ]]; then
+  if [[ -d "/proc/$PID" ]]; then
+    proc_start="$(stat -c %Y "/proc/$PID" 2>/dev/null || true)"
+    map_mtime="$(stat -c %Y "$PERF_MAP" 2>/dev/null || true)"
+    if [[ -n "$proc_start" && -n "$map_mtime" && "$map_mtime" -ge "$proc_start" ]]; then
+      MAP_FRESH=1
+    else
+      echo "WARNING: $PERF_MAP predates pid $PID (stale map from a reused pid); not copying it; managed frames stay [jit]. Re-run 'apm jitmap'." >&2
+    fi
+  else
+    # Target already exited after recording; its surviving map is the best
+    # evidence for the data just captured and cannot be revalidated.
+    MAP_FRESH=1
+  fi
+fi
+if ((MAP_FRESH)); then
   cp "$PERF_MAP" "$OUTDIR/perf-$PID.map"
 fi
 
