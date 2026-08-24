@@ -90,16 +90,19 @@ def _bt(spec_name: str, script: Path) -> Callable[[CaptureContext], list[str] | 
     return build
 
 
-def _mono_gc(ctx: CaptureContext) -> list[str] | None:
-    if ctx.mono_so is None:
-        return None
-    return _bt("mono_gc", HOST_PROFILER / "scripts/mono_gc.bt")(ctx)
+def _mono_probe(name: str) -> Callable[[CaptureContext], list[str] | None]:
+    """Mono uprobe probes additionally need the bound libmonobdwgc path."""
+
+    def build(ctx: CaptureContext) -> list[str] | None:
+        if ctx.mono_so is None:
+            return None
+        return _bt(name, APM_BACKENDS / f"collectors/{name}.bt")(ctx)
+
+    return build
 
 
-def _mono_alloc(ctx: CaptureContext) -> list[str] | None:
-    if ctx.mono_so is None:
-        return None
-    return _bt("mono_alloc", APM_BACKENDS / "collectors/mono_alloc.bt")(ctx)
+_mono_gc = _mono_probe("mono_gc")
+_mono_alloc = _mono_probe("mono_alloc")
 
 
 SPECS: tuple[CollectorSpec, ...] = (
@@ -196,7 +199,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         layer="cpu",
         artifact="cpu/oncpu.bt.out",
         tool="bpftrace",
-        build=_bt("oncpu", HOST_PROFILER / "scripts/cpu_profile.bt"),
+        build=_bt("oncpu", APM_BACKENDS / "collectors/cpu_profile.bt"),
         needs_sudo=True,
     ),
     CollectorSpec(
@@ -204,7 +207,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         layer="scheduler",
         artifact="scheduler/runqlat.bt.out",
         tool="bpftrace",
-        build=_bt("runqlat", HOST_PROFILER / "scripts/runqlat.bt"),
+        build=_bt("runqlat", APM_BACKENDS / "collectors/runqlat.bt"),
         needs_sudo=True,
     ),
     CollectorSpec(
@@ -212,7 +215,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         layer="scheduler",
         artifact="scheduler/offcpu.bt.out",
         tool="bpftrace",
-        build=_bt("offcpu", HOST_PROFILER / "scripts/offcpu.bt"),
+        build=_bt("offcpu", APM_BACKENDS / "collectors/offcpu.bt"),
         needs_sudo=True,
     ),
     CollectorSpec(
@@ -252,7 +255,7 @@ SPECS: tuple[CollectorSpec, ...] = (
         layer="io",
         artifact="io/io_net.bt.out",
         tool="bpftrace",
-        build=_bt("io_net", HOST_PROFILER / "scripts/io_net.bt"),
+        build=_bt("io_net", APM_BACKENDS / "collectors/io_net.bt"),
         needs_sudo=True,
     ),
     CollectorSpec(

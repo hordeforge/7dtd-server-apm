@@ -50,6 +50,6 @@ while IFS= read -r script; do
     sed 's/^/     /' "$WORK/$name.err"
     fail=1
   fi
-done < <(find "$ROOT/tools/apm/collectors" "$ROOT/tools/host_profiler/scripts" -name '*.bt' | sort)
+done < <(find "$ROOT/tools/apm/collectors" -name '*.bt' | sort)
 
 exit "$fail"
