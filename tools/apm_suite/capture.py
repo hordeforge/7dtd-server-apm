@@ -18,7 +18,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO
+from typing import Any, BinaryIO
 
 from pydantic import ValidationError
 
@@ -47,6 +47,9 @@ from .session import (
 # Single source of truth for the analyzer version is the package version
 # (pyproject.toml / __init__.py); compare gates session compatibility on it.
 ANALYZER_VERSION = __version__
+# Dedicated-server process name prefix shared by every Python autodetector
+# (capture --pid resolution, doctor's candidate report).
+SERVER_COMM = "7DaysToDieServe"
 # minimum extra seconds beyond the capture window for perf post-processing
 # (flame build); long captures get a full extra window since perf script/report
 # time grows with recorded data volume
@@ -60,14 +63,25 @@ class CaptureOutcome:
     exit_code: int = 0
 
 
-def find_server_pid() -> int | None:
+def server_candidates() -> list[dict[str, Any]]:
+    """Every running process whose name starts with SERVER_COMM.
+
+    One scan feeds both capture's unique-pid requirement and doctor's
+    candidate report so the match rule cannot drift between them; psutil is
+    imported here, not at module level, because doctor is the other consumer
+    and every non-capture CLI invocation must skip its import cost.
+    """
     import psutil
 
-    matches = [
-        int(process.info["pid"])
+    return [
+        {"pid": int(process.info["pid"]), "name": str(process.info.get("name") or "")}
         for process in psutil.process_iter(("pid", "name"))
-        if str(process.info.get("name") or "").startswith("7DaysToDieServe")
+        if str(process.info.get("name") or "").startswith(SERVER_COMM)
     ]
+
+
+def find_server_pid() -> int | None:
+    matches = [entry["pid"] for entry in server_candidates()]
     return matches[0] if len(matches) == 1 else None
 
 
@@ -590,7 +604,7 @@ def run_capture(
         _warn(session, message)
 
     sudo_ok = _sudo_available()
-    comm = "7DaysToDieServe"
+    comm = SERVER_COMM
     exe = ""
     cmdline = ""
     thread_count = 0
@@ -880,6 +894,7 @@ def write_plan_text(ctx_args: dict[str, object], only: str) -> str:
 
 __all__ = [
     "SPECS",
+    "SERVER_COMM",
     "CaptureContext",
     "CaptureOutcome",
     "CollectorSpec",

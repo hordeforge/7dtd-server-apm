@@ -9,8 +9,9 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from .capture import server_candidates
 from .io import file_sha256
-from .paths import REPO, apm_root, dedicated_dir
+from .paths import REPO, apm_root, bridge_mod_dir, dedicated_dir
 from .session import keep_sessions_budget, prune_grace_hours
 
 
@@ -66,7 +67,7 @@ def _existing_ancestor(path: Path) -> Path:
 
 def _bridge_status() -> dict[str, Any]:
     """Installed bridge vs local build: stale DLLs measure with old hooks."""
-    installed = dedicated_dir() / "Mods/7dtd-server-apm-bridge/7dtd-server-apm-bridge.dll"
+    installed = bridge_mod_dir() / "7dtd-server-apm-bridge.dll"
     built = REPO / "dist/7dtd-server-apm-bridge/7dtd-server-apm-bridge.dll"
     if not installed.is_file():
         return {"ok": False, "fix": "make bridge-install (bridge not installed)"}
@@ -87,7 +88,7 @@ def _bridge_status() -> dict[str, Any]:
                 "ok": False,
                 "fix": "installed bridge differs from dist build; make bridge-install + restart server",
             }
-    config = dedicated_dir() / "Mods/7dtd-server-apm-bridge/Config/apmbridge.json"
+    config = bridge_mod_dir() / "Config/apmbridge.json"
     settings: Any = None
     with suppress(OSError, ValueError):
         settings = json.loads(config.read_text(encoding="utf-8"))
@@ -127,11 +128,10 @@ def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
 
     candidates: list[dict[str, Any]] = []
     if pid is None:
-        for process in psutil.process_iter(("pid", "name")):
-            if str(process.info.get("name") or "").startswith("7DaysToDieServe"):
-                candidates.append(
-                    {"pid": int(process.info["pid"]), "name": process.info.get("name")}
-                )
+        # Same scan capture's --pid autodetection uses (capture.server_candidates),
+        # so doctor's candidate report can never disagree with what a capture
+        # would have targeted.
+        candidates = server_candidates()
         if len(candidates) == 1:
             pid = int(candidates[0]["pid"])
     process_ok = pid is not None and psutil.pid_exists(pid)

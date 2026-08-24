@@ -13,7 +13,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 
 from .collectors import SPEC_BY_NAME
-from .io import _sync_parent_directory, atomic_json, file_sha256, load_json, member_is_safe
+from .io import atomic_json, file_sha256, load_json, member_is_safe, sync_parent_directory
 from .models import (
     Artifact,
     BridgeSnapshotV3,
@@ -264,6 +264,40 @@ def _free_trash_target(trash: Path, name: str) -> Path:
     return candidate
 
 
+def _move_into_trash(trash: Path, session: Path) -> OSError | None:
+    """Rename a session into the trash under a free name.
+
+    The free-name probe and os.replace are two steps, so two concurrent prunes
+    can both observe "session_a free" and race the same target; rename(2)
+    refuses the loser (ENOTEMPTY against the winner's non-empty directory).
+    Detect that collision (target appeared since the probe) and take the next
+    suffix instead of reporting a spurious prune failure and leaving the
+    session unpruned forever. Bounded so an unrelated OSError (perms, EBUSY)
+    still surfaces. A vanished source means a concurrent prune won outright:
+    reported as success, matching the store-race contract of the callers.
+    """
+    for _ in range(16):
+        candidate = _free_trash_target(trash, session.name)
+        try:
+            os.replace(session, candidate)
+        except FileNotFoundError:
+            # A concurrent prune got there first: the intended end state
+            # (session gone from the store) already holds.
+            return None
+        except OSError as error:
+            if candidate.exists():
+                continue  # lost that name to a racing prune; take the next
+            return error
+        # Stamp the grace clock at trash time: the directory mtime is the
+        # capture date, which would expire long-lived evidence the moment
+        # it is trashed.
+        os.utime(candidate, None)
+        # The rename itself must survive power loss like every write.
+        sync_parent_directory(candidate)
+        return None
+    return OSError(f"trash name collision persisted for {session.name}")
+
+
 def remove_sessions(
     doomed: list[Path], grace_hours: float | None = None
 ) -> Iterator[tuple[Path, OSError | None]]:
@@ -299,23 +333,7 @@ def remove_sessions(
         yield doomed[0], error
         return
     for session in doomed:
-        try:
-            target = _free_trash_target(trash, session.name)
-            os.replace(session, target)
-            # Stamp the grace clock at trash time: the directory mtime is the
-            # capture date, which would expire long-lived evidence the moment
-            # it is trashed.
-            os.utime(target, None)
-            # The rename itself must survive power loss like every write.
-            _sync_parent_directory(target)
-        except FileNotFoundError:
-            # A concurrent prune got there first: the intended end state
-            # (session gone from the store) already holds.
-            yield session, None
-        except OSError as error:
-            yield session, error
-        else:
-            yield session, None
+        yield session, _move_into_trash(trash, session)
 
 
 def purge_expired_trash(

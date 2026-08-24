@@ -214,9 +214,14 @@ def main() -> int:
 
     tree_path = args.tree
     if tree_path is None:
-        tree_path = args.output.with_suffix("").with_suffix(".tree.json")
-        if str(args.output).endswith(".speedscope.json"):
-            tree_path = Path(str(args.output).replace(".speedscope.json", ".tree.json"))
+        # profile.speedscope.json -> profile.tree.json; any other output name keeps
+        # its stem and gains .tree.json (out.json -> out.tree.json).
+        if args.output.name.endswith(".speedscope.json"):
+            tree_path = args.output.with_name(
+                args.output.name[: -len(".speedscope.json")] + ".tree.json"
+            )
+        else:
+            tree_path = args.output.with_suffix(".tree.json")
     tree_path.write_text(dumps_deep(to_d3_tree(rows)), encoding="utf-8")
     print(f"wrote {tree_path}")
     return 0

@@ -20,10 +20,11 @@ def member_is_safe(name: str) -> bool:
     return not candidate.is_absolute() and ".." not in candidate.parts
 
 
-def _sync_parent_directory(path: Path) -> None:
+def sync_parent_directory(path: Path) -> None:
     """Fsync the directory so the just-completed rename survives power loss.
 
-    The file fsync alone is not enough: without a directory fsync a host crash
+    Public because the audit store fsyncs its own renames (trashed sessions);
+    the file fsync alone is not enough: without a directory fsync a host crash
     can revert evidence files to empty or missing even though the write
     reported success, which would then fail every later integrity audit.
     """
@@ -45,7 +46,7 @@ def atomic_text(path: Path, content: str) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         tmp.replace(path)
-        _sync_parent_directory(path)
+        sync_parent_directory(path)
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise

@@ -14,7 +14,7 @@ from typing import Any
 from ..io import atomic_json, atomic_text, load_json
 from ..models import as_number, collected_layer_scores, first_present, layer_signals
 from .bridge import ranked_section_heats
-from .flame_delta import delta, load_weights
+from .flame_delta import delta, folded_stack_path, load_weights
 
 
 def load_sections(session: Path) -> dict[str, float]:
@@ -43,17 +43,9 @@ def load_sections(session: Path) -> dict[str, float]:
     return heat
 
 
-def _flame_path(session: Path) -> Path | None:
-    for rel in ("cpu/perf/stacks.annotated.folded", "cpu/perf/stacks.folded", "stacks.folded"):
-        path = session / rel
-        if path.is_file() and path.stat().st_size > 0:
-            return path
-    return None
-
-
 def load_flame_deltas(a: Path, b: Path, top: int = 20) -> list[dict[str, Any]]:
     """Top frame weight deltas between two sessions' folded stacks."""
-    folded_a, folded_b = _flame_path(a), _flame_path(b)
+    folded_a, folded_b = folded_stack_path(a), folded_stack_path(b)
     if not folded_a or not folded_b:
         return []
     return delta(load_weights(folded_a), load_weights(folded_b), top=top)

@@ -8,6 +8,18 @@ from pathlib import Path
 from typing import Any
 
 
+def folded_stack_path(session: Path) -> Path | None:
+    """The session's folded stacks: annotated twin first, then the raw capture,
+    then a root-level file from the legacy session layout. One resolver for
+    every consumer (session compare, flame diff HTML) so their candidate lists
+    cannot drift into disagreeing about which evidence to read."""
+    for rel in ("cpu/perf/stacks.annotated.folded", "cpu/perf/stacks.folded", "stacks.folded"):
+        path = session / rel
+        if path.is_file() and path.stat().st_size > 0:
+            return path
+    return None
+
+
 def load_weights(path: Path) -> dict[str, int]:
     weights: dict[str, int] = defaultdict(int)
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():

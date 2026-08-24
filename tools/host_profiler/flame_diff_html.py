@@ -13,18 +13,7 @@ from typing import Any
 # perf_record.sh); keep that contract here by resolving apm_suite from the
 # repository checkout when it is not installed in the interpreter's venv.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from apm_suite.analysis.flame_delta import delta, load_weights
-
-
-def flame_path(session: Path) -> Path | None:
-    for rel in (
-        "cpu/perf/stacks.annotated.folded",
-        "cpu/perf/stacks.folded",
-    ):
-        p = session / rel
-        if p.is_file() and p.stat().st_size > 0:
-            return p
-    return None
+from apm_suite.analysis.flame_delta import delta, folded_stack_path, load_weights
 
 
 def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
@@ -78,7 +67,7 @@ def main() -> int:
     ap.add_argument("-o", "--output", type=Path, default=None)
     ap.add_argument("--top", type=int, default=40)
     args = ap.parse_args()
-    fa, fb = flame_path(args.session_a), flame_path(args.session_b)
+    fa, fb = folded_stack_path(args.session_a), folded_stack_path(args.session_b)
     if not fa or not fb:
         print("both sessions need cpu/perf/stacks.folded", file=sys.stderr)
         return 2

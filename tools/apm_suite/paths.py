@@ -22,6 +22,17 @@ def dedicated_dir() -> Path:
     return _env_path("SEVENDTD_DS_DIR", DEFAULT_DS)
 
 
+def bridge_mod_dir() -> Path:
+    """Installed bridge mod folder under the dedicated server.
+
+    Single source for every Python reader of Mods/7dtd-server-apm-bridge so
+    the mod folder name and DS override cannot drift apart. capture's
+    /proc/<pid>/exe-based resolution is deliberately separate: it follows a
+    running process, not the configured install.
+    """
+    return dedicated_dir() / "Mods" / "7dtd-server-apm-bridge"
+
+
 def apm_root() -> Path:
     """Session data root. Sessions are data, not source; keep them out of the repo."""
     return _env_path("SEVENDTD_APM_DIR", Path.home() / ".local/share/7dtd-server-apm")

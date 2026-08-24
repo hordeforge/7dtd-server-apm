@@ -64,6 +64,31 @@ namespace DtdApmBridge
             catch { return Array.Empty<Type>(); }
         }
 
+        // Serializes map publication between concurrent command sources: a
+        // telnet client and the local console (or two telnet clients) can run
+        // `apm jitmap` at once, and unsynchronized StreamWriters on the same
+        // final path truncate each other mid-line while readers (perf via the
+        // /tmp symlink, the capture host copy) observe torn symbol tables.
+        static readonly object WriteLock = new object();
+        // A crash between the temp write and the Replace strands a unique
+        // *.map.<id>.tmp beside its target forever; same hourly garbage rule as
+        // Telemetry's dump-temp sweep.
+        const double StaleTempMaxAgeHours = 1.0;
+
+        static void SweepStaleMapTemps()
+        {
+            try
+            {
+                foreach (string stale in Directory.GetFiles(BridgeMod.OutputDir, "perf-*.map.*.tmp"))
+                {
+                    if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(stale)).TotalHours < StaleTempMaxAgeHours) continue;
+                    try { File.Delete(stale); }
+                    catch (Exception ex) { BridgeMod.Log("stale jitmap temp delete failed: " + ex.Message); }
+                }
+            }
+            catch (Exception ex) { BridgeMod.Log("stale jitmap temp sweep failed: " + ex.Message); }
+        }
+
         public static string Write(bool full = false)
         {
             var entries = new List<KeyValuePair<long, string>>();
@@ -104,29 +129,49 @@ namespace DtdApmBridge
             int pid = Process.GetCurrentProcess().Id;
             Directory.CreateDirectory(BridgeMod.OutputDir);
             string path = Path.Combine(BridgeMod.OutputDir, "perf-" + pid + ".map");
-            // Maps from previous server pids accumulate (~5-10 MB each in full mode);
-            // only the current pid's map is ever useful, so sweep the rest.
-            try
+            lock (WriteLock)
             {
-                foreach (string old in Directory.GetFiles(BridgeMod.OutputDir, "perf-*.map"))
-                    if (!old.EndsWith("perf-" + pid + ".map", StringComparison.Ordinal))
-                        File.Delete(old);
-            }
-            catch { /* stale-map sweep is best-effort */ }
-            using (var writer = new StreamWriter(path, false))
-            {
-                for (int i = 0; i < entries.Count; i++)
+                // Maps from previous server pids accumulate (~5-10 MB each in full mode);
+                // only the current pid's map is ever useful, so sweep the rest. Under
+                // WriteLock with publication below so a concurrent writer cannot delete
+                // or truncate the freshly published map mid-read.
+                try
                 {
-                    // Fill the whole gap to the next symbol: unmapped code between
-                    // methods (closed generics, wrappers) then resolves to the nearest
-                    // preceding method instead of an anonymous [jit] gap. Cap so a
-                    // region boundary cannot swallow megabytes of foreign code.
-                    long size = i + 1 < entries.Count
-                        ? Math.Min(entries[i + 1].Key - entries[i].Key, 0x100000)
-                        : 0x4000;
-                    if (size <= 0) size = 0x1000;
-                    writer.WriteLine(entries[i].Key.ToString("x") + " " + size.ToString("x") + " "
-                        + entries[i].Value.Replace(' ', '_'));
+                    foreach (string old in Directory.GetFiles(BridgeMod.OutputDir, "perf-*.map"))
+                        if (!old.EndsWith("perf-" + pid + ".map", StringComparison.Ordinal))
+                            File.Delete(old);
+                }
+                catch { /* stale-map sweep is best-effort */ }
+                SweepStaleMapTemps();
+                // Stage under a unique temp and Replace so a reader never sees a
+                // half-written map through the /tmp symlink (same pattern as the
+                // Telemetry latest.json swap).
+                string temp = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
+                try
+                {
+                    using (var writer = new StreamWriter(temp, false))
+                    {
+                        for (int i = 0; i < entries.Count; i++)
+                        {
+                            // Fill the whole gap to the next symbol: unmapped code between
+                            // methods (closed generics, wrappers) then resolves to the nearest
+                            // preceding method instead of an anonymous [jit] gap. Cap so a
+                            // region boundary cannot swallow megabytes of foreign code.
+                            long size = i + 1 < entries.Count
+                                ? Math.Min(entries[i + 1].Key - entries[i].Key, 0x100000)
+                                : 0x4000;
+                            if (size <= 0) size = 0x1000;
+                            writer.WriteLine(entries[i].Key.ToString("x") + " " + size.ToString("x") + " "
+                                + entries[i].Value.Replace(' ', '_'));
+                        }
+                    }
+                    if (File.Exists(path)) File.Replace(temp, path, null);
+                    else File.Move(temp, path);
+                }
+                catch
+                {
+                    try { File.Delete(temp); } catch { }
+                    throw;
                 }
             }
             return "jitmap " + path + " symbols=" + prepared + " skipped=" + skipped;

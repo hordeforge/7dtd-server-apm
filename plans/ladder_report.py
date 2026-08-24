@@ -1,10 +1,16 @@
 """Scale-ladder curve: entities vs per-tick cost vs stalls."""
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
-root = Path.home() / ".local/share/7dtd-server-apm"
+# Same bare-python3 contract as scale_ladder.py: shared path helpers from the
+# checkout so SEVENDTD_APM_DIR is honored exactly like the CLI honors it.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from apm_suite.paths import apm_root
+
+root = apm_root()
 rows = []
 for session in sorted(root.glob("session_*")):
     workload = session / "workload.json"

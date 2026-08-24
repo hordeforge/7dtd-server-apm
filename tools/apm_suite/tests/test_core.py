@@ -568,7 +568,9 @@ def test_bridge_status_tolerates_non_object_config(
     mods = tmp_path / "Mods/7dtd-server-apm-bridge"
     (mods / "Config").mkdir(parents=True)
     (mods / "7dtd-server-apm-bridge.dll").write_bytes(b"dll")
-    monkeypatch.setattr(doctor, "dedicated_dir", lambda: tmp_path)
+    # _bridge_status resolves the mod folder through paths.bridge_mod_dir, so
+    # patch that boundary (not dedicated_dir) to point it at the fake install.
+    monkeypatch.setattr(doctor, "bridge_mod_dir", lambda: mods)
     # Isolate REPO so _bridge_status cannot compare against a real dist build
     # from the working tree; this test pins the malformed-config posture, not
     # the stale-DLL verdict.
@@ -2761,6 +2763,56 @@ def test_flame_delta_ties_rank_by_frame_name() -> None:
     assert [r["frame"] for r in cut] == ["alpha", "beta"]
 
 
+def test_folded_stack_path_prefers_annotated_and_accepts_legacy_layout(
+    tmp_path: Path,
+) -> None:
+    """One resolver feeds compare and the flame diff HTML, so both must agree
+    on preference order (annotated twin first) and on reading a root-level
+    stacks.folded from the legacy session layout."""
+    from apm_suite.analysis.flame_delta import folded_stack_path
+
+    assert folded_stack_path(tmp_path) is None
+    legacy = tmp_path / "stacks.folded"
+    legacy.write_text("a 1\n")
+    assert folded_stack_path(tmp_path) == legacy
+    raw = tmp_path / "cpu/perf/stacks.folded"
+    raw.parent.mkdir(parents=True)
+    raw.write_text("b 2\n")
+    assert folded_stack_path(tmp_path) == raw
+    annotated = raw.with_name("stacks.annotated.folded")
+    annotated.write_text("[GC] b 2\n")
+    assert folded_stack_path(tmp_path) == annotated
+    # Empty candidates never shadow later ones (same rule as every reader of
+    # collector output here).
+    annotated.write_text("")
+    assert folded_stack_path(tmp_path) == raw
+
+
+def test_compare_flame_deltas_read_legacy_root_level_stacks(tmp_path: Path) -> None:
+    """The unified resolver keeps compare's legacy-layout support: flame frame
+    deltas must build from two sessions that only carry root-level files."""
+    import apm_suite.analysis.compare as compare
+
+    for name, weight in (("cmp_legacy_a", 5), ("cmp_legacy_b", 1)):
+        session = tmp_path / name
+        session.mkdir()
+        atomic_json(
+            session / "summary.json",
+            {
+                "schema": "7dtd.apm.summary.v2",
+                "session_id": name,
+                "layers": [{"layer": "cpu", "score": 10.0, "state": "collected"}],
+                "meta": {"analyzer_version": "2.1.0", "only": "all", "seconds": 30},
+            },
+        )
+        (session / "stacks.folded").write_text(f"GameManager.gmUpdate {weight}\n")
+    result = compare.compare_sessions(tmp_path / "cmp_legacy_a", tmp_path / "cmp_legacy_b")
+    deltas = result["flame_frame_deltas"]
+    assert len(deltas) == 1
+    assert deltas[0]["frame"] == "GameManager.gmUpdate"
+    assert deltas[0]["delta"] == -4
+
+
 # --- non-finite sample weights must never crash a load ----------------------------
 
 
@@ -3707,6 +3759,9 @@ def test_path_env_overrides_treat_empty_as_unset(
     monkeypatch.setenv("SEVENDTD_DS_DIR", str(tmp_path / "ds"))
     assert paths.apm_root() == tmp_path
     assert paths.dedicated_dir() == tmp_path / "ds"
+    # The bridge mod folder rides the same override so every Python reader of
+    # Mods/7dtd-server-apm-bridge resolves through one helper.
+    assert paths.bridge_mod_dir() == tmp_path / "ds" / "Mods" / "7dtd-server-apm-bridge"
 
 
 def test_retention_env_values_warn_and_fall_back_on_garbage(
@@ -4187,6 +4242,44 @@ def test_remove_sessions_treats_already_gone_session_as_success(tmp_path: Path) 
     results = list(remove_sessions([doomed], grace_hours=0))
 
     assert results == [(doomed, None)]
+
+
+def test_remove_sessions_retries_trash_name_lost_to_concurrent_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two prunes can both observe the same trash name free (the probe-then-
+    rename window is not one atomic step): the loser's rename hits the winner's
+    directory and must take the next suffix instead of reporting a spurious
+    prune failure and leaving its session unpruned until a later run."""
+    import errno as errno_module
+
+    from apm_suite.session import remove_sessions
+
+    store = tmp_path / "store"
+    doomed = store / "session_a"
+    doomed.mkdir(parents=True)
+    trash = store / ".trash"
+    winner = trash / "session_a"
+    real_replace = os.replace
+    collisions = {"n": 0}
+
+    def colliding_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        if Path(dst) == winner:
+            # The other prune's rename lands first, then ours refuses.
+            winner.mkdir(exist_ok=True)
+            collisions["n"] += 1
+            raise OSError(errno_module.ENOTEMPTY, "Directory not empty", str(dst))
+        real_replace(src, dst)
+
+    monkeypatch.setattr("apm_suite.session.os.replace", colliding_replace)
+
+    results = list(remove_sessions([doomed], grace_hours=24))
+
+    assert results == [(doomed, None)]
+    assert collisions["n"] == 1
+    assert winner.is_dir()
+    assert (trash / "session_a_1").is_dir()
+    assert not doomed.exists()
 
 
 def test_purge_expired_trash_treats_entry_gone_mid_purge_as_success(

@@ -13,17 +13,20 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+# Runs under a bare python3 like the host_profiler scripts: resolve the shared
+# path helpers from the repository checkout instead of duplicating defaults.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
+from apm_suite.paths import apm_root, bridge_mod_dir
 
 APM = Path(__file__).resolve().parent.parent  # 7dtd-server-apm repo root (plans/..)
 HOST, PORT = "127.0.0.1", 8081
 PASSWORD = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
 TIERS = [100, 300, 600, 1000]
-SNAPSHOT = Path.home() / (
-    ".local/share/Steam/steamapps/common/7 Days to Die Dedicated Server"
-    "/Mods/7dtd-server-apm-bridge/telemetry/apm_app_latest.json"
-)
+SNAPSHOT = bridge_mod_dir() / "telemetry/apm_app_latest.json"
 
 
 def telnet(commands: list[str], read_seconds: float = 2.0) -> str:
@@ -94,9 +97,17 @@ def spawn_to(target: int) -> int:
     return current
 
 
-def newest_session() -> Path:
-    root = Path.home() / ".local/share/7dtd-server-apm"
-    return max(root.glob("session_*"), key=lambda p: p.stat().st_mtime)
+def newest_session(since_epoch: float) -> Path | None:
+    """Newest session directory created at/after `since_epoch`, or None.
+
+    The caller attaches this run's workload.json to the returned session, so a
+    session this run did not create must never come back: writing into an
+    unrelated older session rewrites foreign evidence and breaks its recorded
+    manifest hashes (the audit then reports the session INVALID)."""
+    fresh = [
+        p for p in apm_root().glob("session_*") if p.is_dir() and p.stat().st_mtime >= since_epoch
+    ]
+    return max(fresh, key=lambda p: p.stat().st_mtime, default=None)
 
 
 def main() -> int:
@@ -113,6 +124,7 @@ def main() -> int:
         reached = spawn_to(tier)
         print(f"  alive={reached}; settling", flush=True)
         time.sleep(8)
+        started = time.time()
         result = subprocess.run(
             [
                 "uv",
@@ -132,7 +144,16 @@ def main() -> int:
             },
             check=False,
         )
-        session = newest_session()
+        session = newest_session(started)
+        if session is None:
+            # A failed capture left no session to annotate; writing the
+            # workload manifest into a stale one would corrupt that session.
+            print(
+                f"  TIER {tier}: capture produced no session (rc={result.returncode});"
+                " workload not attached",
+                flush=True,
+            )
+            continue
         (session / "workload.json").write_text(
             json.dumps(
                 {
