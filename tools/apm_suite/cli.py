@@ -9,6 +9,7 @@ import time
 import unicodedata
 import zipfile
 import zlib
+from contextlib import suppress
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -134,14 +135,6 @@ def capture(
     no_app: Annotated[bool, typer.Option()] = False,
     telnet_host: Annotated[str, typer.Option(help="Server telnet host.")] = "127.0.0.1",
     telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = 8081,
-    telnet_password: Annotated[
-        str,
-        typer.Option(
-            "--telnet-password",
-            envvar="SEVENDTD_TELNET_PASSWORD",
-            help="Prefer the environment variable to avoid shell history.",
-        ),
-    ] = "",
     reset_bridge: Annotated[
         bool, typer.Option(help="Reset bridge stats at capture start (window-scoped totals).")
     ] = False,
@@ -157,6 +150,9 @@ def capture(
     dry_run: Annotated[bool, typer.Option(help="Print the resolved collector plan.")] = False,
 ) -> None:
     """Run a timed collector session against the server and finalize it."""
+    # Secret via environment only (AGENTS.md rule 4): a CLI flag would land the
+    # password in shell history and this process's /proc/<pid>/cmdline.
+    telnet_password = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
     if unknown := unknown_only_tokens(only):
         # The tokens are raw argv; a stray closing tag would otherwise raise
         # MarkupError out of the printer instead of reaching this exit-2 hint.
@@ -341,7 +337,16 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
             # Sorted walk: identical session content must yield an identical
             # member order, not a readdir-order zip layout.
             for source in sorted(session.rglob("*")):
-                if not source.is_file() or source.name in excluded or source.suffix == ".err":
+                # Symlinks are skipped like the integrity audit skips them: a
+                # planted link (hand-edit, imported-bundle tampering) would
+                # otherwise pull an arbitrary file outside the session into a
+                # bundle meant for sharing.
+                if (
+                    not source.is_file()
+                    or source.is_symlink()
+                    or source.name in excluded
+                    or source.suffix == ".err"
+                ):
                     continue
                 relative = source.relative_to(session)
                 if source.suffix == ".json":
@@ -426,7 +431,15 @@ def import_bundle(
             # so a rejected import never litters the store with an empty session
             # dir; a concurrent duplicate import of the same bundle gets its own
             # target instead of merging into this one mid-extract.
-            target = claim_dir((store or apm_root()) / stem)
+            store_root = store or apm_root()
+            target = claim_dir(store_root / stem)
+            # Owner-only perms before any member lands (same contract as
+            # capture): bundles carry raw evidence, and umask-default perms
+            # would leave restored sessions group/world-readable on shared
+            # hosts, contradicting docs/APM.md.
+            with suppress(OSError):
+                store_root.chmod(0o700)
+                target.chmod(0o700)
             try:
                 archive.extractall(target)
             except (OSError, zipfile.BadZipFile, zlib.error) as error:
@@ -977,12 +990,10 @@ def scenario_run(
         bool, typer.Option(help="Reset bridge stats at capture start (window-scoped totals).")
     ] = True,
     label: Annotated[str, typer.Option(help="Experiment label stored in workload.json.")] = "",
-    telnet_password: Annotated[
-        str,
-        typer.Option(envvar="SEVENDTD_TELNET_PASSWORD", help="Prefer the environment variable."),
-    ] = "",
 ) -> None:
     """Capture under sibling loadgen load (joins, actions, spawns)."""
+    # Secret via environment only (same contract as capture): no argv flag.
+    telnet_password = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
     presets = {"standard": "app,threads,memory,cpu", "deep": "all", "forensic": "all,alloc"}
     if preset not in presets:
         err_console.print("[red]preset must be standard, deep, or forensic[/red]")
@@ -1198,14 +1209,12 @@ def scenario_matrix(
     cleanup: Annotated[
         str, typer.Option(help="Console command run between experiments ('' disables).")
     ] = "killall",
-    telnet_password: Annotated[
-        str,
-        typer.Option(envvar="SEVENDTD_TELNET_PASSWORD", help="Prefer the environment variable."),
-    ] = "",
 ) -> None:
     """Run a labeled experiment sequence from a JSON plan (list of scenario kwargs)."""
     from .capture import telnet_command
 
+    # Secret via environment only (same contract as capture): no argv flag.
+    telnet_password = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
     if not plan.is_file():
         err_console.print(f"[red]plan file not found: {plan}[/red]")
         raise typer.Exit(2)
@@ -1247,7 +1256,6 @@ def scenario_matrix(
         try:
             scenario_run(
                 game_port=game_port,
-                telnet_password=telnet_password,
                 **{**kwargs, "label": label},
             )
         except typer.Exit as stop:

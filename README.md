@@ -208,7 +208,7 @@ appears only as set/unset). An exported-but-empty variable is treated as unset.
 
 | Variable | Default | Valid values | Purpose |
 |---|---|---|---|
-| `SEVENDTD_TELNET_PASSWORD` | unset | server telnet password | Secret for the app-layer scrape and telnet actions. Supply via the environment or Typer's `envvar` wiring, never as argv. Required for the `app` collector to authenticate. |
+| `SEVENDTD_TELNET_PASSWORD` | unset | server telnet password | Secret for the app-layer scrape and telnet actions. Environment only: there is deliberately no `--telnet-password` flag, so the secret never lands in shell history or `/proc/<pid>/cmdline`. Required for the `app` collector to authenticate. |
 | `SEVENDTD_APM_DIR` | `~/.local/share/7dtd-server-apm` | writable directory | Session store root (`session_*`, `.scenario`, `.trash`). |
 | `SEVENDTD_DS_DIR` | Steam default dedicated-server path | existing directory | Dedicated install used by `doctor`, bridge build/install scripts, and probe helpers. |
 | `SEVENDTD_GAME_DIR` | Steam default client path | existing directory | Client install fallback for `make bridge-build` when the dedicated Managed assemblies are absent. Build-time only; no runtime code reads it. |

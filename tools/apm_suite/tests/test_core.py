@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import time
@@ -958,6 +959,28 @@ def test_import_bundle_twice_keeps_runs_isolated(
     assert (duplicate / "meta.json").is_file()
 
 
+def test_import_bundle_restores_owner_only_perms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """docs/APM.md promises owner-only sessions; a restored bundle carries raw
+    evidence too, so the claim must hold for imports, not just captures."""
+    import zipfile
+
+    bundle = tmp_path / "session_evidence.zip"
+    with zipfile.ZipFile(bundle, "w") as archive:
+        archive.writestr("meta.json", "{}\n")
+
+    store = tmp_path / "store"
+    store.mkdir(mode=0o755)
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+    result = runner.invoke(app, ["import", str(bundle)])
+    assert result.exit_code == 0, result.output
+
+    restored = store / "session_evidence"
+    assert stat.S_IMODE(restored.stat().st_mode) == 0o700
+    assert stat.S_IMODE(store.stat().st_mode) == 0o700
+
+
 def test_import_rejects_zip_slip_and_corrupt_bundles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1209,9 +1232,18 @@ def test_events_schema_enforces_count_identities() -> None:
 
 
 def test_password_not_in_capture_command() -> None:
-    result = runner.invoke(app, ["capture", "--telnet-password", "super-secret", "--dry-run"])
+    """The secret reaches the CLI only through the environment: an env-supplied
+    password never echoes into output, and there is no --telnet-password flag
+    that could leak it into shell history or /proc/<pid>/cmdline."""
+    result = runner.invoke(
+        app, ["capture", "--dry-run"], env={"SEVENDTD_TELNET_PASSWORD": "super-secret"}
+    )
     assert result.exit_code == 0
     assert "super-secret" not in result.stdout
+
+    rejected = runner.invoke(app, ["capture", "--telnet-password", "super-secret"])
+    assert rejected.exit_code != 0
+    assert "super-secret" not in rejected.output
 
 
 # --- unit: audit + collector result ingestion --------------------------------
