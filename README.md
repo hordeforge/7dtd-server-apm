@@ -129,11 +129,12 @@ probe tracks the main thread and splits blocked time by state, but note that
 most main-thread off-CPU time is the *healthy* frame-pacing sleep (the server
 sleeps between ticks when under budget), so the scheduler layer scores only
 D-state (disk) blocks; `SLOW_VFS_MAIN` marks main-thread file IO.
-The analyzer's `stall_correlation` attributes each worst frame spike to nearby
-evidence and, by duration match, to Mono stop-the-world GC pauses
-(`cause: gc_pause`) - the most common "laggy without CPU" culprit. The bridge
-also reports window-scoped GC pressure (`metadata.gc`: managed allocation
-MB/s and full-collection count); since Mono's Boehm GC is non-generational,
+The analyzer's `stall_correlation` pairs each worst frame spike with the events
+within +/-2 s and, by duration match, with Mono stop-the-world GC pauses
+(`cause: gc_pause`) - the most common "laggy without CPU" culprit - rendered on
+the dashboard. The bridge also reports window-scoped GC pressure
+(`metadata.gc`: managed allocation MB/s and full-collection count); since
+Mono's Boehm GC is non-generational,
 allocation rate is the pressure gauge and each collection it triggers is a
 frame hitch. For root-causing WHICH code allocates, `scenario run --preset
 forensic` (or `capture --only all,alloc`) runs a bounded Boehm-allocator probe
@@ -148,10 +149,7 @@ causes that fired - e.g. "laggy (49 late ticks, 2510 ms overage) - gc_pauses;
 main_thread_bound; lock_contention" - so a run answers "why is it laggy" in
 one line. The verdict is also exported to Prometheus
 (`sevendtd_apm_lag_cause_severity{cause=...}`, alertable) and shown per-session
-in the index for triage across many captures. The bridge
-counts late ticks (>60 ms) and cumulative tick overage per window, and the
-analyzer's `stall_correlation` block pairs each worst frame spike with the
-events that happened within +/-2 s (rendered on the dashboard). The load
+in the index for triage across many captures. The load
 generator reports client-perceived latency (LiteNetLib RTT p50/p95/max and
 spike counts) in `loadgen_stats.json`, separating wire lag from sim stall.
 
