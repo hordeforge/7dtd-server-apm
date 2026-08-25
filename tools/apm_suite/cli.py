@@ -872,13 +872,19 @@ def prune_sessions(
     for old, error in remove_sessions(doomed, grace):
         # One stuck session must not strand the rest: report and keep going.
         if error is not None:
-            err_console.print(f"[red]could not remove {escape(str(old))}: {escape(str(error))}[/red]")
+            err_console.print(
+                f"[red]could not remove {escape(str(old))}: {escape(str(error))}[/red]"
+            )
     for entry, error in purge_expired_trash(apm_root(), grace):
         if error is not None:
-            err_console.print(f"[red]could not purge {escape(str(entry))}: {escape(str(error))}[/red]")
+            err_console.print(
+                f"[red]could not purge {escape(str(entry))}: {escape(str(error))}[/red]"
+            )
     for entry, error in purge_stale_scenario_runs(apm_root(), grace):
         if error is not None:
-            err_console.print(f"[red]could not purge {escape(str(entry))}: {escape(str(error))}[/red]")
+            err_console.print(
+                f"[red]could not purge {escape(str(entry))}: {escape(str(error))}[/red]"
+            )
     if doomed:
         trash = apm_root() / ".trash"
         window = f"for {grace:g}h" if grace > 0 else "disabled (APM_PRUNE_GRACE_HOURS=0)"
@@ -1028,9 +1034,7 @@ def scenario_run(
     ] = 0,
     no_spawn: Annotated[
         bool,
-        typer.Option(
-            "--no-spawn/--spawn", help="Telnet zombie pressure during the capture."
-        ),
+        typer.Option("--no-spawn/--spawn", help="Telnet zombie pressure during the capture."),
     ] = False,
     warmup: Annotated[
         int, typer.Option(min=0, help="Seconds of load before the capture window starts.")
@@ -1056,9 +1060,7 @@ def scenario_run(
     try:
         chosen_preset = CapturePreset(preset)
     except ValueError:
-        err_console.print(
-            "[red]preset must be one of: standard, deep, forensic[/red]"
-        )
+        err_console.print("[red]preset must be one of: standard, deep, forensic[/red]")
         raise typer.Exit(2) from None
     presets = {
         CapturePreset.STANDARD: "app,threads,memory,cpu",
@@ -1308,8 +1310,7 @@ def scenario_matrix(
         if unknown:
             # Plan keys are attacker-controlled in imported plans; escape them.
             err_console.print(
-                f"[red]plan entry {position} has unknown keys: "
-                f"{escape(str(sorted(unknown)))}[/red]"
+                f"[red]plan entry {position} has unknown keys: {escape(str(sorted(unknown)))}[/red]"
             )
             raise typer.Exit(2)
         # Fail before the cleanup telnet round-trip: a mistyped entry must not

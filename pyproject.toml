@@ -46,7 +46,9 @@ line-length = 100
 # PLE (pylint errors), YTT (sys-version traps), and DTZ (naive datetimes) were
 # adopted on 2026-08-25 with zero violations; DTZ's single deliberate naive
 # strptime carries a scoped noqa at tools/host_profiler/correlate.py.
-select = ["E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RET", "W", "DTZ", "PLE", "YTT", "RUF100"]
+# PGH (blanket noqa / blanket type-ignore bans) was adopted on 2026-08-26 with
+# zero violations: every suppression must already name its rule.
+select = ["E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RET", "W", "DTZ", "PLE", "YTT", "PGH", "RUF100"]
 ignore = ["E501"] # Formatter cannot wrap embedded HTML, regexes, and generated snippets safely.
 
 [tool.mypy]
@@ -67,6 +69,13 @@ enable_error_code = [
   "possibly-undefined",
   "redundant-self",
   "deprecated",
+  # Added 2026-08-26, all three verified clean across tools/, scripts/, plans/:
+  # truthy-bool flags conditions on objects that are always truthy,
+  # redundant-expr flags comparisons a type already decides, and
+  # unimported-reveal catches reveal_type debug leftovers left unimported.
+  "truthy-bool",
+  "redundant-expr",
+  "unimported-reveal",
 ]
 
 [tool.pytest.ini_options]
