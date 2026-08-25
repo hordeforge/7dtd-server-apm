@@ -20,12 +20,12 @@ def _rest_api_class_bodies(source: str) -> dict[str, str]:
     return bodies
 
 
-def test_bridge_build_uses_pinned_npx_typescript() -> None:
+def test_bridge_build_uses_pinned_bunx_typescript() -> None:
     # The pin lives in scripts/lib/tool_versions.sh, shared with lint-webui.sh
     # so the freshness gate checks the same TypeScript that ships.
     script = (ROOT / "scripts" / "build_bridge.sh").read_text(encoding="utf-8")
     assert "scripts/lib/tool_versions.sh" in script
-    assert 'npx --yes -p "typescript@$TSC_VERSION" tsc' in script
+    assert 'bunx -p "typescript@$TSC_VERSION" tsc' in script
     assert "command -v tsc" not in script
 
     lib = (ROOT / "scripts" / "lib" / "tool_versions.sh").read_text(encoding="utf-8")
