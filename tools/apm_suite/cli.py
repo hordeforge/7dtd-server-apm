@@ -294,15 +294,14 @@ def _stream_scrubbed_member(
         source_stream = source.open("r", encoding="utf-8", errors="replace")
     except OSError:
         return False
+
+    def scrub(line: str) -> str:
+        return _scrub_jsonl_line(line, home) if jsonl else line.replace(home, "~")
+
     with source_stream, archive.open(member, "w") as member_stream:
-        if jsonl:
-            for line in source_stream:
-                body = _scrub_jsonl_line(line[:-1] if line.endswith("\n") else line, home)
-                member_stream.write(body.encode("utf-8") + b"\n")
-        else:
-            for line in source_stream:
-                body = (line[:-1] if line.endswith("\n") else line).replace(home, "~")
-                member_stream.write(body.encode("utf-8") + b"\n")
+        for line in source_stream:
+            body = scrub(line[:-1] if line.endswith("\n") else line)
+            member_stream.write(body.encode("utf-8") + b"\n")
     return True
 
 
@@ -1152,18 +1151,19 @@ def _coerce_matrix_entry(entry: dict[str, object], position: int) -> dict[str, A
         if expected is None:
             coerced[key] = value  # unknown keys are rejected by the caller
             continue
-        valid = (
-            isinstance(value, bool)
-            if expected is bool
-            else (
-                isinstance(value, int)
-                and not isinstance(value, bool)
-                or isinstance(value, float)
-                and value.is_integer()
-            )
-            if expected is int
-            else isinstance(value, str)
-        )
+        if expected is bool:
+            valid = isinstance(value, bool)
+        elif expected is int:
+            # JSON has no integer type: a whole-number float ("seconds": 60.0)
+            # counts as an int; bool is an int subclass but never a count.
+            if isinstance(value, bool):
+                valid = False
+            elif isinstance(value, int):
+                valid = True
+            else:
+                valid = isinstance(value, float) and value.is_integer()
+        else:
+            valid = isinstance(value, str)
         if not valid:
             err_console.print(
                 f"[red]plan entry {position} field '{key}': expected "

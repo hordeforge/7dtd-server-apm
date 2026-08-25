@@ -28,23 +28,13 @@ command -v java >/dev/null 2>&1 || {
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
-# Render the report + dashboard templates with a minimal fixture session.
+# Render the report + dashboard templates with a minimal fixture session
+# (scripts/render_fixture_report.py, so the render step is linted like the rest).
 mkdir -p "$scratch/session"
 cat > "$scratch/session/summary.json" <<'JSON'
 {"meta": {"session_id": "vnu-lint-fixture", "collected_at": "2026-01-01T00:00:00Z"}, "layers": [], "metadata": {}}
 JSON
-(
-  cd "$root"
-  uv run --locked --project "$root" python - "$scratch/session" <<'PY'
-import os
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(os.getcwd()) / "tools"))
-from apm_suite import reporting
-reporting.render_session(Path(sys.argv[1]))
-print("rendered report + dashboard templates")
-PY
-)
+uv run --locked --project "$root" python "$root/scripts/render_fixture_report.py" "$scratch/session"
 
 # Embed the bridge stylesheet in a scratch document so --also-check-css sees it.
 css="$root/bridge/ApmBridge/WebMod/styling.css"

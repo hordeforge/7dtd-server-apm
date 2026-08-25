@@ -4300,6 +4300,66 @@ def test_export_jitmap_skips_map_poll_when_telnet_send_fails(
     assert "WARN:" in capsys.readouterr().err
 
 
+def test_export_jitmap_reports_published_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A successful publication must hand run_capture the (link, target) pair it
+    created so the finally block can release the tmpfs name; a capture that never
+    placed a link reports None and nothing is removed."""
+    session = tmp_path / "session_jitmap"
+    (session / "runtime").mkdir(parents=True)
+    map_source = tmp_path / "telemetry" / "perf-4242.map"
+    map_source.parent.mkdir()
+    map_source.write_text("sym 0x0\n", encoding="utf-8")
+    monkeypatch.setattr(capture, "telnet_command", lambda *_args: True)
+    monkeypatch.setattr(capture, "bridge_telemetry_file", lambda _pid, _name: map_source)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    placed: list[tuple[Path, Path]] = []
+    monkeypatch.setattr(
+        capture, "_place_perf_map_link", lambda source, link: placed.append((source, link))
+    )
+
+    published = capture._export_jitmap(session, 4242, "", 0, "")
+
+    assert published == (
+        Path("/tmp/perf-4242.map"),
+        session / "runtime" / "perf-4242.map",
+    )
+    assert placed == [(published[1], published[0])]
+
+    # No placement attempt at all: nothing to release later.
+    monkeypatch.setattr(capture, "telnet_command", lambda *_args: False)
+    assert capture._export_jitmap(session, 4242, "", 0, "") is None
+    assert len(placed) == 1
+
+
+def test_remove_perf_map_link_releases_only_own_claim(tmp_path: Path) -> None:
+    """Teardown removes the link only while it still points at this capture's
+    target: an overlapping capture against the same pid replaces the /tmp name
+    with its own map, and that replacement must survive this capture's exit."""
+    ours = tmp_path / "ours.map"
+    theirs = tmp_path / "theirs.map"
+    ours.write_text("x\n", encoding="utf-8")
+    theirs.write_text("y\n", encoding="utf-8")
+    link = tmp_path / "perf-4242.map"
+
+    # Own claim: removed.
+    link.symlink_to(ours)
+    capture._remove_perf_map_link(link, ours)
+    assert not link.exists()
+
+    # Overwritten by a later capture: kept.
+    link.symlink_to(theirs)
+    capture._remove_perf_map_link(link, ours)
+    assert link.is_symlink()
+    assert link.resolve() == theirs.resolve()
+
+    # Already gone or never created: silent.
+    capture._remove_perf_map_link(link, ours)  # points elsewhere: kept
+    capture._remove_perf_map_link(tmp_path / "never-existed.map", tmp_path / "any.map")
+
+
 # --- store races between concurrent processes ---------------------------------------
 
 

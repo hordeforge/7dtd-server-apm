@@ -19,6 +19,13 @@ major version.
 
 ### Host CLI
 
+- Resource lifecycle: a capture with `--symbolize` (and every `scenario run`,
+  which symbolizes by default) no longer leaves its `/tmp/perf-<pid>.map`
+  symlink behind. The name is published pre-window for perf's hardcoded
+  lookup and now released in the capture teardown; removal only fires while
+  the link still points at this capture's target, so an overlapping capture
+  against the same pid keeps its own map. Stale links from earlier captures
+  and dead server pids previously survived on tmpfs until reboot.
 - Performance: the SVG flamegraph builder no longer slices a prefix tuple per
   stack depth (quadratic in stack depth) and renders without cyclic-GC passes;
   a 50k-line folded profile drops from ~28 s to ~3 s with byte-identical

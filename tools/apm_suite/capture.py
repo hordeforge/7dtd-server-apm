@@ -463,6 +463,23 @@ def _sudo_available() -> bool:
         return False
 
 
+def _remove_perf_map_link(map_link: Path, target: Path) -> None:
+    """Release this capture's claim on /tmp/perf-<pid>.map.
+
+    /tmp is tmpfs on typical hosts and nothing else ever deletes the link, so
+    every capture (and every server restart, since the name is per pid) would
+    otherwise leave one behind until reboot. Removal is conditional on the
+    link still pointing at THIS capture's target: an overlapping capture
+    against the same pid may have legitimately replaced it with its own map,
+    and that one must survive.
+    """
+    try:
+        if os.readlink(map_link) == str(target):
+            map_link.unlink()
+    except OSError:
+        pass
+
+
 def _place_perf_map_link(map_source: Path, map_link: Path) -> None:
     """Point perf's hardcoded /tmp/perf-<pid>.map at this capture's map.
 
@@ -487,13 +504,16 @@ def _place_perf_map_link(map_source: Path, map_link: Path) -> None:
 
 def _export_jitmap(
     session: Path, pid: int, telnet_host: str, telnet_port: int, telnet_password: str
-) -> None:
+) -> tuple[Path, Path] | None:
     """Force-JIT hot methods and expose /tmp/perf-<pid>.map before the window.
 
     Without the map, every ustack collector (alloc, futex, sched) resolves
     managed frames to raw addresses, defeating the tool's core attribution
     goal. The burst runs pre-window (off the measurement) so perf resolves
     managed frames without paying for it inside the capture window.
+
+    Returns the (link, target) pair when the /tmp symlink was published, so
+    run_capture's finally can release the claim (see _remove_perf_map_link).
     """
     if not telnet_command(telnet_host, telnet_port, telnet_password, "apm jitmap full"):
         # The command never reached the server (telnet down or auth failed):
@@ -503,7 +523,7 @@ def _export_jitmap(
             session,
             "apm jitmap command failed to send via telnet; managed perf frames stay [jit]",
         )
-        return
+        return None
     # perf hardcodes /tmp/perf-<pid>.map; the bridge writes the map to its
     # disk-backed telemetry dir, we place only a symlink in tmpfs. The full
     # JIT burst can take tens of seconds; poll until the file stops growing.
@@ -530,7 +550,7 @@ def _export_jitmap(
         published = False
     if not published:
         _warn(session, "bridge jitmap export failed; managed perf frames stay [jit]")
-        return
+        return None
     # Keep a copy in-session so finalize can annotate JIT addresses in
     # any bpftrace output (allocation/stall sites), not just perf flames.
     # Copy BEFORE publishing the /tmp name: whatever the link names must be
@@ -555,6 +575,7 @@ def _export_jitmap(
             f"cannot replace {map_link}: {error}; managed perf frames are "
             "unresolved or misattributed; remove the stale map manually",
         )
+        return None
     # The count is a cosmetic headline: the map was already published, so a
     # vanished/raced file here must not abort run_capture (this runs BEFORE
     # its try block) and lose the whole window over one stat/read.
@@ -563,8 +584,9 @@ def _export_jitmap(
             symbols = sum(1 for _ in handle)
     except OSError as error:
         print(f">> jitmap: symbol count unavailable ({error})", file=sys.stderr)
-        return
+        return (map_link, link_target)
     print(f">> jitmap: {symbols} managed symbols mapped")
+    return (map_link, link_target)
 
 
 def run_capture(
@@ -642,10 +664,11 @@ def run_capture(
     )
     atomic_json(session / "meta.json", schema_dict(meta))
 
+    perf_map_link: tuple[Path, Path] | None = None
     if symbolize:
         # Independent of reset_bridge: managed-frame resolution is what makes
         # perf flames and ustack probes attributable at all.
-        _export_jitmap(session, pid, telnet_host, telnet_port, telnet_password)
+        perf_map_link = _export_jitmap(session, pid, telnet_host, telnet_port, telnet_password)
 
     if reset_bridge:
         # Reset section/GC totals so they cover only this window (vs server uptime).
@@ -696,6 +719,8 @@ def run_capture(
                 with suppress(OSError):
                     stream.close()
         _unmount_mono(mono_link)
+        if perf_map_link is not None:
+            _remove_perf_map_link(perf_map_link[0], perf_map_link[1])
     if any(item.process.poll() is None for item in running):
         _warn(
             session,

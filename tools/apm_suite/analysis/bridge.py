@@ -535,6 +535,12 @@ def match_rules(
     section_score = _section_scores(top_sections)
     hits = []
 
+    def score_of(token: str) -> float:
+        direct = section_score.get(token)
+        if direct is not None:
+            return direct
+        return section_score.get(token.rsplit(".", 1)[-1], 0.0)
+
     for rule in RULES:
         required = REQUIRED_LAYER.get(str(rule["id"]))
         if required and required not in collected_layers:
@@ -542,12 +548,6 @@ def match_rules(
 
         native_frames, native_share = _native_evidence(rule, frames, total_weight)
         signal_hits = _signal_evidence(str(rule["id"]), layer_signals)
-
-        def score_of(token: str, index: dict[str, float] = section_score) -> float:
-            direct = index.get(token)
-            if direct is not None:
-                return direct
-            return index.get(token.rsplit(".", 1)[-1], 0.0)
 
         sec_hits = [
             s for s in (rule.get("prof_sections") or []) if score_of(s) >= SECTION_SCORE_MIN
