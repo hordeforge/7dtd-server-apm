@@ -10,6 +10,7 @@ import unicodedata
 import zipfile
 import zlib
 from contextlib import suppress
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -54,6 +55,21 @@ console = Console()
 err_console = Console(stderr=True)
 
 
+class CapturePreset(StrEnum):
+    """Collector sets accepted by `scenario run --preset`."""
+
+    STANDARD = "standard"
+    DEEP = "deep"
+    FORENSIC = "forensic"
+
+
+class ScaleBy(StrEnum):
+    """Load variables accepted by `scaling --by`."""
+
+    PLAYERS = "players"
+    ENTITIES = "entities"
+
+
 def _exit(code: int) -> None:
     if code:
         raise typer.Exit(code)
@@ -64,7 +80,7 @@ def _require_backends() -> None:
     try:
         require_backends()
     except RuntimeError as error:
-        err_console.print(f"[red]{error}[/red]")
+        err_console.print(f"[red]{escape(str(error))}[/red]")
         raise typer.Exit(2) from None
 
 
@@ -132,7 +148,14 @@ def capture(
         typer.Option(help="Server process ID; auto-detects the unique server when omitted."),
     ] = None,
     only: Annotated[str, typer.Option(help="Comma-separated collector names or layers.")] = "all",
-    no_app: Annotated[bool, typer.Option()] = False,
+    no_app: Annotated[
+        bool,
+        typer.Option(
+            "--no-app/--app",
+            help="Collect the app/telnet layer. --no-app skips it (and the "
+            "bridge) for kernel-only captures.",
+        ),
+    ] = False,
     telnet_host: Annotated[str, typer.Option(help="Server telnet host.")] = "127.0.0.1",
     telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = 8081,
     reset_bridge: Annotated[
@@ -181,22 +204,23 @@ def capture(
             symbolize=symbolize,
         )
     except RuntimeError as error:
-        err_console.print(f"[red]{error}[/red]")
+        # Message embeds user-set hostnames/paths; escape like every other echo.
+        err_console.print(f"[red]{escape(str(error))}[/red]")
         raise typer.Exit(2) from None
-    console.print(f"APM session: {outcome.session}")
+    console.print(f"APM session: {escape(str(outcome.session))}")
     _exit(outcome.exit_code)
 
 
 @app.command()
 def finalize(
-    session: Path,
+    session: Annotated[Path, typer.Argument(help="Raw session directory to finalize.")],
     skip_bridge: Annotated[
         bool, typer.Option(help="Skip the managed bridge correlation stage.")
     ] = False,
 ) -> None:
     """Run finalization stages and write summary artifacts for a raw session."""
     if not session.is_dir():
-        err_console.print(f"[red]not a session directory: {session}[/red]")
+        err_console.print(f"[red]not a session directory: {escape(str(session))}[/red]")
         raise typer.Exit(2)
     # Deferred so commands that never finalize (audit, prune, monitor, export...)
     # skip the finalize chain's reporting/jinja2 import at startup.
@@ -207,14 +231,14 @@ def finalize(
 
 @app.command()
 def audit(
-    session: Path,
+    session: Annotated[Path, typer.Argument(help="Session directory to verify.")],
     strict: Annotated[
         bool, typer.Option(help="Exit 1 when warnings are present too, not only errors.")
     ] = False,
 ) -> None:
     """Verify session artifact integrity against recorded hashes."""
     if not session.is_dir():
-        err_console.print(f"[red]not a session directory: {session}[/red]")
+        err_console.print(f"[red]not a session directory: {escape(str(session))}[/red]")
         raise typer.Exit(2)
     manifest, valid = audit_session(session, verify_recorded=True)
     console.print(
@@ -239,7 +263,7 @@ def index(
 ) -> None:
     """Write the HTML session index over all finalized sessions."""
     count = write_index(root)
-    console.print(f"indexed {count} sessions -> {(root or apm_root()) / 'index.html'}")
+    console.print(f"indexed {count} sessions -> {escape(str((root or apm_root()) / 'index.html'))}")
 
 
 # Keys that carry the raw launch command / binary path. Redacted wherever they
@@ -312,7 +336,12 @@ def _copy_member(archive: zipfile.ZipFile, source: Path, relative: Path) -> None
 
 
 @app.command("export")
-def export_session(session: Path, output: Annotated[Path, typer.Option("--output", "-o")]) -> None:
+def export_session(
+    session: Annotated[Path, typer.Argument(help="Finalized session directory to bundle.")],
+    output: Annotated[
+        Path, typer.Option("--output", "-o", help="Zip file to write (must not be a directory).")
+    ],
+) -> None:
     """Create a sanitized support bundle without raw command lines or telnet text."""
     if not session.is_dir():
         raise typer.BadParameter("session directory does not exist")
@@ -377,7 +406,7 @@ def export_session(session: Path, output: Annotated[Path, typer.Option("--output
         os.replace(tmp_zip_path, output)
     finally:
         tmp_zip_path.unlink(missing_ok=True)
-    console.print(f"sanitized bundle: {output}")
+    console.print(f"sanitized bundle: {escape(str(output))}")
 
 
 # Decompression-bomb guard for imported evidence bundles (they arrive from
@@ -392,7 +421,10 @@ MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * 1024**3
 
 @app.command("import")
 def import_bundle(
-    bundle: Annotated[Path, typer.Argument(exists=True, dir_okay=False, readable=True)],
+    bundle: Annotated[
+        Path,
+        typer.Argument(exists=True, dir_okay=False, readable=True, help="Zip support bundle."),
+    ],
     store: Annotated[
         Path | None,
         typer.Option("--store", help="Session store root (default: the APM session store)."),
@@ -450,7 +482,8 @@ def import_bundle(
                 # OSError covers disk-full and unreadable targets.
                 shutil.rmtree(target, ignore_errors=True)
                 err_console.print(
-                    f"[red]extraction failed, removed partial import {target}: {error}[/red]"
+                    f"[red]extraction failed, removed partial import "
+                    f"{escape(str(target))}: {escape(str(error))}[/red]"
                 )
                 raise typer.Exit(2) from None
     except zipfile.BadZipFile as error:
@@ -462,14 +495,16 @@ def import_bundle(
         if valid
         else f"{len(manifest.errors)} error(s), {len(manifest.warnings)} warning(s)"
     )
-    console.print(f"restored {target} ({outcome})")
+    console.print(f"restored {escape(str(target))} ({outcome})")
 
 
 @app.command("scaling")
 def scaling(
     sessions: Annotated[list[Path], typer.Argument(help="Finalized sessions from a scale ladder.")],
-    by: Annotated[str, typer.Option(help="Scale variable: players or entities.")] = "players",
-    output: Annotated[Path | None, typer.Option("--output", "-o")] = None,
+    by: Annotated[ScaleBy, typer.Option(help="Load variable to fit against.")] = ScaleBy.PLAYERS,
+    output: Annotated[
+        Path | None, typer.Option("--output", "-o", help="Write the full ranking as JSON here.")
+    ] = None,
 ) -> None:
     """Rank managed sections by load-scaling exponent across a session ladder.
 
@@ -479,31 +514,26 @@ def scaling(
     """
     from .analysis.scaling import analyze_scaling
 
-    if by not in {"players", "entities"}:
-        err_console.print(
-            f"[red]--by must be 'players' or 'entities', got {escape(repr(by))}[/red]"
-        )
-        raise typer.Exit(2)
     usable = [s for s in sessions if (s / "summary.json").is_file()]
     if len(usable) < 3:
         err_console.print(
             "[red]need >= 3 finalized sessions (different load levels) to fit scaling[/red]"
         )
         raise typer.Exit(2)
-    result = analyze_scaling(usable, scale_key=by)
+    result = analyze_scaling(usable, scale_key=by.value)
     distinct = sorted(set(result["scales"]))
     if len(distinct) < 3:
         err_console.print(
-            f"[red]sessions span only {len(distinct)} distinct {by} value(s) ({distinct}); "
-            f"a log-log fit needs >= 3 distinct load levels. Capture at different {by} counts "
-            "(e.g. via plans/profile.scale-ladder.json).[/red]"
+            f"[red]sessions span only {len(distinct)} distinct {by.value} value(s) ({distinct}); "
+            f"a log-log fit needs >= 3 distinct load levels. Capture at different {by.value} "
+            "counts (e.g. via plans/profile.scale-ladder.json).[/red]"
         )
         raise typer.Exit(2)
     if output:
         atomic_json(output, result)
     # Section names come from csharp_bridge.json (imported bundles are
     # untrusted); escape them so bracketed names cannot render as markup.
-    console.print(f"scale ({by}): {result['scales']}")
+    console.print(f"scale ({by.value}): {escape(str(result['scales']))}")
     console.print(f"{'section':44s} {'per-call':>10s} {'total':>10s}  class")
     for f in result["sections"][:25]:
         pc = f["per_call_exponent"]
@@ -532,7 +562,13 @@ def _prom_label(value: object) -> str:
 
 
 @app.command("prometheus")
-def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "-o")]) -> None:
+def prometheus(
+    session: Annotated[Path, typer.Argument(help="Finalized session directory to export.")],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Metrics text file to write (e.g. a .prom file)."),
+    ],
+) -> None:
     """Export finalized, coverage-aware layer metrics in Prometheus text format."""
     summary_path = session / "summary.json"
     if not summary_path.is_file():
@@ -648,7 +684,7 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
         ]
     # Atomic write: a scrape racing the export must not read a truncated file.
     atomic_text(output, "\n".join(lines) + "\n")
-    console.print(f"Prometheus metrics: {output}")
+    console.print(f"Prometheus metrics: {escape(str(output))}")
 
 
 @app.command()
@@ -774,11 +810,16 @@ def monitor(
                     stream.write(json.dumps(sample) + "\n")
             taken += 1
     except KeyboardInterrupt:
+        # 130 = 128+SIGINT, matching scenario run's interrupt contract so
+        # scripts can tell a deliberate stop from a clean end of the count.
         console.print("monitor stopped")
+        raise typer.Exit(130) from None
     except psutil.NoSuchProcess:
         # Distinct from Ctrl+C: a dead target must not read as a normal stop
-        # (the operator would re-check the wrong thing).
+        # (the operator would re-check the wrong thing). Nonzero because a
+        # fixed-count monitor that lost its target did not complete.
         console.print("target process exited; monitor stopped")
+        raise typer.Exit(1) from None
 
 
 def _ms(value: object) -> str:
@@ -824,20 +865,20 @@ def prune_sessions(
     max_bytes = max_gb * 1024**3 if max_gb is not None else None
     doomed = sessions_beyond_budget(list_sessions(apm_root()), keep, max_bytes)
     for old in doomed:
-        console.print(("would remove " if dry_run else "removing ") + str(old))
+        console.print(("would remove " if dry_run else "removing ") + escape(str(old)))
     if dry_run:
         return
     grace = prune_grace_hours()
     for old, error in remove_sessions(doomed, grace):
         # One stuck session must not strand the rest: report and keep going.
         if error is not None:
-            err_console.print(f"[red]could not remove {old}: {error}[/red]")
+            err_console.print(f"[red]could not remove {escape(str(old))}: {escape(str(error))}[/red]")
     for entry, error in purge_expired_trash(apm_root(), grace):
         if error is not None:
-            err_console.print(f"[red]could not purge {entry}: {error}[/red]")
+            err_console.print(f"[red]could not purge {escape(str(entry))}: {escape(str(error))}[/red]")
     for entry, error in purge_stale_scenario_runs(apm_root(), grace):
         if error is not None:
-            err_console.print(f"[red]could not purge {entry}: {error}[/red]")
+            err_console.print(f"[red]could not purge {escape(str(entry))}: {escape(str(error))}[/red]")
     if doomed:
         trash = apm_root() / ".trash"
         window = f"for {grace:g}h" if grace > 0 else "disabled (APM_PRUNE_GRACE_HOURS=0)"
@@ -848,8 +889,8 @@ def prune_sessions(
 
 @app.command()
 def compare(
-    before: Path,
-    after: Path,
+    before: Annotated[Path, typer.Argument(help="Baseline finalized session.")],
+    after: Annotated[Path, typer.Argument(help="Candidate finalized session.")],
     output: Annotated[
         Path | None,
         typer.Option("--output", "-o", help="Report directory (default: the AFTER session)."),
@@ -858,7 +899,9 @@ def compare(
     """Diff two finalized sessions and write compare.json/compare.md."""
     for name, path in (("before", before), ("after", after)):
         if not (path / "summary.json").is_file():
-            err_console.print(f"[red]{name} session has no summary.json in {path}[/red]")
+            err_console.print(
+                f"[red]{name} session has no summary.json in {escape(str(path))}[/red]"
+            )
             raise typer.Exit(2)
     try:
         run_compare(before, after, output)
@@ -872,7 +915,7 @@ def compare(
 
 @app.command()
 def budget(
-    session: Path,
+    session: Annotated[Path, typer.Argument(help="Candidate finalized session to gate.")],
     budget_file: Annotated[
         Path | None, typer.Option("--budget", help="Budget JSON file (default: built-in budgets).")
     ] = None,
@@ -889,13 +932,15 @@ def budget(
 ) -> None:
     """Gate a finalized session against budgets; exits 1 on regression."""
     if not (session / "summary.json").is_file():
-        err_console.print(f"[red]missing summary.json in {session}[/red]")
+        err_console.print(f"[red]missing summary.json in {escape(str(session))}[/red]")
         raise typer.Exit(2)
     if budget_file is not None and not budget_file.is_file():
-        err_console.print(f"[red]budget file not found: {budget_file}[/red]")
+        err_console.print(f"[red]budget file not found: {escape(str(budget_file))}[/red]")
         raise typer.Exit(2)
     if baseline is not None and not (baseline / "summary.json").is_file():
-        err_console.print(f"[red]baseline session has no summary.json in {baseline}[/red]")
+        err_console.print(
+            f"[red]baseline session has no summary.json in {escape(str(baseline))}[/red]"
+        )
         raise typer.Exit(2)
     try:
         passed = check_budget(session, budget_file, baseline, max_regression)
@@ -910,14 +955,14 @@ def budget(
 
 @app.command()
 def bridge(
-    session: Path,
+    session: Annotated[Path, typer.Argument(help="Finalized session to correlate.")],
     snapshot: Annotated[
         Path | None, typer.Option(help="Optional in-game APM bridge snapshot.")
     ] = None,
 ) -> None:
     """Correlate managed timings into csharp_bridge.json with a remediation playbook."""
     if not session.is_dir():
-        err_console.print(f"[red]not a session directory: {session}[/red]")
+        err_console.print(f"[red]not a session directory: {escape(str(session))}[/red]")
         raise typer.Exit(2)
     # Same contract as compare/budget: a malformed summary.json is an operator
     # error naming the file, never a traceback (analyze re-reads unvalidated
@@ -933,14 +978,14 @@ def bridge(
     # session evidence (server-side snapshots, imported bundles); escape them so
     # bracketed names cannot render as console markup.
     console.print(escape(result["playbook_md"]))
-    console.print(f"wrote {session / 'csharp_bridge.json'}")
+    console.print(f"wrote {escape(str(session / 'csharp_bridge.json'))}")
 
 
 @scenario_app.command("run")
 def scenario_run(
-    seconds: Annotated[int, typer.Option(min=1)] = 45,
-    clients: Annotated[int, typer.Option(min=1)] = 6,
-    actions: Annotated[int, typer.Option(min=1)] = 500,
+    seconds: Annotated[int, typer.Option(min=1, help="Capture window duration in seconds.")] = 45,
+    clients: Annotated[int, typer.Option(min=1, help="Bot clients to join.")] = 6,
+    actions: Annotated[int, typer.Option(min=1, help="Actions per bot over the run.")] = 500,
     seed: Annotated[
         int, typer.Option(help="Bot action RNG seed (fixed = reproducible cohort behaviour).")
     ] = 42,
@@ -950,12 +995,13 @@ def scenario_run(
         typer.Option(help="Server process ID; auto-detects the unique server when omitted."),
     ] = None,
     preset: Annotated[
-        str,
+        CapturePreset,
         typer.Option(
-            help="standard, deep, or forensic (forensic adds the mono_alloc probe "
-            "for gross-allocation churn + STW attribution: use it to diagnose GC lag)"
+            help="Collector set: standard (app,threads,memory,cpu), deep (all), or "
+            "forensic (all + mono_alloc for gross-allocation churn + STW attribution "
+            "when diagnosing GC lag)"
         ),
-    ] = "standard",
+    ] = CapturePreset.STANDARD,
     bot_mode: Annotated[
         str, typer.Option(help="wander, mixed, demolition, combat, chaos, kite, traverse")
     ] = "",
@@ -967,14 +1013,25 @@ def scenario_run(
         ),
     ] = "",
     spawn_entity: Annotated[str, typer.Option(help="Telnet-spawned entity class(es).")] = "",
-    spawn_per_player: Annotated[int, typer.Option(min=0)] = 0,
-    spawn_every_ms: Annotated[int, typer.Option(min=0)] = 0,
+    spawn_per_player: Annotated[
+        int, typer.Option(min=0, help="Entities to spawn per joined player.")
+    ] = 0,
+    spawn_every_ms: Annotated[
+        int, typer.Option(min=0, help="Milliseconds between spawn bursts (0 = off).")
+    ] = 0,
     horde_every_ms: Annotated[
         int, typer.Option(min=0, help="Wandering-horde burst cadence (0 = off).")
     ] = 0,
     horde_waves: Annotated[int, typer.Option(min=1, help="Scout waves per horde target.")] = 3,
-    max_dynamite: Annotated[int, typer.Option(min=0)] = 0,
-    no_spawn: Annotated[bool, typer.Option(help="Disable telnet zombie pressure.")] = False,
+    max_dynamite: Annotated[
+        int, typer.Option(min=0, help="Cap on concurrently live dynamite (0 = off).")
+    ] = 0,
+    no_spawn: Annotated[
+        bool,
+        typer.Option(
+            "--no-spawn/--spawn", help="Telnet zombie pressure during the capture."
+        ),
+    ] = False,
     warmup: Annotated[
         int, typer.Option(min=0, help="Seconds of load before the capture window starts.")
     ] = 0,
@@ -994,13 +1051,23 @@ def scenario_run(
     """Capture under sibling loadgen load (joins, actions, spawns)."""
     # Secret via environment only (same contract as capture): no argv flag.
     telnet_password = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
-    presets = {"standard": "app,threads,memory,cpu", "deep": "all", "forensic": "all,alloc"}
-    if preset not in presets:
-        err_console.print("[red]preset must be standard, deep, or forensic[/red]")
-        raise typer.Exit(2)
+    # The matrix path calls scenario_run directly with plan-file strings, so
+    # the enum coercion happens here rather than only in Typer's parser.
+    try:
+        chosen_preset = CapturePreset(preset)
+    except ValueError:
+        err_console.print(
+            "[red]preset must be one of: standard, deep, forensic[/red]"
+        )
+        raise typer.Exit(2) from None
+    presets = {
+        CapturePreset.STANDARD: "app,threads,memory,cpu",
+        CapturePreset.DEEP: "all",
+        CapturePreset.FORENSIC: "all,alloc",
+    }
     loadgen = REPO.parent / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
     if not loadgen.is_file():
-        err_console.print(f"[red]sibling load generator not found: {loadgen}[/red]")
+        err_console.print(f"[red]sibling load generator not found: {escape(str(loadgen))}[/red]")
         raise typer.Exit(2)
     run_dir = apm_root() / ".scenario"
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1057,7 +1124,10 @@ def scenario_run(
         # is_file() above does not prove executability or readability: a lost
         # +x bit or unreadable interpreter must fail like every other startup
         # problem here (clean message, exit 2), not a bare traceback.
-        err_console.print(f"[red]cannot start sibling load generator {loadgen}: {error}[/red]")
+        err_console.print(
+            f"[red]cannot start sibling load generator {escape(str(loadgen))}: "
+            f"{escape(str(error))}[/red]"
+        )
         raise typer.Exit(2) from None
     session: Path | None = None
     capture_rc = 130
@@ -1077,7 +1147,7 @@ def scenario_run(
         outcome = run_capture(
             seconds=seconds,
             pid=pid,
-            only=presets[preset],
+            only=presets[chosen_preset],
             no_app=False,
             telnet_host="127.0.0.1",
             telnet_port=8081,
@@ -1087,7 +1157,8 @@ def scenario_run(
         session = outcome.session
         capture_rc = outcome.exit_code
     except RuntimeError as error:
-        err_console.print(f"[red]{error}[/red]")
+        # Message embeds user-set hostnames/paths; escape like every other echo.
+        err_console.print(f"[red]{escape(str(error))}[/red]")
         capture_rc = 2
     except KeyboardInterrupt:
         # Ctrl-C: still tear the loadgen down (finally) and report a session.
@@ -1119,7 +1190,8 @@ def scenario_run(
                 doc = json.loads(workload.read_text(encoding="utf-8"))
             except ValueError as error:
                 err_console.print(
-                    f"[red]loadgen manifest unreadable, not attached: {workload}: {error}[/red]"
+                    f"[red]loadgen manifest unreadable, not attached: "
+                    f"{escape(str(workload))}: {escape(str(error))}[/red]"
                 )
             else:
                 if isinstance(doc, dict):
@@ -1132,7 +1204,8 @@ def scenario_run(
                     attached = True
                 else:
                     err_console.print(
-                        f"[red]loadgen manifest is not a JSON object, not attached: {workload}[/red]"
+                        f"[red]loadgen manifest is not a JSON object, not attached: "
+                        f"{escape(str(workload))}[/red]"
                     )
         if attached and stats.is_file():
             shutil.copy2(stats, session / "loadgen_stats.json")
@@ -1204,7 +1277,7 @@ def _coerce_matrix_entry(entry: dict[str, object], position: int) -> dict[str, A
 
 @scenario_app.command("matrix")
 def scenario_matrix(
-    plan: Path,
+    plan: Annotated[Path, typer.Argument(help="JSON plan: a list of experiment objects.")],
     game_port: Annotated[int, typer.Option(help="Game UDP port.")] = 26902,
     cleanup: Annotated[
         str, typer.Option(help="Console command run between experiments ('' disables).")
@@ -1216,7 +1289,7 @@ def scenario_matrix(
     # Secret via environment only (same contract as capture): no argv flag.
     telnet_password = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
     if not plan.is_file():
-        err_console.print(f"[red]plan file not found: {plan}[/red]")
+        err_console.print(f"[red]plan file not found: {escape(str(plan))}[/red]")
         raise typer.Exit(2)
     try:
         entries = json.loads(plan.read_text(encoding="utf-8"))
@@ -1233,8 +1306,10 @@ def scenario_matrix(
             raise typer.Exit(2)
         unknown = set(entry) - allowed
         if unknown:
+            # Plan keys are attacker-controlled in imported plans; escape them.
             err_console.print(
-                f"[red]plan entry {position} has unknown keys: {sorted(unknown)}[/red]"
+                f"[red]plan entry {position} has unknown keys: "
+                f"{escape(str(sorted(unknown)))}[/red]"
             )
             raise typer.Exit(2)
         # Fail before the cleanup telnet round-trip: a mistyped entry must not
@@ -1247,11 +1322,11 @@ def scenario_matrix(
             # experiment silently inflate the next one's measurements.
             if not telnet_command("127.0.0.1", 8081, telnet_password, cleanup):
                 err_console.print(
-                    f"[yellow]cleanup '{cleanup}' failed (telnet); "
+                    f"[yellow]cleanup '{escape(cleanup)}' failed (telnet); "
                     "leftover entities may contaminate the next experiment[/yellow]"
                 )
             time.sleep(8)
-        console.print(f"[bold]=== matrix {position}/{len(entries)}: {label}[/bold]")
+        console.print(f"[bold]=== matrix {position}/{len(entries)}: {escape(label)}[/bold]")
         code = 0
         try:
             scenario_run(
@@ -1262,19 +1337,24 @@ def scenario_matrix(
             code = stop.exit_code or 0
         results.append((label, code))
     for label, code in results:
-        console.print(f"  {label}: exit={code}")
+        console.print(f"  {escape(label)}: exit={code}")
     _exit(0 if all(code in (0, 1) for _, code in results) else 1)
 
 
 @flame_app.command("build")
-def flame_build(directory: Path) -> None:
+def flame_build(
+    directory: Annotated[Path, typer.Argument(help="Session directory with captured stacks.")],
+) -> None:
     """Render flamegraphs from a session's captured stacks."""
     _require_backends()
     _exit(run([str(REPO / "tools/host_profiler/make_flames.sh"), str(directory)]))
 
 
 @flame_app.command("diff")
-def flame_diff(before: Path, after: Path) -> None:
+def flame_diff(
+    before: Annotated[Path, typer.Argument(help="Baseline session directory.")],
+    after: Annotated[Path, typer.Argument(help="Candidate session directory.")],
+) -> None:
     """Build a differential flamegraph HTML from two sessions."""
     _require_backends()
     _exit(

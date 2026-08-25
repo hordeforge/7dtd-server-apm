@@ -441,7 +441,11 @@ def test_scenario_run_rejects_unknown_preset_before_any_side_effect(
     _, started, _, store = _scenario_env(tmp_path, monkeypatch)
     result = runner.invoke(app, ["scenario", "run", "--preset", "bogus"])
     assert result.exit_code == 2
-    assert "preset must be standard, deep, or forensic" in result.stderr
+    # Typer's enum parser rejects the value; the choices stay discoverable.
+    squashed = _squashed(result.stderr)
+    assert "bogus" in squashed
+    for choice in ("standard", "deep", "forensic"):
+        assert choice in squashed
     assert started == []
     assert not (store / ".scenario").exists()
 
