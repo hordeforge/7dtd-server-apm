@@ -4,7 +4,7 @@ Host-only observability and performance analysis for Linux **7 Days to Die**
 dedicated servers (target **V3.1.0**). Optional managed bridge times game methods.
 Does **not** optimize the game or generate load.
 
-Workspace root guide: [`../MODDING_BEST_PRACTICES.md`](../MODDING_BEST_PRACTICES.md)
+Workspace root guide: [`hordeforge/.github` MODDING_BEST_PRACTICES.md](https://github.com/hordeforge/.github/blob/main/MODDING_BEST_PRACTICES.md)
 
 ## Scope
 
