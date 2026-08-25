@@ -25,18 +25,24 @@ def parse_perf_stat(text: str) -> dict[str, float]:
         line = line.strip()
         if not line or line.startswith("#") or "Performance counter" in line:
             continue
-        elapsed = re.match(r"([\d.]+)\s+seconds time elapsed", line)
+        elapsed = re.match(r"([\d,.]+)\s+seconds time elapsed", line)
         if elapsed:
-            out["time_elapsed_s"] = float(elapsed.group(1))
+            elapsed_s = as_number(elapsed.group(1).replace(",", ""))
+            if elapsed_s is not None:
+                out["time_elapsed_s"] = elapsed_s
             continue
         counter = re.match(r"([\d,.]+)\s+(\S+)", line)
         if not counter:
             continue
         raw, name = counter.group(1), counter.group(2).split(":")[0]
-        try:
-            out[name] = float(raw.replace(",", ""))
-        except ValueError:
-            continue
+        # as_number, not bare float(): hw_stat.txt is re-read without schema
+        # guarantees (imported bundles, hand edits), and a digit run past the
+        # double range parses to inf - which then turns ipc/miss-rate into nan
+        # (inf/inf) that persists into summary.json as a bare NaN strict JSON
+        # consumers reject. A non-finite counter is absent evidence.
+        number = as_number(raw.replace(",", ""))
+        if number is not None:
+            out[name] = number
     return out
 
 
@@ -594,7 +600,13 @@ def _rank_folded(folded: Path, limit: int) -> dict[str, list[tuple[str, float]]]
             if len(sp) != 2 or not sp[1].isdigit():
                 continue
             frames = sp[0].split(";")
-            count = int(sp[1])
+            try:
+                count = int(sp[1])
+            except ValueError:
+                # isdigit() also accepts Digit-class characters ("²") that
+                # int() rejects; a folded line carrying one (imported bundles)
+                # must skip that row, not fail the required summary stage.
+                continue
             total += count
             for fr in set(frames):  # inclusive: count a function once per stack
                 inclusive[fr] = inclusive.get(fr, 0) + count

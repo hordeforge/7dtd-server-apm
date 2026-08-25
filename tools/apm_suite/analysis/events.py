@@ -156,13 +156,19 @@ def parse_app_scrape(sink: EventSink, path: Path) -> None:
     for record in iter_jsonl(path):
         text = str(record.get("text") or "")
         t = record.get("t")
+        # Durations are coerced through as_number, not bare float(): the scrape
+        # interleaves server-controlled console text, so a mangled number
+        # ("1.2.3ms" -> ValueError) or an overlong digit run (-> inf, which
+        # would persist a bare Infinity that strict JSON consumers reject)
+        # must drop that field instead of failing the required events stage.
         if "spike" in text.lower():
             # The telnet drain interleaves server log lines (player names, IPs,
             # Steam IDs) with bridge output; embed only the extracted duration,
             # never the raw console text. bridge.jsonl stays the owner-only
             # evidence store and is excluded from export bundles.
             match = re.search(r"gmUpdateDuration=([\d.]+)ms", text)
-            duration = f"{float(match.group(1)):.1f}ms" if match else None
+            spike_ms = as_number(match.group(1)) if match else None
+            duration = f"{spike_ms:.1f}ms" if spike_ms is not None else None
             sink.add(
                 {
                     "t": t,
@@ -174,21 +180,23 @@ def parse_app_scrape(sink: EventSink, path: Path) -> None:
                         else "managed bridge spike (raw console text withheld; see app/bridge.jsonl)"
                     ),
                     "source": "bridge.jsonl",
-                    **({"value": float(match.group(1))} if match else {}),
+                    **({"value": spike_ms} if spike_ms is not None else {}),
                 }
             )
-        match = re.search(r"avg=([\d.]+)ms", text)
-        if match and float(match.group(1)) >= 33:
-            sink.add(
-                {
-                    "t": t,
-                    "kind": "managed_bridge_slow_update",
-                    "severity": "warn",
-                    "message": f"managed bridge update avg={match.group(1)}ms",
-                    "source": "bridge.jsonl",
-                    "value": float(match.group(1)),
-                }
-            )
+        avg_match = re.search(r"avg=([\d.]+)ms", text)
+        if avg_match is not None:
+            avg_ms = as_number(avg_match.group(1))
+            if avg_ms is not None and avg_ms >= 33:
+                sink.add(
+                    {
+                        "t": t,
+                        "kind": "managed_bridge_slow_update",
+                        "severity": "warn",
+                        "message": f"managed bridge update avg={avg_match.group(1)}ms",
+                        "source": "bridge.jsonl",
+                        "value": avg_ms,
+                    }
+                )
 
 
 def parse_bridge_spikes(sink: EventSink, path: Path) -> None:

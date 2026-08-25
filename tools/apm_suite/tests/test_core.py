@@ -690,6 +690,21 @@ def test_cpu_hot_paths_attributes_to_game_frame(tmp_path: Path) -> None:
     assert r["main_thread"] and r["main_thread"][0][0] == "EntityAlive.Update"
 
 
+def test_rank_folded_skips_unicode_digit_counts(tmp_path: Path) -> None:
+    from apm_suite.analysis.report import _rank_folded
+
+    # "²".isdigit() is True but int("²") raises: one folded line carrying a
+    # Digit-class count (imported bundles) must skip that row, not fail the
+    # required summary stage. Well-formed rows on either side still rank.
+    folded = tmp_path / "stacks.folded"
+    folded.write_text(
+        "GameManager.Update;A.b \u00b2\nGameManager.Update;World.TickEntities 30\n",
+        encoding="utf-8",
+    )
+    ranked = _rank_folded(folded, limit=10)
+    assert dict(ranked["inclusive"]) == {"GameManager.Update": 100.0, "World.TickEntities": 100.0}
+
+
 def test_export_scrub_redacts_nested_cmdline_exe() -> None:
     from apm_suite.cli import _scrub
 
@@ -1410,6 +1425,22 @@ def test_parse_perf_stat_fixture() -> None:
     assert parsed["time_elapsed_s"] == pytest.approx(10.01)
 
 
+def test_parse_perf_stat_drops_non_finite_counters() -> None:
+    # hw_stat.txt is re-read without schema guarantees (imported bundles, hand
+    # edits): a digit run past the double range parses to inf, and inf/inf
+    # would poison ipc with a NaN that persists into summary.json as a bare
+    # NaN strict JSON consumers reject. A non-finite counter is absent evidence.
+    parsed = parse_perf_stat(
+        "123 cycles\n"
+        + "9" * 400
+        + " instructions\n"
+        + "9" * 400
+        + " seconds time elapsed\n"
+        + "garbage-line without numbers\n"
+    )
+    assert parsed == {"cycles": 123}
+
+
 def test_parse_managed_section_line_fixture() -> None:
     sections = parse_section_line("TickEntities=12.50ms(x400,max=99.1) noise text")
     assert sections == [{"name": "TickEntities", "avgMs": 12.5, "calls": 400, "maxMs": 99.1}]
@@ -1604,6 +1635,43 @@ def test_app_scrape_events_withhold_raw_console_text(tmp_path: Path) -> None:
     # The persisted events files are the export surface; pin them clean too.
     persisted = (session / "events.jsonl").read_text()
     assert "Alice" not in persisted and "203.0.113.7" not in persisted
+
+
+def test_app_scrape_events_survive_mangled_and_huge_durations(tmp_path: Path) -> None:
+    from apm_suite.analysis.events import build_events
+
+    session = tmp_path / "session_scrape_bad"
+    (session / "app").mkdir(parents=True)
+    # bridge.jsonl interleaves server-controlled console text: a mangled
+    # duration ("1.2.3ms" -> float ValueError) must not fail the required
+    # events stage, and a digit run past the double range (float -> inf) must
+    # drop its value instead of persisting a bare Infinity that strict JSON
+    # consumers reject. A well-formed spike on either side still lands.
+    records = [
+        {"t": 1.0, "ok": True, "text": "SPIKE gmUpdateDuration=1.2.3ms"},
+        {"t": 2.0, "ok": True, "text": "SPIKE gmUpdateDuration=" + "9" * 400 + "ms"},
+        {"t": 3.0, "ok": True, "text": "SPIKE gmUpdateDuration=120.00ms"},
+    ]
+    (session / "app/bridge.jsonl").write_text(
+        "".join(json.dumps(record) + "\n" for record in records)
+    )
+    doc = build_events(session)
+    spikes = [e for e in doc.events if e.kind == "managed_bridge_spike"]
+    assert len(spikes) == 3
+    assert spikes[0].model_dump(mode="json").get("value") is None
+    assert spikes[1].model_dump(mode="json").get("value") is None
+    assert spikes[2].model_dump(mode="json")["value"] == pytest.approx(120.0)
+
+    # Strict round-trip: no Infinity/NaN literal may reach the persisted files.
+    def reject_constant(name: str) -> None:
+        raise ValueError(f"non-finite JSON constant {name}")
+
+    blob = (session / "events.json").read_text()
+    assert "Infinity" not in blob and "NaN" not in blob
+    json.loads(blob, parse_constant=reject_constant)
+    for line in (session / "events.jsonl").read_text().splitlines():
+        assert "Infinity" not in line and "NaN" not in line
+        json.loads(line, parse_constant=reject_constant)
 
 
 def test_attribute_document_matches_attribute_snapshot(tmp_path: Path) -> None:
