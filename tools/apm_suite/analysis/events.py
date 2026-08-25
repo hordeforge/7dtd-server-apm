@@ -14,7 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, atomic_text
+from ..io import atomic_json, atomic_text, iter_jsonl
 from ..models import EventsV2, as_number, schema_dict
 
 RETAINED_MAX = 2000
@@ -95,121 +95,100 @@ def parse_proc_jsonl(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
     prev_rss: float | None = None
-    with path.open("r", encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            t = record.get("t")
-            cpu = as_number(record.get("cpu_pct"))
-            rss = as_number(record.get("rss_mb"))
-            if cpu is not None and cpu > 150:
-                sink.add(
-                    {
-                        "t": t,
-                        "kind": "cpu_spike",
-                        "severity": "warn",
-                        "message": f"process cpu%={cpu:.0f} rssMB={rss}",
-                        "source": "proc.jsonl",
-                        "value": cpu,
-                    }
-                )
-            if rss is not None and prev_rss is not None and rss - prev_rss > 50:
-                sink.add(
-                    {
-                        "t": t,
-                        "kind": "rss_jump",
-                        "severity": "warn",
-                        "message": f"RSS jump {prev_rss:.0f}→{rss:.0f} MB",
-                        "source": "proc.jsonl",
-                        "value": rss - prev_rss,
-                    }
-                )
-            if rss is not None:
-                prev_rss = rss
+    for record in iter_jsonl(path):
+        t = record.get("t")
+        cpu = as_number(record.get("cpu_pct"))
+        rss = as_number(record.get("rss_mb"))
+        if cpu is not None and cpu > 150:
+            sink.add(
+                {
+                    "t": t,
+                    "kind": "cpu_spike",
+                    "severity": "warn",
+                    "message": f"process cpu%={cpu:.0f} rssMB={rss}",
+                    "source": "proc.jsonl",
+                    "value": cpu,
+                }
+            )
+        if rss is not None and prev_rss is not None and rss - prev_rss > 50:
+            sink.add(
+                {
+                    "t": t,
+                    "kind": "rss_jump",
+                    "severity": "warn",
+                    "message": f"RSS jump {prev_rss:.0f}→{rss:.0f} MB",
+                    "source": "proc.jsonl",
+                    "value": rss - prev_rss,
+                }
+            )
+        if rss is not None:
+            prev_rss = rss
 
 
 def parse_threads_jsonl(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
-    with path.open("r", encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            wchan = record.get("wchan_top") or {}
-            for name, raw in list(wchan.items())[:5]:
-                waiters = as_number(raw)
-                if (
-                    waiters is not None
-                    and waiters >= 3
-                    and name not in ("0", "-", "0x0")
-                    and ("futex" in name.lower() or "wait" in name.lower())
-                ):
-                    sink.add(
-                        {
-                            "t": record.get("t"),
-                            "kind": "wchan",
-                            "severity": "info",
-                            "message": f"wchan {name}×{int(waiters)}",
-                            "source": "threads.jsonl",
-                            "value": int(waiters),
-                        }
-                    )
+    for record in iter_jsonl(path):
+        wchan = record.get("wchan_top") or {}
+        for name, raw in list(wchan.items())[:5]:
+            waiters = as_number(raw)
+            if (
+                waiters is not None
+                and waiters >= 3
+                and name not in ("0", "-", "0x0")
+                and ("futex" in name.lower() or "wait" in name.lower())
+            ):
+                sink.add(
+                    {
+                        "t": record.get("t"),
+                        "kind": "wchan",
+                        "severity": "info",
+                        "message": f"wchan {name}×{int(waiters)}",
+                        "source": "threads.jsonl",
+                        "value": int(waiters),
+                    }
+                )
 
 
 def parse_app_scrape(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
-    # Streamed like every other bridge.jsonl reader (report.load_texts): each
-    # record carries a whole telnet reply, so the file can reach tens of MB.
-    with path.open("r", encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            text = str(record.get("text") or "")
-            t = record.get("t")
-            if "spike" in text.lower():
-                # The telnet drain interleaves server log lines (player names, IPs,
-                # Steam IDs) with bridge output; embed only the extracted duration,
-                # never the raw console text. bridge.jsonl stays the owner-only
-                # evidence store and is excluded from export bundles.
-                match = re.search(r"gmUpdateDuration=([\d.]+)ms", text)
-                duration = f"{float(match.group(1)):.1f}ms" if match else None
-                sink.add(
-                    {
-                        "t": t,
-                        "kind": "managed_bridge_spike",
-                        "severity": "error",
-                        "message": (
-                            f"managed bridge spike gmUpdateDuration={duration}"
-                            if duration
-                            else "managed bridge spike (raw console text withheld; see app/bridge.jsonl)"
-                        ),
-                        "source": "bridge.jsonl",
-                        **({"value": float(match.group(1))} if match else {}),
-                    }
-                )
-            match = re.search(r"avg=([\d.]+)ms", text)
-            if match and float(match.group(1)) >= 33:
-                sink.add(
-                    {
-                        "t": t,
-                        "kind": "managed_bridge_slow_update",
-                        "severity": "warn",
-                        "message": f"managed bridge update avg={match.group(1)}ms",
-                        "source": "bridge.jsonl",
-                        "value": float(match.group(1)),
-                    }
-                )
+    for record in iter_jsonl(path):
+        text = str(record.get("text") or "")
+        t = record.get("t")
+        if "spike" in text.lower():
+            # The telnet drain interleaves server log lines (player names, IPs,
+            # Steam IDs) with bridge output; embed only the extracted duration,
+            # never the raw console text. bridge.jsonl stays the owner-only
+            # evidence store and is excluded from export bundles.
+            match = re.search(r"gmUpdateDuration=([\d.]+)ms", text)
+            duration = f"{float(match.group(1)):.1f}ms" if match else None
+            sink.add(
+                {
+                    "t": t,
+                    "kind": "managed_bridge_spike",
+                    "severity": "error",
+                    "message": (
+                        f"managed bridge spike gmUpdateDuration={duration}"
+                        if duration
+                        else "managed bridge spike (raw console text withheld; see app/bridge.jsonl)"
+                    ),
+                    "source": "bridge.jsonl",
+                    **({"value": float(match.group(1))} if match else {}),
+                }
+            )
+        match = re.search(r"avg=([\d.]+)ms", text)
+        if match and float(match.group(1)) >= 33:
+            sink.add(
+                {
+                    "t": t,
+                    "kind": "managed_bridge_slow_update",
+                    "severity": "warn",
+                    "message": f"managed bridge update avg={match.group(1)}ms",
+                    "source": "bridge.jsonl",
+                    "value": float(match.group(1)),
+                }
+            )
 
 
 def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
@@ -269,10 +248,16 @@ def build_timeline(session: Path) -> EventsV2:
         except (TypeError, ValueError):
             return None
 
-    timed = [e for e in sink.events if _t(e) is not None]
-    untimed = [e for e in sink.events if _t(e) is None]
-    timed.sort(key=lambda e: _t(e) or 0.0)
-    retained = (timed + untimed)[:RETAINED_MAX]
+    timed: list[tuple[float, dict[str, Any]]] = []
+    untimed: list[dict[str, Any]] = []
+    for event in sink.events:
+        stamp = _t(event)
+        if stamp is None:
+            untimed.append(event)
+        else:
+            timed.append((stamp, event))
+    timed.sort(key=lambda item: item[0])
+    retained = ([e for _, e in timed] + untimed)[:RETAINED_MAX]
 
     return EventsV2.model_validate(
         {

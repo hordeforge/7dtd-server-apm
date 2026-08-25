@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json
+from ..io import atomic_json, iter_jsonl
 from ..models import LayerScore, SummaryV2, as_number, layer_requested, schema_dict
 from .bridge import attribute_document, attribute_snapshot
 
@@ -63,16 +63,8 @@ def load_texts(session: Path) -> dict[str, str]:
     app_path = session / "app/bridge.jsonl"
     parts: list[str] = []
     if app_path.exists():
-        # Streamed like every other jsonl reader: each record carries a whole
-        # telnet reply, so the file can reach tens of MB without ever needing
-        # to be fully resident.
-        with app_path.open("r", encoding="utf-8", errors="replace") as stream:
-            for line in stream:
-                try:
-                    record = json.loads(line)
-                    parts.append(str(record.get("text") or record.get("error") or ""))
-                except json.JSONDecodeError:
-                    pass
+        for record in iter_jsonl(app_path):
+            parts.append(str(record.get("text") or record.get("error") or ""))
     texts["app"] = "\n".join(parts)
     return texts
 
@@ -426,21 +418,9 @@ def thread_summary(session: Path) -> dict[str, Any]:
             main_share_sum += main / total
             averaged += 1
 
-    with path.open("r", encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                # A collector killed mid-window (grace deadline, Ctrl+C) leaves a
-                # torn final line; drop it like every other jsonl reader here
-                # rather than failing the required summary stage.
-                continue
-            if not isinstance(record, dict):
-                continue
-            last = record
-            fold(record)
+    for record in iter_jsonl(path):
+        last = record
+        fold(record)
     if last is None:
         return {}
     main_cpu_avg = round(main_cpu_sum / averaged, 1) if averaged else None
@@ -474,32 +454,21 @@ def memory_trend(session: Path) -> dict[str, Any]:
     monos: list[float | None] = []
     rss: list[float] = []
     fds: list[int] = []
-    with path.open("r", encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            # proc.jsonl is re-read without schema guarantees (torn collector
-            # output, imported bundles): a non-numeric t/rss_mb must drop that one
-            # record instead of raising out of the required summary stage.
-            stamp = as_number(record.get("t"))
-            rss_value = as_number(record.get("rss_mb"))
-            if stamp is not None and rss_value is not None:
-                times.append(stamp)
-                # Samplers that also stamp a monotonic clock let the span below
-                # ignore wall-clock steps; legacy records fall back to `t`.
-                monos.append(as_number(record.get("mono")))
-                rss.append(rss_value)
-                raw_fd = record.get("fd_count")
-                if (
-                    isinstance(raw_fd, (int, float))
-                    and not isinstance(raw_fd, bool)
-                    and raw_fd >= 0
-                ):
-                    fds.append(int(raw_fd))
+    for record in iter_jsonl(path):
+        # proc.jsonl is re-read without schema guarantees (torn collector
+        # output, imported bundles): a non-numeric t/rss_mb must drop that one
+        # record instead of raising out of the required summary stage.
+        stamp = as_number(record.get("t"))
+        rss_value = as_number(record.get("rss_mb"))
+        if stamp is not None and rss_value is not None:
+            times.append(stamp)
+            # Samplers that also stamp a monotonic clock let the span below
+            # ignore wall-clock steps; legacy records fall back to `t`.
+            monos.append(as_number(record.get("mono")))
+            rss.append(rss_value)
+            raw_fd = record.get("fd_count")
+            if isinstance(raw_fd, (int, float)) and not isinstance(raw_fd, bool) and raw_fd >= 0:
+                fds.append(int(raw_fd))
     if len(rss) < 3:
         return {}
     # Elapsed-time denominator: prefer the sampler's monotonic stamps (a
@@ -859,6 +828,11 @@ def diagnose_lag(
     # Fire on either the count of slow waits OR the main thread spending a real
     # slice of wall-clock blocked on locks (the direct "laggy without CPU" tell).
     if slow_futex >= 5 or wait_share >= 0.05:
+        lock_sites = (
+            top_stack_sites(session, "sync/futex.bt.out", "waiter stacks by count")
+            if session
+            else []
+        )
         causes.append(
             {
                 "cause": "lock_contention",
@@ -868,13 +842,7 @@ def diagnose_lag(
                 "fix": "reduce main-thread lock hold time"
                 + (
                     f" at {', '.join(lock_sites)}"
-                    if (
-                        lock_sites := (
-                            top_stack_sites(session, "sync/futex.bt.out", "waiter stacks by count")
-                            if session
-                            else []
-                        )
-                    )
+                    if lock_sites
                     else "; inspect sync/futex.bt.out waiter stacks"
                 ),
             }

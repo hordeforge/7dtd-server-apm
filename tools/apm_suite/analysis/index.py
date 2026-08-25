@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import contextlib
 import html
-import json
 from pathlib import Path
 from typing import Any
 
@@ -28,14 +27,14 @@ def scan(root: Path) -> list[dict[str, Any]]:
             continue
         try:
             summary = load_json(summary_path)
-        except (json.JSONDecodeError, ValueError, OSError):
+        except (ValueError, OSError):
             # OSError: the session was pruned by a concurrent process between
             # iterdir and this read; skip it like any other unreadable summary.
             continue
         health: dict[str, Any] = {}
         health_path = directory / "health.json"
         if health_path.is_file():
-            with contextlib.suppress(json.JSONDecodeError, ValueError, OSError):
+            with contextlib.suppress(ValueError, OSError):
                 health = load_json(health_path)
         if not health:
             health = summary.get("health") or {}  # sessions finalized before v2.2
@@ -45,7 +44,8 @@ def scan(root: Path) -> list[dict[str, Any]]:
             if isinstance(layer, dict) and layer.get("layer")
         }
         meta = summary.get("meta") or {}
-        lag = (summary.get("metadata") or {}).get("lag_diagnosis") or {}
+        metadata = summary.get("metadata") or {}
+        lag = metadata.get("lag_diagnosis") or {}
         verdict = lag.get("verdict") or ""
         profile = lag.get("profile") or ""
         profile_tag = (
@@ -55,8 +55,8 @@ def scan(root: Path) -> list[dict[str, Any]]:
             if "compute-bound" in profile
             else ""
         )
-        world = (summary.get("metadata") or {}).get("world") or {}
-        gc = (summary.get("metadata") or {}).get("gc") or {}
+        world = metadata.get("world") or {}
+        gc = metadata.get("gc") or {}
         gc_layer = layer_signals(summary, "runtime_gc")
         rows.append(
             {

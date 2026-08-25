@@ -70,23 +70,10 @@ namespace DtdApmBridge
         // final path truncate each other mid-line while readers (perf via the
         // /tmp symlink, the capture host copy) observe torn symbol tables.
         static readonly object WriteLock = new object();
-        // A crash between the temp write and the Replace strands a unique
-        // *.map.<id>.tmp beside its target forever; same hourly garbage rule as
-        // Telemetry's dump-temp sweep.
-        const double StaleTempMaxAgeHours = 1.0;
 
         static void SweepStaleMapTemps()
         {
-            try
-            {
-                foreach (string stale in Directory.GetFiles(BridgeMod.OutputDir, "perf-*.map.*.tmp"))
-                {
-                    if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(stale)).TotalHours < StaleTempMaxAgeHours) continue;
-                    try { File.Delete(stale); }
-                    catch (Exception ex) { BridgeMod.Log("stale jitmap temp delete failed: " + ex.Message); }
-                }
-            }
-            catch (Exception ex) { BridgeMod.Log("stale jitmap temp sweep failed: " + ex.Message); }
+            TempFiles.SweepStale("perf-*.map.*.tmp", "jitmap temp");
         }
 
         public static string Write(bool full = false)
@@ -96,7 +83,6 @@ namespace DtdApmBridge
             foreach (Assembly assembly in TargetAssemblies(full))
             foreach (Type type in SafeGetTypes(assembly))
             {
-                if (type == null) { skipped++; continue; }
                 if (type.IsGenericTypeDefinition) continue;
                 string typeName = type.FullName ?? type.Name;
                 if (!full && !HotPrefixes.Any(p => typeName.StartsWith(p, StringComparison.Ordinal))) continue;
@@ -146,7 +132,7 @@ namespace DtdApmBridge
                 // Stage under a unique temp and Replace so a reader never sees a
                 // half-written map through the /tmp symlink (same pattern as the
                 // Telemetry latest.json swap).
-                string temp = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
+                string temp = TempFiles.NewTempPath(path);
                 try
                 {
                     using (var writer = new StreamWriter(temp, false))
@@ -165,8 +151,7 @@ namespace DtdApmBridge
                                 + entries[i].Value.Replace(' ', '_'));
                         }
                     }
-                    if (File.Exists(path)) File.Replace(temp, path, null);
-                    else File.Move(temp, path);
+                    TempFiles.Publish(temp, path);
                 }
                 catch
                 {

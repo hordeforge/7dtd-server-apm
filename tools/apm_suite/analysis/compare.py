@@ -57,10 +57,7 @@ def _attribution_totals(session: Path) -> dict[str, float]:
     bridge = session / "csharp_bridge.json"
     if not bridge.is_file():
         return {}
-    try:
-        attribution = load_json(bridge).get("attribution") or {}
-    except json.JSONDecodeError as error:
-        raise ValueError(f"cannot parse {bridge}: {error}") from None
+    attribution = load_json(bridge).get("attribution") or {}
     totals: dict[str, float] = {}
     for entry in attribution.get("subsystems") or []:
         if not isinstance(entry, dict):
@@ -78,6 +75,37 @@ def _winner(delta_value: float) -> str:
     if delta_value > 0.01:
         return "A"
     return "tie"
+
+
+def _paired_deltas(
+    left: dict[str, float],
+    right: dict[str, float],
+    label: str,
+    a_key: str,
+    b_key: str,
+    ndigits: int,
+) -> list[dict[str, Any]]:
+    """Deltas over the union of names in both sessions. A name measured in only
+    one session is NOT an improvement/regression (the other side did not
+    exercise it, not "0 ms") - flagged not_comparable instead of ranking a
+    bogus delta."""
+    deltas: list[dict[str, Any]] = []
+    for name in sorted(set(left) | set(right)):
+        value_a, value_b = left.get(name, 0.0), right.get(name, 0.0)
+        difference = value_b - value_a
+        deltas.append(
+            {
+                label: name,
+                a_key: value_a,
+                b_key: value_b,
+                "delta_b_minus_a": round(difference, ndigits),
+                "better": _winner(difference)
+                if name in left and name in right
+                else "not_comparable",
+            }
+        )
+    deltas.sort(key=lambda d: abs(float(d["delta_b_minus_a"])), reverse=True)
+    return deltas
 
 
 def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
@@ -141,44 +169,10 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
     layer_deltas.sort(key=lambda d: abs(float(d["delta_b_minus_a"])), reverse=True)
 
     sections_a, sections_b = load_sections(a), load_sections(b)
-    section_deltas: list[dict[str, Any]] = []
-    for name in sorted(set(sections_a) | set(sections_b)):
-        in_a, in_b = name in sections_a, name in sections_b
-        value_a, value_b = sections_a.get(name, 0.0), sections_b.get(name, 0.0)
-        difference = value_b - value_a
-        # A section measured in only one session is NOT an improvement/regression
-        # (the other side did not exercise it, not "0 ms") - flag it, don't rank a
-        # bogus delta.
-        section_deltas.append(
-            {
-                "section": name,
-                "a_heat": value_a,
-                "b_heat": value_b,
-                "delta_b_minus_a": round(difference, 3),
-                "better": _winner(difference) if in_a and in_b else "not_comparable",
-            }
-        )
-    section_deltas.sort(key=lambda d: abs(float(d["delta_b_minus_a"])), reverse=True)
+    section_deltas = _paired_deltas(sections_a, sections_b, "section", "a_heat", "b_heat", 3)
 
-    attribution_deltas: list[dict[str, Any]] = []
     attr_a, attr_b = _attribution_totals(a), _attribution_totals(b)
-    for name in sorted(set(attr_a) | set(attr_b)):
-        value_a, value_b = attr_a.get(name, 0.0), attr_b.get(name, 0.0)
-        difference = value_b - value_a
-        # Same one-sided rule as section heat: a subsystem measured in only one
-        # session (no csharp_bridge.json on the other side) is NOT an
-        # improvement/regression - missing attribution must not read as "0 ms".
-        in_a, in_b = name in attr_a, name in attr_b
-        attribution_deltas.append(
-            {
-                "subsystem": name,
-                "a_ms": value_a,
-                "b_ms": value_b,
-                "delta_b_minus_a": round(difference, 1),
-                "better": _winner(difference) if in_a and in_b else "not_comparable",
-            }
-        )
-    attribution_deltas.sort(key=lambda d: abs(float(d["delta_b_minus_a"])), reverse=True)
+    attribution_deltas = _paired_deltas(attr_a, attr_b, "subsystem", "a_ms", "b_ms", 1)
 
     sum_a, sum_b = sum(layers_a.values()), sum(layers_b.values())
     overall = _winner(sum_b - sum_a)

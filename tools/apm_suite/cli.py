@@ -728,10 +728,7 @@ def monitor(
                 except (json.JSONDecodeError, OSError):
                     pass
             current_late = sample.get("late_ticks")
-            late_delta = ""
-            if isinstance(current_late, int) and isinstance(previous_late, int):
-                delta = current_late - previous_late
-                late_delta = f" late+{delta}" if delta > 0 else " late=0"
+            late_delta = _delta_str(current_late, previous_late, "late")
             if isinstance(current_late, int):
                 previous_late = current_late
             bridge_age = sample.get("bridge_age_s")
@@ -745,10 +742,7 @@ def monitor(
                 else ""
             )
             current_gc = sample.get("full_gc")
-            gc_delta = ""
-            if isinstance(current_gc, int) and isinstance(previous_gc, int):
-                d = current_gc - previous_gc
-                gc_delta = f" fullGC+{d}(STW!)" if d > 0 else " fullGC=0"
+            gc_delta = _delta_str(current_gc, previous_gc, "fullGC", "(STW!)")
             if isinstance(current_gc, int):
                 previous_gc = current_gc
 
@@ -775,6 +769,15 @@ def monitor(
 
 def _ms(value: object) -> str:
     return f"{value:.1f}" if isinstance(value, (int, float)) else "-"
+
+
+def _delta_str(current: object, previous: object, label: str, suffix: str = "") -> str:
+    """Monotonic-counter delta since the last sample; empty until two int
+    readings exist (first sample has no baseline)."""
+    if not (isinstance(current, int) and isinstance(previous, int)):
+        return ""
+    delta = current - previous
+    return f" {label}+{delta}{suffix}" if delta > 0 else f" {label}=0"
 
 
 def bridge_export_period(telemetry_dir: Path) -> float:
@@ -1196,27 +1199,7 @@ def scenario_matrix(
     if not isinstance(entries, list) or not entries:
         err_console.print("[red]plan must be a non-empty JSON list of experiment objects[/red]")
         raise typer.Exit(2)
-    allowed = {
-        "seconds",
-        "clients",
-        "actions",
-        "seed",
-        "preset",
-        "bot_mode",
-        "bot_mix",
-        "spawn_entity",
-        "spawn_per_player",
-        "spawn_every_ms",
-        "horde_every_ms",
-        "horde_waves",
-        "max_dynamite",
-        "no_spawn",
-        "warmup",
-        "rally",
-        "rally_at",
-        "reset_bridge",
-        "label",
-    }
+    allowed = set(_MATRIX_ENTRY_TYPES)
     results: list[tuple[str, int]] = []
     for position, entry in enumerate(entries, 1):
         if not isinstance(entry, dict):

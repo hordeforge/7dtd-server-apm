@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import tempfile
+from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -56,8 +57,36 @@ def atomic_json(path: Path, value: Any) -> None:
     atomic_text(path, json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
+def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
+    """Stream a collector JSONL file record by record.
+
+    Shared by every jsonl reader: files can reach tens of MB (each app record
+    carries a whole telnet reply), so they are streamed, never held resident.
+    Blank and torn lines (a collector killed mid-window by the grace deadline
+    or Ctrl+C leaves a truncated final line) are dropped, not fatal; non-object
+    records are dropped for the same reason. Yields only dicts.
+    """
+    with path.open("r", encoding="utf-8", errors="replace") as stream:
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                yield record
+
+
 def load_json(path: Path) -> dict[str, Any]:
-    value = json.loads(path.read_text(encoding="utf-8"))
+    # Decode failures name the file: a bare "Expecting value" leaves the
+    # operator guessing which session artifact was malformed. ValueError (not
+    # JSONDecodeError) so every suppress(ValueError)/except ValueError caller
+    # keeps catching both failure modes.
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"cannot parse {path}: {error}") from None
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object in {path}")
     return value

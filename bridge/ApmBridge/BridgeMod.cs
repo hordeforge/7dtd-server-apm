@@ -150,8 +150,11 @@ namespace DtdApmBridge
                 "TileEntity:InstantiateFromRead",
                 "TileEntityFeatureData:InstantiateModule" };
             foreach (string spec in normal) PatchSection(spec, false);
-            foreach (string spec in deep) if (Config.DeepMode) PatchSection(spec, true);
-            foreach (string spec in deep) if (!Config.DeepMode) Status[spec] = "disabled:deep-mode";
+            foreach (string spec in deep)
+            {
+                if (Config.DeepMode) PatchSection(spec, true);
+                else Status[spec] = "disabled:deep-mode";
+            }
         }
         static void PatchMapTransfers()
         {

@@ -45,13 +45,18 @@ def first_present(*values: Any) -> float:
     return first_number(*values) or 0.0
 
 
+# Dedicated-server process name prefix shared by every Python autodetector
+# (capture --pid resolution, doctor's candidate report).
+SERVER_COMM = "7DaysToDieServe"
+
+
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
 class Target(StrictModel):
     pid: int = Field(gt=0)
-    comm: str = "7DaysToDieServe"
+    comm: str = SERVER_COMM
     exe: str = ""
     cmdline: str = ""
 
@@ -118,7 +123,7 @@ class MetaV2(StrictModel):
     schema_: Literal["7dtd.apm.session.v2"] = Field(default="7dtd.apm.session.v2", alias="schema")
     utc: datetime
     pid: int = Field(gt=0)
-    comm: str = "7DaysToDieServe"
+    comm: str = SERVER_COMM
     seconds: int = Field(gt=0)
     only: str = "all"
     no_app: bool = False

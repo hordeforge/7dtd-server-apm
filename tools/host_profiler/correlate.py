@@ -110,7 +110,7 @@ def main() -> int:
             print(f"{sp['frame_ms']:8.1f} {'?':>7} {'?':>7} {sp['zed']:5d} {sp['top'][:70]}")
 
     # highlight host max cpu near any spike
-    if proc and spikes:
+    if proc:
         print("\nhost samples within 5s of any spike with cpu%>150% (multi-core):")
         spike_ts = sorted(s["ts"] for s in spikes)
         for r in proc:

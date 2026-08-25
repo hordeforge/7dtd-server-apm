@@ -81,6 +81,13 @@ major version.
 - Changed: retention deletion is one shared implementation for `prune` and
   post-capture auto-prune; a single undeletable session (e.g. EBUSY from a
   leaked mono bind mount) no longer aborts a prune run and strands the rest.
+- Changed: the seven per-analysis JSONL reader loops share one streaming
+  reader (`io.iter_jsonl`), and `load_json` names the failing file on decode
+  errors (compare/budget/bridge previously wrapped it identically in three
+  places; a torn artifact now reports "cannot parse <path>" everywhere).
+- Changed: the server process name prefix has one definition
+  (`models.SERVER_COMM`) instead of five literals, and compare builds section
+  and attribution deltas through one shared helper instead of two copies.
 - Fixed: events.json ingestion rejects internally inconsistent documents
   (count must equal retained + dropped, retained must equal the number of
   materialized events) instead of feeding readers misleading totals.
@@ -94,6 +101,9 @@ major version.
 
 ### Bridge mod
 
+- Changed: the stale-temp sweep and the atomic temp-to-final publish are one
+  shared implementation (`TempFiles`) used by both the periodic telemetry
+  export and jitmap publication, instead of two copies of each.
 - Packaging: the release zip ships `Config/apmbridge.json.example` instead of
   the live config name, so upgrading by unzipping over `Mods/` no longer resets
   operator-tuned settings (`DeepMode`, `SpikeThresholdMs`, ...); `make

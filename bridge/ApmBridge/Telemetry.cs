@@ -125,6 +125,10 @@ namespace DtdApmBridge
                 : (long)_totalAllocated.Invoke(null, new object[] { false });
         }
         static double _updateTotal, _updateMax, _lastUpdate, _tickTotal, _tickMax, _lastTick, _nextExport;
+        // Lifetime averages; both guard the divide so a fresh `apm reset` (or a
+        // single-update window) reads as 0 rather than dividing by zero.
+        static double GmUpdateAvgMs() { return _updates == 0 ? 0 : _updateTotal / _updates; }
+        static double TickIntervalAvgMs() { return _updates <= 1 ? 0 : _tickTotal / (_updates - 1); }
         // Spike side-effect rate limit (see EndFrame): counters count every spike,
         // but sampling/logging happens at most once per this many seconds.
         const double SpikeSampleMinSeconds = 5.0;
@@ -281,9 +285,9 @@ namespace DtdApmBridge
             {
                 spikes = new List<SpikeSample>(_spikeCount);
                 for (int i = 0; i < _spikeCount; i++) spikes.Add(_spikes[(_spikeWrite - _spikeCount + i + _spikes.Length) % _spikes.Length]);
-                update = new { gmUpdateDurationLastMs = _lastUpdate, gmUpdateDurationAvgMs = _updates == 0 ? 0 : _updateTotal / _updates,
+                update = new { gmUpdateDurationLastMs = _lastUpdate, gmUpdateDurationAvgMs = GmUpdateAvgMs(),
                     gmUpdateDurationMaxMs = _updateMax, serverTickIntervalLastMs = _lastTick,
-                    serverTickIntervalAvgMs = _updates <= 1 ? 0 : _tickTotal / (_updates - 1), serverTickIntervalMaxMs = _tickMax,
+                    serverTickIntervalAvgMs = TickIntervalAvgMs(), serverTickIntervalMaxMs = _tickMax,
                     lateTicks = _lateTicks, tickStallMsTotal = _tickStallMs,
                     windowUpdates = _updates, totalSpikes = _updateSpikes, deep = BridgeMod.Config.DeepMode };
                 health = new { exportQueued = _exportQueued != 0, droppedExports = _droppedExports, lastExportError = _lastExportError };
@@ -397,44 +401,28 @@ namespace DtdApmBridge
             }
             return 0;
         }
-        // A crash or hard kill between WriteAllText and Replace strands a unique
-        // *.tmp beside its target forever: PruneTimestampedDumps only matches
-        // finished dumps and the jitmap sweep only matches perf maps, so
-        // nothing else ever deletes these. A live temp exists for milliseconds,
-        // so anything older than an hour is garbage by construction; swept on
-        // the periodic export path (best effort) instead of accumulating
-        // across restarts on a 24/7 host.
-        const double StaleTempMaxAgeHours = 1.0;
-
+        // A crash or hard kill between WriteAllText and Publish strands a
+        // unique *.tmp beside its target forever; swept on the periodic export
+        // path (best effort) instead of accumulating across restarts on a
+        // 24/7 host.
         static void SweepStaleTempFiles()
         {
-            try
-            {
-                foreach (string stale in Directory.GetFiles(BridgeMod.OutputDir, "apm_app_*.tmp"))
-                {
-                    if ((DateTime.UtcNow - File.GetLastWriteTimeUtc(stale)).TotalHours < StaleTempMaxAgeHours) continue;
-                    try { File.Delete(stale); }
-                    catch (Exception ex) { BridgeMod.Log("stale temp delete failed: " + ex.Message); }
-                }
-            }
-            catch (Exception ex) { BridgeMod.Log("stale temp sweep failed: " + ex.Message); }
+            TempFiles.SweepStale("apm_app_*.tmp", "temp");
         }
 
         static void Write(string path)
         {
-            // Unique temp (a console `apm dump` can race the ThreadPool export) and
             // File.Replace so `latest` never has a does-not-exist window for external
             // consumers (scrapers/dashboards read it continuously in production).
             Directory.CreateDirectory(BridgeMod.OutputDir);
             SweepStaleTempFiles();
-            string temp = path + "." + Guid.NewGuid().ToString("N").Substring(0, 8) + ".tmp";
+            string temp = TempFiles.NewTempPath(path);
             try
             {
                 File.WriteAllText(temp, JsonConvert.SerializeObject(Snapshot(), Formatting.Indented));
                 lock (ExportSwapLock)
                 {
-                    if (File.Exists(path)) File.Replace(temp, path, null);
-                    else File.Move(temp, path);
+                    TempFiles.Publish(temp, path);
                 }
             }
             catch
@@ -489,8 +477,8 @@ namespace DtdApmBridge
         public static string Summary()
         {
             lock (Gate)
-                return "APM updates=" + _updates + " gmUpdateAvg=" + (_updates == 0 ? 0 : _updateTotal / _updates).ToString("F2")
-                    + "ms tickAvg=" + (_updates <= 1 ? 0 : _tickTotal / (_updates - 1)).ToString("F2") + "ms spikes=" + _updateSpikes + " sections=" + _metricCount;
+                return "APM updates=" + _updates + " gmUpdateAvg=" + GmUpdateAvgMs().ToString("F2")
+                    + "ms tickAvg=" + TickIntervalAvgMs().ToString("F2") + "ms spikes=" + _updateSpikes + " sections=" + _metricCount;
         }
         public static string Benchmark(int iterations)
         {

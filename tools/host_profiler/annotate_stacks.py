@@ -83,7 +83,6 @@ def annotate_folded_line(line: str) -> str:
 
 
 def annotate_file(src: Path, dst: Path) -> dict[str, Any]:
-    stats: dict[str, Any] = {"stacks": 0, "frames": 0, "tagged_frames": 0, "output": str(dst)}
     tagged = 0
     total_frames = 0
     stacks = 0
@@ -107,10 +106,12 @@ def annotate_file(src: Path, dst: Path) -> dict[str, Any]:
                 total_frames += 1
                 if fr.startswith("["):
                     tagged += 1
-    stats["stacks"] = stacks
-    stats["frames"] = total_frames
-    stats["tagged_frames"] = tagged
-    return stats
+    return {
+        "stacks": stacks,
+        "frames": total_frames,
+        "tagged_frames": tagged,
+        "output": str(dst),
+    }
 
 
 def main() -> int:

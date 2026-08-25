@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 from .collectors import SPEC_BY_NAME
 from .io import atomic_json, file_sha256, load_json, member_is_safe, sync_parent_directory
 from .models import (
+    SERVER_COMM,
     Artifact,
     BridgeSnapshotV3,
     CollectorResult,
@@ -452,15 +453,13 @@ def verify_recorded_hashes(session: Path) -> list[str]:
 
 
 def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[ManifestV2, bool]:
-    # Same untrusted-input contract as _int below: torn/hand-edited JSON must
+    # Same untrusted-input contract as _int above: torn/hand-edited JSON must
     # degrade to "no metadata" (and a schema-validation error from
     # _validate_documents), never crash the audit whose job is to record it.
     meta: dict[str, Any] = {}
     if (session / "meta.json").is_file():
-        with suppress(ValueError):
-            loaded = load_json(session / "meta.json")
-            if isinstance(loaded, dict):
-                meta = loaded
+        with suppress(ValueError):  # load_json raises ValueError for non-object JSON too
+            meta = load_json(session / "meta.json")
     errors: list[str] = []
     for rel in REQUIRED:
         try:
@@ -532,7 +531,7 @@ def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[Mani
         ended_at=datetime.now(UTC),
         target=Target(
             pid=_int(meta.get("pid"), 1),
-            comm=str(meta.get("comm") or "7DaysToDieServe"),
+            comm=str(meta.get("comm") or SERVER_COMM),
             exe=str(meta.get("exe") or ""),
             cmdline=str(meta.get("cmdline") or ""),
         ),

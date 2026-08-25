@@ -198,7 +198,7 @@ function render() {
 }
 
 function frameAt(target) {
-  const g = target instanceof Element ? target.closest(".frame") : null;
+  const g = frameElementAt(target);
   return g ? nodes[+g.getAttribute("data-i")] : null;
 }
 
@@ -211,7 +211,7 @@ function showTipFor(n, x, y) {
   tip.style.left = Math.min(x + 12, window.innerWidth - 300) + "px";
   tip.style.top = (y + 12) + "px";
   const ofRoot = (100 * n.node.value / ROOT.value).toFixed(2);
-  tip.innerHTML = `<b>${escapeHtml(n.node.name)}</b><br/>samples: ${n.node.value}<br/>of zoom: ${n.pct}%<br/>of total: ${ofRoot}%`;
+  tip.innerHTML = `<b>${escapeXml(n.node.name)}</b><br/>samples: ${n.node.value}<br/>of zoom: ${n.pct}%<br/>of total: ${ofRoot}%`;
 }
 
 // Delegated frame interactions (bound once): pointer and keyboard events
@@ -244,7 +244,7 @@ chart.addEventListener("focusout", () => { tip.style.display = "none"; });
 
 function updateCrumb() {
   // simple path: only show current focus name chain is hard without parent links; show focus name
-  crumb.innerHTML = `<a href="#" data-root="1">all</a> / <span>${escapeHtml(focus.name)}</span> (${focus.value} samples)`;
+  crumb.innerHTML = `<a href="#" data-root="1">all</a> / <span>${escapeXml(focus.name)}</span> (${focus.value} samples)`;
   crumb.querySelector("[data-root]").onclick = (ev) => { ev.preventDefault(); zoomTo(ROOT, "the whole profile"); };
 }
 
@@ -272,9 +272,6 @@ function announce(msg) {
 
 function escapeXml(s) {
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-}
-function escapeHtml(s) {
-  return escapeXml(s);
 }
 
 document.getElementById("reset").onclick = () => { focus = ROOT; search = ""; document.getElementById("q").value = ""; render(); announce("Reset zoom, showing the whole profile"); };

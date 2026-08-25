@@ -25,6 +25,7 @@ from pydantic import ValidationError
 from . import __version__
 from .collectors import (
     HOST_PROFILER,
+    SPEC_BY_NAME,
     SPECS,
     CaptureContext,
     CollectorSpec,
@@ -32,7 +33,13 @@ from .collectors import (
     wanted,
 )
 from .io import atomic_json, claim_dir
-from .models import BridgeSnapshotV3, CollectorResult, MetaV2, schema_dict
+from .models import (
+    SERVER_COMM,
+    BridgeSnapshotV3,
+    CollectorResult,
+    MetaV2,
+    schema_dict,
+)
 from .paths import apm_root, require_backends
 from .session import (
     keep_sessions_budget,
@@ -47,9 +54,6 @@ from .session import (
 # Single source of truth for the analyzer version is the package version
 # (pyproject.toml / __init__.py); compare gates session compatibility on it.
 ANALYZER_VERSION = __version__
-# Dedicated-server process name prefix shared by every Python autodetector
-# (capture --pid resolution, doctor's candidate report).
-SERVER_COMM = "7DaysToDieServe"
 # minimum extra seconds beyond the capture window for perf post-processing
 # (flame build); long captures get a full extra window since perf script/report
 # time grows with recorded data volume
@@ -434,7 +438,7 @@ def _telnet_password_warning(only: str, no_app: bool, telnet_password: str) -> s
     7dtd telnet requires the password from SEVENDTD_TELNET_PASSWORD, and
     without it every app-layer record is an auth failure rather than bridge
     telemetry. Host-only layers are unaffected, so this stays a warning."""
-    app_spec = next(spec for spec in SPECS if spec.name == "app")
+    app_spec = SPEC_BY_NAME["app"]
     if not no_app and wanted(app_spec, only) and not telnet_password:
         return (
             "SEVENDTD_TELNET_PASSWORD not set; telnet login will fail "

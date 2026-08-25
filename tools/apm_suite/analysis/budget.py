@@ -43,18 +43,8 @@ DEFAULT_BUDGET: dict[str, Any] = {
 }
 
 
-def _summary(session: Path) -> dict[str, Any]:
-    path = session / "summary.json"
-    try:
-        return load_json(path)
-    except json.JSONDecodeError as error:
-        # Name the file: a bare "Expecting value" leaves the operator guessing
-        # which session artifact was malformed.
-        raise ValueError(f"cannot parse {path}: {error}") from None
-
-
 def load_layers(session: Path) -> dict[str, float]:
-    return collected_layer_scores(_summary(session))
+    return collected_layer_scores(load_json(session / "summary.json"))
 
 
 def load_sections(session: Path) -> dict[str, float]:
@@ -70,7 +60,7 @@ def check(
 ) -> tuple[bool, list[str]]:
     lines: list[str] = []
     ok = True
-    summary = _summary(session)
+    summary = load_json(session / "summary.json")
     layers = collected_layer_scores(summary)
     sections = load_sections(session)
     metadata = summary.get("metadata") or {}

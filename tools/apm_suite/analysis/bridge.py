@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, atomic_text, load_json
+from ..io import atomic_json, atomic_text, iter_jsonl, load_json
 from ..models import first_number, first_present
 from .catalog import RULES, SECTION_TO_CSHARP
 from .flame_delta import load_weights
@@ -329,10 +329,7 @@ def ranked_section_heats(session: Path) -> dict[str, float | None]:
     path = session / "csharp_bridge.json"
     if not path.is_file():
         return {}
-    try:
-        data = load_json(path)
-    except json.JSONDecodeError as error:
-        raise ValueError(f"cannot parse {path}: {error}") from None
+    data = load_json(path)
     heats: dict[str, float | None] = {}
     for section in data.get("top_managed_sections") or []:
         name = str(section.get("name") or "")
@@ -406,16 +403,8 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
 
     scrape = session / "app/bridge.jsonl"
     if scrape.exists():
-        # Streamed like every other bridge.jsonl reader (report.load_texts):
-        # each record carries a whole telnet reply, so the file can reach tens
-        # of MB without ever needing to be fully resident.
-        with scrape.open("r", encoding="utf-8", errors="replace") as stream:
-            for line in stream:
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                sections.extend(parse_section_line(str(record.get("text") or "")))
+        for record in iter_jsonl(scrape):
+            sections.extend(parse_section_line(str(record.get("text") or "")))
 
     excerpt = session / "app/efficientserver_log_excerpt.txt"
     if excerpt.exists():

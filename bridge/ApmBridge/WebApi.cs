@@ -258,7 +258,7 @@ namespace DtdApmBridge
             var payload = Encoding.UTF8.GetBytes(Newtonsoft.Json.JsonConvert.SerializeObject(
                 new
                 {
-                    changed = changed,
+                    changed,
                     restarting = changed > 0,
                     note = changed > 0 ? "server restarts in a moment" : "no changes; config already in the requested state"
                 }));
