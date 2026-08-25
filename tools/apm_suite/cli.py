@@ -526,7 +526,9 @@ def prometheus(session: Path, output: Annotated[Path, typer.Option("--output", "
         raise typer.BadParameter("session has no summary.json")
     try:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
+    except (json.JSONDecodeError, OSError) as error:
+        # OSError: the summary vanished or became unreadable after the
+        # is_file() gate; name it like every other unreadable-input error here.
         raise typer.BadParameter(f"unreadable {summary_path}: {error}") from None
     lines = [
         "# HELP sevendtd_apm_layer_pressure Layer pressure from a collected APM layer.",
@@ -847,7 +849,10 @@ def compare(
             raise typer.Exit(2)
     try:
         run_compare(before, after, output)
-    except ValueError as error:
+    except (OSError, ValueError) as error:
+        # OSError: a session pruned between the is_file() gate above and the
+        # reads inside (concurrent auto-prune) must fail like a corrupt one,
+        # naming the path, never as a bare FileNotFoundError traceback.
         err_console.print(f"[red]compare failed: {escape(str(error))}[/red]")
         raise typer.Exit(1) from None
 
@@ -881,7 +886,10 @@ def budget(
         raise typer.Exit(2)
     try:
         passed = check_budget(session, budget_file, baseline, max_regression)
-    except ValueError as error:
+    except (OSError, ValueError) as error:
+        # OSError: a vanished/unreadable summary under a concurrent prune (or
+        # an unreadable budget file) is an operator error naming the path,
+        # same contract as compare above.
         err_console.print(f"[red]{escape(str(error))}[/red]")
         raise typer.Exit(2) from None
     _exit(0 if passed else 1)
@@ -903,7 +911,9 @@ def bridge(
     # session JSON; JSONDecodeError is a ValueError subclass).
     try:
         result = analyze(session, snapshot)
-    except ValueError as error:
+    except (OSError, ValueError) as error:
+        # OSError: a session artifact pruned mid-analysis fails like a corrupt
+        # one (same contract as compare/budget), never a bare traceback.
         err_console.print(f"[red]bridge analysis failed: {escape(str(error))}[/red]")
         raise typer.Exit(1) from None
     # Playbook lines embed managed section names and frame names taken from
@@ -1030,7 +1040,14 @@ def scenario_run(
     )
     # Own session: the teardown below kills the whole process group, so it must
     # not share ours (and pid == pgid only with start_new_session).
-    load_process = subprocess.Popen([str(loadgen)], env=env, start_new_session=True)
+    try:
+        load_process = subprocess.Popen([str(loadgen)], env=env, start_new_session=True)
+    except OSError as error:
+        # is_file() above does not prove executability or readability: a lost
+        # +x bit or unreadable interpreter must fail like every other startup
+        # problem here (clean message, exit 2), not a bare traceback.
+        err_console.print(f"[red]cannot start sibling load generator {loadgen}: {error}[/red]")
+        raise typer.Exit(2) from None
     session: Path | None = None
     capture_rc = 130
     load_rc = 130

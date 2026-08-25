@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from bisect import bisect_left
 from datetime import datetime
 from pathlib import Path
@@ -40,11 +41,25 @@ def parse_ts(s: str) -> float:
 
 
 def load_proc(capture: Path) -> list[dict[str, Any]]:
+    # Same reader contract as apm_suite.io.iter_jsonl: this capture may have run
+    # without the memory layer (neither layout exists - name it instead of a
+    # bare FileNotFoundError traceback), and a collector killed mid-window
+    # leaves a truncated final line that must be skipped, not crash the tool.
     p = capture / "memory" / "proc.jsonl"
     if not p.exists():
         p = capture / "proc.jsonl"
+    rows: list[dict[str, Any]] = []
     with p.open("r", encoding="utf-8", errors="replace") as stream:
-        return [json.loads(line) for line in stream if line.strip()]
+        for line in stream:
+            if not line.strip():
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(record, dict):
+                rows.append(record)
+    return rows
 
 
 def nearest_proc(times: list[float], rows: list[dict[str, Any]], t: float) -> dict[str, Any] | None:
@@ -73,7 +88,21 @@ def main() -> int:
     ap.add_argument("--window", type=float, default=2.0, help="seconds match window")
     args = ap.parse_args()
 
-    proc = load_proc(args.capture)
+    proc_path = args.capture / "memory" / "proc.jsonl"
+    if not proc_path.exists():
+        proc_path = args.capture / "proc.jsonl"
+    if not proc_path.is_file():
+        print(
+            f"no proc samples in {args.capture} (looked for memory/proc.jsonl, proc.jsonl); "
+            "capture with the memory/threads layer or pass a session that has it",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        proc = load_proc(args.capture)
+    except OSError as error:
+        print(f"cannot read proc samples from {proc_path}: {error}", file=sys.stderr)
+        return 2
     proc.sort(key=lambda r: r["t"])
     proc_times = [r["t"] for r in proc]
     text = args.game_log.read_text(encoding="utf-8", errors="replace")

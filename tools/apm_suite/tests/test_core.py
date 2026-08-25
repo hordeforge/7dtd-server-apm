@@ -3053,6 +3053,132 @@ def test_correlate_nearest_proc_binary_search_matches_linear_scan() -> None:
         assert not (index < len(spike_ts) and spike_ts[index] < t + 5), t
 
 
+def test_correlate_load_proc_skips_torn_and_non_object_lines(tmp_path: Path) -> None:
+    """proc.jsonl readers must tolerate a torn final line (a collector killed
+    mid-write leaves one) and drop JSON-valid non-object lines, exactly like
+    every other jsonl reader in this repo; a crash here loses the whole spike
+    correlation over one bad line."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "correlate", REPO / "tools/host_profiler/correlate.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    capture = tmp_path / "session_proc"
+    (capture / "memory").mkdir(parents=True)
+    good = json.dumps({"t": 10.0, "cpu_pct": 90.0, "rss_mb": 8000.0})
+    torn = good[:15]
+    (capture / "memory/proc.jsonl").write_text(
+        "\n".join([good, "", torn, "[1, 2]", good.replace("10.0", "11.0")]) + "\n",
+        encoding="utf-8",
+    )
+    rows = module.load_proc(capture)
+    assert [r["t"] for r in rows] == [10.0, 11.0]
+
+
+def test_correlate_main_names_missing_proc_samples(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A capture without the memory layer is a normal input (app-only captures,
+    imported bundles): correlate must exit 2 naming the paths it looked for,
+    not die on a FileNotFoundError traceback from load_proc."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "correlate", REPO / "tools/host_profiler/correlate.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    capture = tmp_path / "session_empty"
+    capture.mkdir()
+    game_log = tmp_path / "log.txt"
+    game_log.write_text("", encoding="utf-8")
+    original_argv = sys.argv
+    try:
+        sys.argv = [
+            "correlate.py",
+            "--capture",
+            str(capture),
+            "--game-log",
+            str(game_log),
+        ]
+        assert module.main() == 2
+    finally:
+        sys.argv = original_argv
+    err = capsys.readouterr().err
+    assert "no proc samples" in err
+    assert "memory/proc.jsonl" in err
+
+
+def test_scenario_run_reports_unspawnable_loadgen_cleanly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """is_file() proves existence only: a loadgen script with a lost +x bit
+    must fail like every other startup problem here (clean stderr message,
+    exit 2), not as a PermissionError traceback out of Popen."""
+    import apm_suite.cli as cli_module
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    loadgen = tmp_path / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
+    loadgen.parent.mkdir(parents=True)
+    loadgen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setattr(cli_module, "REPO", repo)
+    monkeypatch.setattr(cli_module, "apm_root", lambda: store)
+
+    def refuse(_argv: list[str], **_kwargs: object) -> None:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(
+        cli_module,
+        "subprocess",
+        SimpleNamespace(Popen=refuse, TimeoutExpired=subprocess.TimeoutExpired),
+    )
+    result = runner.invoke(app, ["scenario", "run"])
+    assert result.exit_code == 2
+    assert "cannot start sibling load generator" in result.stderr
+
+
+def test_compare_and_budget_name_vanished_sessions_instead_of_tracebacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session pruned between the CLI's is_file() gate and the analysis read
+    raises OSError from the readers; compare and budget must report it like a
+    corrupt session (named path, clean exit), matching the concurrent-prune
+    contract implemented everywhere else in the suite."""
+    import apm_suite.cli as cli_module
+
+    before = tmp_path / "session_a"
+    after = tmp_path / "session_b"
+    for path in (before, after):
+        path.mkdir()
+        (path / "summary.json").write_text("{}", encoding="utf-8")
+
+    def vanish(*_args: object, **_kwargs: object) -> None:
+        raise FileNotFoundError(2, "No such file or directory", str(after / "summary.json"))
+
+    monkeypatch.setattr(cli_module, "run_compare", vanish)
+    result = runner.invoke(app, ["compare", str(before), str(after)])
+    assert result.exit_code == 1
+    assert "compare failed" in result.stderr
+
+    candidate = tmp_path / "session_c"
+    candidate.mkdir()
+    (candidate / "summary.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(cli_module, "check_budget", vanish)
+    result = runner.invoke(app, ["budget", str(candidate)])
+    assert result.exit_code == 2
+    squashed = "".join(result.stderr.split())
+    assert "Nosuchfileordirectory" in squashed
+
+
 def test_app_scrape_session_persists_only_command_responses() -> None:
     """The telnet drain must keep protocol replies but discard the pre-auth
     banner, the post-logon reply, and any player-identifying stream content,
