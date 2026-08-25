@@ -19,6 +19,13 @@ major version.
 
 ### Host CLI
 
+- Correctness: `main_thread_share_of_process_avg` now divides the main
+  thread's CPU by the whole-process CPU total the threads collector records
+  per sample (`process_cpu_pct`), instead of by the sum of the truncated
+  top-15 row list. On servers with more busy threads than the cap the old
+  denominator inflated the share (a 35% main thread read as 53%), which could
+  fire `main_thread_bound` and raise cpu layer pressure from a wrong value.
+  Sessions captured by older collectors keep the legacy fallback.
 - Resource lifecycle: a capture with `--symbolize` (and every `scenario run`,
   which symbolizes by default) no longer leaves its `/tmp/perf-<pid>.map`
   symlink behind. The name is published pre-window for perf's hardcoded

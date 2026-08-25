@@ -166,6 +166,12 @@ def main() -> int:
                 "states": states,
                 "wchan_top": wchan_top,
                 "top": deltas[: args.top],
+                # Whole-process CPU% over every sampled thread this pass. "top"
+                # is truncated to --top rows, so readers wanting the main
+                # thread's share OF THE PROCESS must divide by this, not by
+                # the top-row sum (which would inflate the share whenever
+                # more threads than the cap carry CPU).
+                "process_cpu_pct": round(sum(d["cpu_pct"] for d in deltas), 2),
             }
             fh.write(json.dumps(rec) + "\n")
             fh.flush()

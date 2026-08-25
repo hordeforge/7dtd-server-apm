@@ -274,6 +274,25 @@ def test_thread_summary_averages_across_samples_and_folds_streaming(
     assert summary["n_threads"] == 6
 
 
+def test_thread_summary_share_uses_whole_process_total(tmp_path: Path) -> None:
+    """The persisted top list is capped (--top), so its row sum is NOT the
+    process total: a record carrying the collector's whole-process CPU% must
+    use it as the share denominator, or the main thread's share of process CPU
+    is overstated whenever more threads than the cap carry CPU (main=80 of a
+    top-15 sum of 150 reads 53%, but is 35% of the real process load)."""
+    from apm_suite.analysis.report import thread_summary
+
+    session = tmp_path / "session_process_total"
+    (session / "threads").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta(pid=5))
+    rows = [{"tid": 5, "cpu_pct": 80.0}] + [{"tid": 100 + i, "cpu_pct": 5.0} for i in range(14)]
+    row = json.dumps({"t": 1.0, "n_threads": 31, "top": rows, "process_cpu_pct": 230.0})
+    (session / "threads/threads.jsonl").write_text(row + "\n")
+    summary = thread_summary(session)
+    assert summary["main_thread_cpu_pct_avg"] == 80.0
+    assert summary["main_thread_share_of_process_avg"] == pytest.approx(round(80.0 / 230.0, 3))
+
+
 def test_bridge_spikes_with_corrupt_duration_do_not_kill_timeline(
     tmp_path: Path,
 ) -> None:

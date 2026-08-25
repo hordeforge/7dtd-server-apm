@@ -401,8 +401,8 @@ def thread_summary(session: Path) -> dict[str, Any]:
     averaged = 0
 
     def fold(sample: dict[str, Any]) -> None:
-        # Main-thread saturation: averaged across samples, the main thread's own
-        # CPU% and its share of total process CPU. High main share with a low
+        # Main-thread saturation: averaged across samples, the main thread's
+        # own CPU% and its share of total process CPU. High main share with a low
         # box-wide load = "laggy without CPU" that is really main-thread-bound.
         nonlocal main_cpu_sum, main_share_sum, averaged
         rows = sample.get("top") or []
@@ -410,7 +410,18 @@ def thread_summary(session: Path) -> dict[str, Any]:
             return
         # Junk-but-valid JSON values coerce to "no contribution" so a single
         # corrupt row cannot crash the required summary stage.
-        total = sum(as_number(r.get("cpu_pct")) or 0.0 for r in rows if isinstance(r, dict))
+        # Denominator: the record's whole-process CPU% (the collector sums every
+        # sampled thread into process_cpu_pct). The persisted top list is capped
+        # (--top), so summing only those rows would overstate the main thread's
+        # share of process CPU on many-thread servers whenever busier threads
+        # than the cap exist. Legacy records without the field fall back to the
+        # top-row sum (a documented approximation for sessions predating it).
+        process_total = as_number(sample.get("process_cpu_pct"))
+        total = (
+            process_total
+            if process_total is not None
+            else sum(as_number(r.get("cpu_pct")) or 0.0 for r in rows if isinstance(r, dict))
+        )
         main = next(
             (
                 as_number(r.get("cpu_pct")) or 0.0
