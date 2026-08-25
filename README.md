@@ -229,7 +229,7 @@ appears only as set/unset). An exported-but-empty variable is treated as unset.
 - [`TODO.md`](TODO.md) - phased implementation and verification log
 
 Python 3.11+, `uv`, and Linux are required. `make check` additionally shells
-out to `shellcheck`, `node`/`npx` (the tsc/oxlint/vnu versions are pinned in
+out to `shellcheck`, `bun`/`bunx` (the tsc/oxlint/vnu versions are pinned in
 `scripts/lint-*.sh`), and `java` (vnu-jar); each check names its missing tool
 instead of failing mid-gate. `make help` lists every target with its
 prerequisites. `perf`, bpftrace, and narrowly configured non-interactive

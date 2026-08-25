@@ -8,7 +8,7 @@
 #   - the bridge WebMod styling.css (embedded in a scratch document, checked
 #     with --also-check-css; the WebMod itself is JS-rendered, no HTML).
 #
-# vnu runs through npx pinned by VNU_VERSION (the same convention as zdtd);
+# vnu runs through bunx pinned by VNU_VERSION (the same convention as zdtd);
 # vnu-jar is a Java tool, so java is required. vnu-filter.txt drops deliberate
 # deviations; anything else fails the gate. Warnings do not fail.
 set -euo pipefail
@@ -16,8 +16,8 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 vnu_version="${VNU_VERSION:-26.8.20}"
 
-command -v npx >/dev/null 2>&1 || {
-  echo "7dtd-server-apm: lint-html: npx (Node.js/npm) not found; vnu runs through pinned npx packages" >&2
+command -v bunx >/dev/null 2>&1 || {
+  echo "7dtd-server-apm: lint-html: bunx (bun) not found; vnu runs through pinned bunx packages" >&2
   exit 1
 }
 command -v java >/dev/null 2>&1 || {
@@ -50,5 +50,5 @@ mapfile -t html_files < <(
 )
 
 echo "vnu: checking ${#html_files[@]} HTML documents (+ embedded CSS)"
-npx --yes "vnu-jar@$vnu_version" --also-check-css --filterfile "$root/vnu-filter.txt" "${html_files[@]}"
+bunx "vnu-jar@$vnu_version" --also-check-css --filterfile "$root/vnu-filter.txt" "${html_files[@]}"
 echo "vnu: OK"

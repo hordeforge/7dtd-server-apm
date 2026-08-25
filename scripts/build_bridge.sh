@@ -34,8 +34,8 @@ dotnet build "$ROOT/bridge/ApmBridge/ApmBridge.csproj" -c Release \
   -p:GameManagedDir="$MANAGED" -p:HarmonyPath="$HARMONY" -p:BridgeOutput="$OUT/"
 # WebMod: compile the TypeScript source (WebMod/bundle.ts) to bundle.js, the
 # exact path the dashboard loads (/webmods/7dtd-server-apm-bridge/bundle.js).
-command -v npx >/dev/null 2>&1 || { echo "ERROR: npx (Node.js/npm) not found; cannot build WebMod" >&2; exit 1; }
-npx --yes -p "typescript@$TSC_VERSION" tsc -p "$ROOT/bridge/ApmBridge/WebMod/tsconfig.json"
+command -v bunx >/dev/null 2>&1 || { echo "ERROR: bunx (bun) not found; cannot build WebMod" >&2; exit 1; }
+bunx -p "typescript@$TSC_VERSION" tsc -p "$ROOT/bridge/ApmBridge/WebMod/tsconfig.json"
 cp "$ROOT/bridge/ApmBridge/ModInfo.xml" "$OUT/ModInfo.xml"
 # Ship the factory settings under the .example name only: users install the
 # release zip by unzipping it over Mods/, so a live Config/apmbridge.json in

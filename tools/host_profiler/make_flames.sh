@@ -47,7 +47,7 @@ Interactive flamegraphs
 1. flame.html          — annotated [GC]/[LOCK]/[AI]/… tags; click zoom, search
 2. flame.raw.html      — unannotated native frames
 3. profile.speedscope.json
-     npx speedscope profile.speedscope.json
+     bunx speedscope profile.speedscope.json
      or drag onto https://www.speedscope.app/
 4. profile.raw.speedscope.json — raw symbols
 5. flame.svg           — static snapshot

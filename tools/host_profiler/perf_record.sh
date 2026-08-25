@@ -86,5 +86,5 @@ echo "done: $OUTDIR"
 ls -la "$OUTDIR"
 if [[ -f "$OUTDIR/flame.html" ]]; then
   echo "interactive: $OUTDIR/flame.html"
-  echo "speedscope:  $OUTDIR/profile.speedscope.json  (npx speedscope …)"
+  echo "speedscope:  $OUTDIR/profile.speedscope.json  (bunx speedscope …)"
 fi

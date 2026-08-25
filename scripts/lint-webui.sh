@@ -10,7 +10,7 @@
 #   3. Freshness: the committed bundle.js must equal a fresh compilation, so a
 #      .ts edit that was not compiled and committed fails the gate.
 #
-# tsc/oxlint run through npx pinned by TSC_VERSION/OXLINT_VERSION. The repo
+# tsc/oxlint run through bunx pinned by TSC_VERSION/OXLINT_VERSION. The repo
 # deliberately does not track package.json/node_modules (.gitignore), so the
 # versions live in scripts/lib/tool_versions.sh (TSC_VERSION, shared with the
 # release build) and here as their single sources of truth.
@@ -21,7 +21,7 @@
 # commit and ANTI_SLOP_SHA256 verifies the downloaded bytes before extraction.
 # Update both pins together after inspecting the new upstream source.
 #
-# Requires: node/npm (npx).
+# Requires: bun (bunx).
 
 set -euo pipefail
 
@@ -39,13 +39,13 @@ anti_slop_sha256="${ANTI_SLOP_SHA256:-a720663fd2562e22e3da670769faa88dc34c9a761f
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-server-apm/oxlint-standards"
 webmod_dir="$root/bridge/ApmBridge/WebMod"
 
-command -v npx >/dev/null 2>&1 || {
-  echo "7dtd-server-apm: lint-webui: npx (Node.js/npm) not found; tsc/oxlint run through pinned npx packages" >&2
+command -v bunx >/dev/null 2>&1 || {
+  echo "7dtd-server-apm: lint-webui: bunx (bun) not found; tsc/oxlint run through pinned bunx packages" >&2
   exit 1
 }
 
 # 1. Type check (per WebMod/tsconfig.json, strict).
-npx --yes -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --noEmit
+bunx -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --noEmit
 
 # 2. Lint the source with oxlint. The @rikalabs plugin, the vendored
 #    dmmulroy/anti-slop plugin source (pinned by ANTI_SLOP_SHA and
@@ -54,9 +54,10 @@ npx --yes -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --noEm
 #    backend, see options.typeAware in .oxlintrc.jsonc) are fetched into the
 #    cache (no-op when the pinned versions are already present) and oxlint runs
 #    next to them because jsPlugins resolve relative to the config file's
-#    directory; a copy of the config is placed there each run. All npm packages
-#    are installed in one invocation: a later separate --no-save install would
-#    prune the others. @oxlint/plugins is the plugin API the anti-slop source
+#    directory; a copy of the config is placed there each run. The pinned
+#    packages are installed with one additive `bun add` invocation: it merges
+#    the pins into the cache manifest and never prunes what a sibling script
+#    installed. @oxlint/plugins is the plugin API the anti-slop source
 #    imports; without it the plugin cannot load.
 mkdir -p "$cache_dir"
 if [ ! -d "$cache_dir/anti-slop-src" ]; then
@@ -69,10 +70,13 @@ if [ ! -d "$cache_dir/anti-slop-src" ]; then
   mkdir -p "$cache_dir/anti-slop-src"
   tar xzf "$cache_dir/anti-slop.tar.gz" -C "$cache_dir/anti-slop-src" --strip-components=2 "anti-slop-$anti_slop_sha/src"
 fi
-npm install --prefix "$cache_dir" --no-audit --no-fund --no-save --no-package-lock \
-  "@rikalabs/oxlint-standards@$oxlint_standards_version" \
-  "oxlint-tsgolint@$oxlint_tsgolint_version" \
-  "@oxlint/plugins@$oxlint_plugins_version" >/dev/null 2>&1 || {
+# type module: the vendored anti-slop plugin source is ESM; without the field
+# node reparses it with a MODULE_TYPELESS_PACKAGE_JSON warning.
+[ -f "$cache_dir/package.json" ] || printf '{"type":"module"}\n' > "$cache_dir/package.json"
+( cd "$cache_dir" && bun add --silent \
+    "@rikalabs/oxlint-standards@$oxlint_standards_version" \
+    "oxlint-tsgolint@$oxlint_tsgolint_version" \
+    "@oxlint/plugins@$oxlint_plugins_version" ) >/dev/null 2>&1 || {
   echo "7dtd-server-apm: lint-webui: could not install @rikalabs/oxlint-standards@$oxlint_standards_version + oxlint-tsgolint@$oxlint_tsgolint_version + @oxlint/plugins@$oxlint_plugins_version into $cache_dir (offline?)" >&2
   exit 1
 }
@@ -81,7 +85,7 @@ cp "$root/.oxlintrc.jsonc" "$cache_dir/oxlintrc.jsonc"
   cd "$cache_dir"
   # tsgolint is not on the user's PATH; oxlint finds it via PATH lookup.
   PATH="$cache_dir/node_modules/.bin:$PATH" \
-    npx --yes "oxlint@$oxlint_version" --config oxlintrc.jsonc --deny-warnings "$webmod_dir/bundle.ts"
+    bunx "oxlint@$oxlint_version" --config oxlintrc.jsonc --deny-warnings "$webmod_dir/bundle.ts"
 )
 
 # 3. Freshness: the committed bundle.js must equal a fresh compilation.
@@ -89,7 +93,7 @@ cp "$root/.oxlintrc.jsonc" "$cache_dir/oxlintrc.jsonc"
 #    classic script (both forms are equivalent), so the check strips it.
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-npx --yes -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --outDir "$tmp" >/dev/null
+bunx -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --outDir "$tmp" >/dev/null
 if ! diff -q <(sed '1{/^"use strict";$/d}' "$tmp/bundle.js") \
              <(sed '1{/^"use strict";$/d}' "$webmod_dir/bundle.js") >/dev/null; then
   echo "7dtd-server-apm: lint-webui: committed bundle.js is stale (bundle.ts changed without regeneration). Run: make bridge-build" >&2
