@@ -3,10 +3,33 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path, PurePosixPath
 from typing import Any
+
+# Lone surrogates (JSON "\ud800" escapes; a pair decodes to two lone halves)
+# cannot be encoded to UTF-8, so any survivor would crash os.stat joins and
+# every atomic_* writer downstream. Untrusted readers scrub them here, once,
+# instead of each consumer guessing whether its text is encodable.
+_SURROGATE_RE = re.compile("[\ud800-\udfff]")
+_SURROGATE_MAP = {codepoint: "\ufffd" for codepoint in range(0xD800, 0xE000)}
+
+
+def _clean_str(value: str) -> str:
+    # translate() only pays on strings that actually contain a surrogate.
+    return value.translate(_SURROGATE_MAP) if _SURROGATE_RE.search(value) else value
+
+
+def _sans_surrogates(value: Any) -> Any:
+    if isinstance(value, str):
+        return _clean_str(value)
+    if isinstance(value, list):
+        return [_sans_surrogates(item) for item in value]
+    if isinstance(value, dict):
+        return {_clean_str(key): _sans_surrogates(item) for key, item in value.items()}
+    return value
 
 
 def member_is_safe(name: str) -> bool:
@@ -14,9 +37,14 @@ def member_is_safe(name: str) -> bool:
 
     Shared guard for every untrusted relative path this tool joins onto a
     session directory (zip members on import, artifact paths recorded in a
-    manifest.json that an imported bundle may have planted): an absolute path
-    or any ".." segment would otherwise escape the target.
+    manifest.json that an imported bundle may have planted): an absolute path,
+    any ".." segment, or a lone-surrogate spelling (unencodable, so no such
+    file can exist on this host yet still crash the join) is rejected.
     """
+    try:
+        name.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
     candidate = PurePosixPath(name)
     return not candidate.is_absolute() and ".." not in candidate.parts
 
@@ -64,7 +92,8 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
     carries a whole telnet reply), so they are streamed, never held resident.
     Blank and torn lines (a collector killed mid-window by the grace deadline
     or Ctrl+C leaves a truncated final line) are dropped, not fatal; non-object
-    records are dropped for the same reason. Yields only dicts.
+    records are dropped for the same reason. Yields only dicts. Lone-surrogate
+    escapes in planted records are scrubbed like every other untrusted reader.
     """
     with path.open("r", encoding="utf-8", errors="replace") as stream:
         for line in stream:
@@ -75,16 +104,18 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
             except json.JSONDecodeError:
                 continue
             if isinstance(record, dict):
-                yield record
+                yield _sans_surrogates(record)
 
 
 def load_json(path: Path) -> dict[str, Any]:
     # Decode failures name the file: a bare "Expecting value" leaves the
     # operator guessing which session artifact was malformed. ValueError (not
     # JSONDecodeError) so every suppress(ValueError)/except ValueError caller
-    # keeps catching both failure modes.
+    # keeps catching both failure modes. The parsed document is scrubbed of
+    # lone surrogates: imported bundles plant JSON here, and a survivor would
+    # crash the writers and path joins every caller feeds it into.
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = _sans_surrogates(json.loads(path.read_text(encoding="utf-8")))
     except json.JSONDecodeError as error:
         raise ValueError(f"cannot parse {path}: {error}") from None
     if not isinstance(value, dict):

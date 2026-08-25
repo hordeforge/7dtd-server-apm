@@ -1336,6 +1336,73 @@ def test_audit_rejects_manifest_paths_escaping_the_session(tmp_path: Path) -> No
     assert "outside.secret" in result.stderr
 
 
+def test_member_is_safe_rejects_lone_surrogate_paths() -> None:
+    """A lone surrogate cannot be encoded to UTF-8, so the path can never name
+    a real file on this host, yet joining it would crash os.stat with an
+    uncaught UnicodeEncodeError instead of a diagnosable integrity error."""
+    from apm_suite.io import member_is_safe
+
+    assert not member_is_safe("sub_\ud800x/artifact.json")
+    assert member_is_safe("sub_\ufffdx/artifact.json")  # scrubbed spelling is fine
+
+
+def test_load_json_scrubs_lone_surrogate_escapes(tmp_path: Path) -> None:
+    """JSON "\\ud800" escapes decode to lone surrogates that no atomic_* writer
+    or filesystem call downstream can encode; the untrusted-reader boundary
+    replaces them with U+FFFD so imported documents stay usable."""
+    doc_path = tmp_path / "planted.json"
+    # Written as literal backslash-u text: exactly what a crafted bundle ships.
+    doc_path.write_text('{"p": "sub_\\ud800x", "n": {"\\udfff": [1]}}', encoding="utf-8")
+    loaded = load_json(doc_path)
+    assert loaded["p"] == "sub_\ufffdx"
+    assert list(loaded["n"]) == ["\ufffd"]
+    # The actual property callers rely on: the value survives a rewrite.
+    atomic_json(tmp_path / "out.json", loaded)
+    assert load_json(tmp_path / "out.json") == loaded
+
+
+def test_iter_jsonl_scrubs_lone_surrogates(tmp_path: Path) -> None:
+    """Planted JSONL records (an imported bundle's app/bridge.jsonl) get the
+    same surrogate scrub as structured docs; their strings feed event messages
+    and summary documents that are persisted with ensure_ascii=False."""
+    from apm_suite.io import iter_jsonl
+
+    lines = tmp_path / "planted.jsonl"
+    lines.write_text('{"t": 1.0, "text": "a\\ud800b"}\n{"t": 2.0, "ok": true}\n', encoding="utf-8")
+    records = list(iter_jsonl(lines))
+    assert records[0]["text"] == "a\ufffdb"
+    assert json.dumps(records[0], ensure_ascii=False).encode("utf-8")
+
+
+def test_audit_survives_manifest_with_lone_surrogate_paths(tmp_path: Path) -> None:
+    """A planted manifest.json whose artifact paths carry lone-surrogate escapes
+    must degrade to per-artifact integrity errors like any other missing file,
+    not crash the audit with UnicodeEncodeError out of the path join."""
+    session = _session(tmp_path / "session_surrogate")
+    assert audit_session(session)[1]
+    planted = {
+        "schema": "7dtd.apm.manifest.v2",
+        "session_id": session.name,
+        "started_at": "2026-08-24T00:00:00+00:00",
+        "target": {"pid": 1, "comm": "7DaysToDieServe", "exe": "", "cmdline": ""},
+        "requested_layers": [],
+        "artifacts": [
+            {"path": "sub_\ud800x/a.map", "bytes": 4, "sha256": "a" * 64},
+            {"path": "b.map", "bytes": 4, "sha256": "b" * 64},
+        ],
+    }
+    # Default dumps() escapes the surrogates: the on-disk bytes a hostile
+    # bundle would carry, ASCII-safe to write here.
+    (session / "manifest.json").write_text(json.dumps(planted), encoding="utf-8")
+    result = runner.invoke(app, ["audit", str(session)])
+    # SystemExit(1) is the CLI's INVALID verdict; any other exception would be
+    # the pre-fix UnicodeEncodeError escaping the audit.
+    assert isinstance(result.exception, SystemExit)
+    assert result.exit_code == 1
+    assert "is recorded but missing" in result.stderr
+    assert "UnicodeEncodeError" not in (result.stdout + result.stderr)
+
+
 def test_audit_error_output_renders_markup_as_text(tmp_path: Path) -> None:
     """Audit errors quote untrusted strings (imported-bundle artifact paths,
     schema input values). A name carrying rich markup must print literally:
