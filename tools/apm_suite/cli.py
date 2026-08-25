@@ -1248,12 +1248,10 @@ _MATRIX_ENTRY_TYPES: dict[str, type] = {
 def _coerce_matrix_entry(entry: dict[str, object], position: int) -> dict[str, Any]:
     """Type-check one plan entry before any side effect; returns it unchanged
     when every value already matches its declared type."""
-    coerced: dict[str, Any] = {}
     for key, value in entry.items():
         expected = _MATRIX_ENTRY_TYPES.get(key)
         if expected is None:
-            coerced[key] = value  # unknown keys are rejected by the caller
-            continue
+            continue  # unknown keys are rejected by the caller
         if expected is bool:
             valid = isinstance(value, bool)
         elif expected is int:
@@ -1273,8 +1271,7 @@ def _coerce_matrix_entry(entry: dict[str, object], position: int) -> dict[str, A
                 f"{expected.__name__}, got {value!r}[/red]"
             )
             raise typer.Exit(2)
-        coerced[key] = value
-    return coerced
+    return entry
 
 
 @scenario_app.command("matrix")

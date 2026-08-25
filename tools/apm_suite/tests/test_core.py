@@ -2468,6 +2468,21 @@ def test_build_summary_marks_only_requested_layers_collected(tmp_path: Path) -> 
     assert by_layer["cpu"].score is None
 
 
+def test_build_summary_counts_offcpu_evidence_for_scheduler(tmp_path: Path) -> None:
+    """--only offcpu produces scheduler evidence (stall/d_state/runq parsing);
+    the layer must read collected, not have its only artifact ignored."""
+    from apm_suite.analysis.report import build_summary
+
+    session = tmp_path / "session_offcpu"
+    (session / "scheduler").mkdir(parents=True)
+    (session / "scheduler/offcpu.bt.out").write_text("@stall_us_total: 60000\n")
+    atomic_json(session / "meta.json", _meta(only="offcpu"))
+    summary = build_summary(session)
+    scheduler = next(layer for layer in summary.layers if layer.layer == "scheduler")
+    assert scheduler.state == "collected"
+    assert scheduler.score is not None
+
+
 # --- session index page --------------------------------------------------------
 
 

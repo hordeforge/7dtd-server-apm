@@ -339,7 +339,13 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
         "cpu": [session / "cpu/oncpu.bt.out", session / "cpu/perf/stacks.folded"],
         "memory_cache": [session / "memory/hw_stat.txt", session / "memory/proc.jsonl"],
         "sync_locks": [session / "sync/futex.bt.out"],
-        "scheduler": [session / "scheduler/runqlat.bt.out", session / "scheduler/states.bt.out"],
+        # offcpu feeds stall/d_state/runq scoring below, so its artifact alone
+        # is collected evidence for this layer.
+        "scheduler": [
+            session / "scheduler/runqlat.bt.out",
+            session / "scheduler/states.bt.out",
+            session / "scheduler/offcpu.bt.out",
+        ],
         "io": [session / "io/vfs.bt.out", session / "io/block.bt.out"],
         "runtime_gc": [session / "runtime/mono_gc.bt.out"],
         "app_sim": [session / "app/apm_app.json", session / "app/bridge.jsonl"],
