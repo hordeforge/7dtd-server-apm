@@ -25,7 +25,9 @@ command -v java >/dev/null 2>&1 || {
   exit 1
 }
 
-scratch="$(mktemp -d)"
+# Scratch under the repo, not tmpfs: /tmp is RAM-backed on typical hosts and a
+# rendered report tree plus the vnu jar has no business living there.
+scratch="$(mkdir -p "$root/.scratch" && mktemp -d -p "$root/.scratch")"
 trap 'rm -rf "$scratch"' EXIT
 
 # Render the report + dashboard templates with a minimal fixture session

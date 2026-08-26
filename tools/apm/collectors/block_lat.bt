@@ -11,7 +11,7 @@ tracepoint:block:block_rq_issue
     @issue_bytes = hist(args.bytes);
     @issue_n = count();
     if (args.rwbs != "") {
-        /* rwbs is char array on some kernels — skip if missing */
+        /* rwbs is char array on some kernels, skip if missing */
     }
 }
 

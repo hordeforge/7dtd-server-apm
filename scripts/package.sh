@@ -43,7 +43,9 @@ if [[ -z "$VERSION" || "$VERSION" == *-* ]]; then
 fi
 
 OUT="$ROOT/dist/7dtd-server-apm-bridge-$VERSION.zip"
-STAGE="$(mktemp -d)"
+# Repo-local scratch instead of tmpfs: the staged mod tree plus its zip can run
+# to tens of MB, and /tmp is RAM-backed on typical hosts.
+STAGE="$(mkdir -p "$ROOT/.scratch" && mktemp -d -p "$ROOT/.scratch")"
 trap 'rm -rf "$STAGE"' EXIT
 cp -a "$ROOT/dist/7dtd-server-apm-bridge" "$STAGE/"
 # Debug symbols never ship: the release zip carries the DLL, ModInfo, the

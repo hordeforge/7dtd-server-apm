@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+from apm_suite.paths import REPO
 
-WEB_API_CS = ROOT / "bridge" / "ApmBridge" / "WebApi.cs"
+WEB_API_CS = REPO / "bridge" / "ApmBridge" / "WebApi.cs"
 
 
 def _rest_api_class_bodies(source: str) -> dict[str, str]:
@@ -23,19 +22,19 @@ def _rest_api_class_bodies(source: str) -> dict[str, str]:
 def test_bridge_build_uses_pinned_bunx_typescript() -> None:
     # The pin lives in scripts/lib/tool_versions.sh, shared with lint-webui.sh
     # so the freshness gate checks the same TypeScript that ships.
-    script = (ROOT / "scripts" / "build_bridge.sh").read_text(encoding="utf-8")
+    script = (REPO / "scripts" / "build_bridge.sh").read_text(encoding="utf-8")
     assert "scripts/lib/tool_versions.sh" in script
     assert 'bunx -p "typescript@$TSC_VERSION" tsc' in script
     assert "command -v tsc" not in script
 
-    lib = (ROOT / "scripts" / "lib" / "tool_versions.sh").read_text(encoding="utf-8")
+    lib = (REPO / "scripts" / "lib" / "tool_versions.sh").read_text(encoding="utf-8")
     match = re.search(r':\s*"\$\{TSC_VERSION:=([0-9.]+)\}"', lib)
     assert match, "tool_versions.sh must pin TSC_VERSION to an explicit x.y.z"
     assert re.fullmatch(r"\d+\.\d+\.\d+", match.group(1))
 
 
 def test_bridge_docs_do_not_require_global_tsc() -> None:
-    docs = (ROOT / "bridge" / "README.md").read_text(encoding="utf-8")
+    docs = (REPO / "bridge" / "README.md").read_text(encoding="utf-8")
     assert "no global `tsc`" in docs
 
 
@@ -45,16 +44,16 @@ def test_release_zip_ships_example_config_not_live_config() -> None:
     # Config/apmbridge.json.example; shipping the live config name would reset
     # operator-tuned settings on every upgrade (the mod runs on built-in
     # defaults when the file is absent).
-    build = (ROOT / "scripts" / "build_bridge.sh").read_text(encoding="utf-8")
+    build = (REPO / "scripts" / "build_bridge.sh").read_text(encoding="utf-8")
     assert '"$OUT/Config/apmbridge.json.example"' in build
     assert 'cp "$ROOT/bridge/ApmBridge/apmbridge.json" "$OUT/Config/apmbridge.json"' not in build
 
-    package = (ROOT / "scripts" / "package.sh").read_text(encoding="utf-8")
+    package = (REPO / "scripts" / "package.sh").read_text(encoding="utf-8")
     assert "Config/apmbridge.json" in package, (
         "package.sh must keep excluding the live config name from the stage"
     )
 
-    install = (ROOT / "scripts" / "install_bridge.sh").read_text(encoding="utf-8")
+    install = (REPO / "scripts" / "install_bridge.sh").read_text(encoding="utf-8")
     assert "Config/apmbridge.json.example" in install
     assert install.index("if [[ ! -f") < install.index("apmbridge.json.example"), (
         "first-install seeding must stay conditional on no existing config"

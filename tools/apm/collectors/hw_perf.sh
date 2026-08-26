@@ -21,7 +21,7 @@ EVENTS=(
   cpu-clock
 )
 
-# Optional LLC / stall events (may fail on some CPUs — try then drop)
+# Optional LLC / stall events (may fail on some CPUs, try then drop)
 OPTIONAL=(
   L1-dcache-load-misses
   L1-dcache-loads

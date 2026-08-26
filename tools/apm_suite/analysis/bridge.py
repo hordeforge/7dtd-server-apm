@@ -1,9 +1,9 @@
 """Map host/native APM evidence → C# systems → mod API fixes.
 
 Bridges weighted CPU frames, structured layer signals, and managed bridge
-sections to actionable Harmony targets and EfficientServer / serverconfig
-levers. Every emitted bridge separates raw evidence, derived metrics, the
-inference drawn from them, and a suggested experiment to confirm the fix.
+sections to Harmony targets and EfficientServer / serverconfig levers. Every
+emitted bridge separates raw evidence, derived metrics, the inference drawn
+from them, and a suggested experiment to confirm the fix.
 """
 
 from __future__ import annotations
@@ -366,9 +366,7 @@ def load_speedscope_frames(session: Path) -> list[tuple[str, int]]:
     raw_frames = raw_frames if isinstance(raw_frames, list) else []
     # Positional alignment matters: sample indexes address this list, so a
     # non-dict frame entry degrades to an empty name rather than shifting.
-    names = [
-        str(frame.get("name", "")) if isinstance(frame, dict) else "" for frame in raw_frames
-    ]
+    names = [str(frame.get("name", "")) if isinstance(frame, dict) else "" for frame in raw_frames]
     counts: dict[str, int] = defaultdict(int)
     profiles = data.get("profiles")
     for profile in profiles if isinstance(profiles, list) else []:
@@ -404,7 +402,7 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
     """Extract section stats from managed bridge JSON dumps or app scrapes."""
     sections: list[dict[str, Any]] = []
 
-    def ingest_obj(obj: dict[str, Any]) -> None:
+    def ingest_obj(obj: object) -> None:
         # Imported app/*.json sweeps and named dumps are re-read without schema
         # guarantees: a valid-JSON non-object root must read as no sections,
         # not raise AttributeError past the JSONDecodeError suppression.

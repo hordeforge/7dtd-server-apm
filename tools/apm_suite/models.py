@@ -142,6 +142,9 @@ class EventV2(BaseModel):
     kind: str
     severity: Literal["info", "warn", "error"]
     message: str
+    # Declared, not an `extra`: EventSink bounds retention per source
+    # (PER_SOURCE_MAX), so readers and the type checker both need the field.
+    source: str = ""
 
 
 class EventsV2(StrictModel):

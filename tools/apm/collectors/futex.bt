@@ -35,9 +35,9 @@ tracepoint:syscalls:sys_exit_futex
     @wait_us = hist($us);
     @wait_sum_us = sum($us);
     @wait_n = count();
-    /* stacks of waiters — primary contention signal */
+    /* stacks of waiters: primary contention signal */
     /* A long worker futex is often an intentional sleep. Main-thread waits are
-     * the actionable contention signal; retain very long waits as context. */
+     * the contention signal that matters; retain very long waits as context. */
     if (($us >= 1000 && tid == TARGET_PID) || $us >= 100000) {
         @wait_stack[ustack] = count();
         @wait_stack_time[ustack] = sum($us);

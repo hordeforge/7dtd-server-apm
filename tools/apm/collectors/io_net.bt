@@ -55,7 +55,7 @@ software:page-faults:1
     @pagefaults = count();
 }
 
-/* open/openat — save path storms (world chunks) */
+/* open/openat: save path storms (world chunks) */
 tracepoint:syscalls:sys_enter_openat
 /comm == TARGET_COMM || pid == TARGET_PID/
 {

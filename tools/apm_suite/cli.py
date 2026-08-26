@@ -245,7 +245,7 @@ def audit(
         f"audit: {'valid' if valid else 'INVALID'}; "
         f"{len(manifest.errors)} errors, {len(manifest.warnings)} warnings"
     )
-    # An INVALID verdict without the offending paths is not actionable; name
+    # An INVALID verdict without the offending paths names nothing to fix; list
     # every error (missing file, failed schema, recorded-hash mismatch).
     # Each error quotes untrusted content (imported-bundle artifact paths,
     # schema-validation input values), so escape it: rich would otherwise

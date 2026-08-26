@@ -2,7 +2,7 @@
 """Thread / contention sample from /proc for a process.
 
 Captures per-tid CPU ticks, state, voluntary/nonvoluntary ctx, and wchan
-(kernel wait channel — often futex_wait_queue_me when blocked on locks).
+(kernel wait channel, often futex_wait_queue_me when blocked on locks).
 """
 
 from __future__ import annotations

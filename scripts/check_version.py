@@ -18,7 +18,21 @@ import re
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+
+def _root() -> Path:
+    """Checkout root by marker walk, not a parent count.
+
+    Deliberately does not reuse apm_suite.paths: this gate reads the shipped
+    version out of tools/apm_suite/__init__.py, so it must locate the checkout
+    without importing the package whose version it is checking.
+    """
+    for candidate in Path(__file__).resolve().parents:
+        if (candidate / "pyproject.toml").is_file():
+            return candidate
+    raise SystemExit(f"no pyproject.toml above {__file__}; not a repository checkout")
+
+
+ROOT = _root()
 MODINFO = ROOT / "bridge" / "ApmBridge" / "ModInfo.xml"
 BRIDGEMOD = ROOT / "bridge" / "ApmBridge" / "BridgeMod.cs"
 BRIDGE_README = ROOT / "bridge" / "README.md"

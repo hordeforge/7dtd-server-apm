@@ -20,9 +20,8 @@ from pathlib import Path
 # Runs under a bare python3 like the host_profiler scripts: resolve the shared
 # path helpers from the repository checkout instead of duplicating defaults.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from apm_suite.paths import apm_root, bridge_mod_dir
+from apm_suite.paths import REPO, apm_root, bridge_mod_dir
 
-APM = Path(__file__).resolve().parent.parent  # 7dtd-server-apm repo root (plans/..)
 HOST, PORT = "127.0.0.1", 8081
 PASSWORD = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
 TIERS = [100, 300, 600, 1000]
@@ -145,10 +144,10 @@ def main() -> int:
                 "all",
                 "--reset-bridge",
             ],
-            cwd=APM,
+            cwd=REPO,
             env={
                 **os.environ,
-                "UV_CACHE_DIR": str(APM / ".uv-cache"),
+                "UV_CACHE_DIR": str(REPO / ".uv-cache"),
             },
             check=False,
         )

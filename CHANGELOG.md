@@ -112,6 +112,34 @@ major version.
   suite; capture and flamegraph commands fail with one clear message when run
   from an installed copy that lacks the collector backends instead of failing
   per collector.
+- Fixed: an out-of-range integer `t` in any collector record (JSON integers are
+  unbounded; `10**400` parses fine) raised `OverflowError` out of `float()` and
+  aborted the whole required events stage, losing the timeline for the session.
+  Timestamp coercion now goes through the same `as_number` helper every other
+  unvalidated field uses, so a corrupt stamp reads as untimed.
+- Fixed: `EventV2.source` is a declared field instead of a pydantic extra. The
+  per-source retention cap (`PER_SOURCE_MAX`) is built on it, so readers and the
+  type checker now both see it.
+- Gates: `make lint`, `make typecheck`, and `make test` all failed on the
+  committed tree. Ruff had no `src` setting, so it classified `apm_suite` as
+  third-party and demanded contradictory import orders in different test files;
+  mypy reported six errors (a dead `isinstance` guard typed away, a fuzz
+  generator annotated as narrower than it is, the undeclared `source`); and two
+  fuzz targets failed, one on the `OverflowError` above and one on a regression
+  fixture that fed a list-rooted `apm_app.json` while asserting spikes came out
+  of it. The fixture now covers both shapes separately: a list root is foreign
+  evidence and reads as absent, an object root still yields its spikes.
+- Repository: scratch directories in `check_bt.sh`, `lint-html.sh`,
+  `lint-webui.sh`, and `package.sh` are created under the repo's gitignored
+  `.scratch/` instead of `/tmp`, which is tmpfs on typical hosts (the staged
+  release tree and the compiled webmod output were being held in RAM).
+- Repository: the checkout root is found by walking up for the
+  (`pyproject.toml`, `tools/apm_suite`) marker pair rather than by counting
+  parent directories, in `apm_suite.paths` and in the `check_version.py` gate,
+  which cannot import the package whose version it checks. Four test modules and
+  `plans/scale_ladder.py` now take the one definition instead of recomputing it;
+  `proc_sample.py` resolves `find_server.sh` as its own sibling and no longer
+  swallows every exception from that lookup.
 
 ### Bridge mod
 
