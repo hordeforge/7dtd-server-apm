@@ -10,7 +10,7 @@ namespace DtdApmBridge
 {
     public sealed class BridgeMod : IModApi
     {
-        public const string Version = "2.2.3";
+        public const string Version = "2.3.0";
         // Written by InitMod while Capabilities() reads the same table from the
         // export ThreadPool thread, web API threads (/api/apm), and the telnet
         // console (`apm capabilities`); unsynchronized enumeration during a

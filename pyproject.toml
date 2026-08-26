@@ -1,6 +1,6 @@
 [project]
 name = "seven-dtd-apm"
-version = "2.1.0"
+version = "2.2.0"
 description = "Host-only APM for 7 Days to Die dedicated servers"
 readme = "README.md"
 license = "MIT"

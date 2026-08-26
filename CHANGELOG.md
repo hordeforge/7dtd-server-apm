@@ -8,16 +8,19 @@ User-facing changes for the two shipped artifacts. They version independently:
 | `7dtd-server-apm-bridge` server mod | `ModInfo.xml` = `BridgeMod.cs` const = `bridge/README.md` claim (same gate) | zip from `make package`, named after the newest git tag |
 
 Git tags `vX.Y.Z` mirror the **bridge** version and carry annotated release
-notes (`git show v2.2.3`). This de facto policy is inferred from history:
-only the bridge has ever been tagged, and its in-file bumps precede each tag.
-The CLI package has stayed at 2.1.0 since the initial commit despite ongoing
-feature work; treat CLI minor bumps as pending until one lands. Breaking
-telemetry-schema or config changes to the bridge are expected to bump its
-major version.
+notes (`git show v2.3.0`); `.github/workflows/release.yml` rejects a tag that
+disagrees with `ModInfo.xml`. Only the bridge is tagged, so a CLI-only release
+ships without one. Breaking telemetry-schema or config changes to the bridge
+are expected to bump its major version.
 
-## Unreleased
+`v2.2.4` is tagged at a commit whose `ModInfo.xml` still read 2.2.3; it
+predates the tag gate and no 2.2.4 mod was ever built. The bridge goes 2.2.3
+to 2.3.0 and 2.2.4 stays skipped.
 
-### Host CLI
+## 2.2.0 - host CLI - 2026-08-26
+
+First CLI version bump since the initial drop. Everything below accumulated
+against 2.1.0.
 
 - Correctness: `main_thread_share_of_process_avg` now divides the main
   thread's CPU by the whole-process CPU total the threads collector records
@@ -141,7 +144,7 @@ major version.
   `proc_sample.py` resolves `find_server.sh` as its own sibling and no longer
   swallows every exception from that lookup.
 
-### Bridge mod
+## 2.3.0 (tag v2.3.0) - bridge mod - 2026-08-26
 
 - Changed: the stale-temp sweep and the atomic temp-to-final publish are one
   shared implementation (`TempFiles`) used by both the periodic telemetry
