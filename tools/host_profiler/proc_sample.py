@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -168,20 +170,20 @@ def main() -> int:
     args = ap.parse_args()
     pid = args.pid
     if not pid:
-        import subprocess
-
+        # Sibling of this file, not a path built from the repository root: the
+        # locator ships next to the sampler and moves with it.
+        locator = Path(__file__).resolve().parent / "find_server.sh"
         try:
-            root = Path(__file__).resolve().parents[2]
             pid = int(
                 subprocess.check_output(
-                    [str(root / "tools/host_profiler/find_server.sh")],
+                    [str(locator)],
                     text=True,
                     encoding="utf-8",
                     errors="replace",
                 ).strip()
             )
-        except Exception as e:
-            print(f"need --pid or running server: {e}")
+        except (OSError, subprocess.CalledProcessError, ValueError) as error:
+            print(f"need --pid or running server: {error}", file=sys.stderr)
             return 1
 
     # Loop control and rate math run on the monotonic clock: a wall-clock step

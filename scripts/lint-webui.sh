@@ -91,7 +91,8 @@ cp "$root/.oxlintrc.jsonc" "$cache_dir/oxlintrc.jsonc"
 # 3. Freshness: the committed bundle.js must equal a fresh compilation.
 #    tsc versions differ on whether they emit a leading "use strict" for this
 #    classic script (both forms are equivalent), so the check strips it.
-tmp="$(mktemp -d)"
+# Repo-local scratch instead of tmpfs (/tmp is RAM-backed on typical hosts).
+tmp="$(mkdir -p "$root/.scratch" && mktemp -d -p "$root/.scratch")"
 trap 'rm -rf "$tmp"' EXIT
 bunx -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --outDir "$tmp" >/dev/null
 if ! diff -q <(sed '1{/^"use strict";$/d}' "$tmp/bundle.js") \

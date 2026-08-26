@@ -32,8 +32,7 @@ import pytest
 from apm_suite.analysis.bridge import load_speedscope_frames, parse_section_line
 from apm_suite.analysis.events import PER_SOURCE_MAX, RETAINED_MAX, build_timeline
 from apm_suite.models import EventsV2, schema_dict
-
-REPO = Path(__file__).parents[3]
+from apm_suite.paths import REPO
 
 
 def _load(name: str) -> Any:
@@ -315,7 +314,7 @@ def _threads_record(rng: random.Random) -> Any:
         return rng.choice(["torn {", "", "[]", "[1,2]"])  # torn / non-object lines
     wchan_roll = rng.random()
     if wchan_roll < 0.7:
-        wchan = {
+        wchan: Any = {
             rng.choice(WCHAN_NAMES): rng.choice(SCALARS) for _ in range(rng.randint(0, 8))
         }
     else:
@@ -378,9 +377,7 @@ def test_fuzz_events_timeline(tmp_path: Path, seed: int) -> None:
         encoding="utf-8",
     )
     (threads_dir / "threads.jsonl").write_text(
-        "".join(
-            json.dumps(_threads_record(rng)) + "\n" for _ in range(rng.randint(0, 30))
-        ),
+        "".join(json.dumps(_threads_record(rng)) + "\n" for _ in range(rng.randint(0, 30))),
         encoding="utf-8",
     )
     (memory / "proc.jsonl").write_text(
@@ -398,7 +395,7 @@ def test_fuzz_events_timeline(tmp_path: Path, seed: int) -> None:
     assert first.retained == len(first.events) <= RETAINED_MAX
     assert first.dropped == first.count - first.retained >= 0
 
-    per_source = Counter(event.source or "" for event in first.events)
+    per_source = Counter(event.source for event in first.events)
     assert all(count <= PER_SOURCE_MAX for count in per_source.values()), (
         f"seed={seed}: per-source retention bound exceeded"
     )
@@ -491,7 +488,9 @@ def test_fuzz_managed_sections_surface(tmp_path: Path, seed: int) -> None:
 
     profile_path = tmp_path / "cpu/perf/profile.speedscope.json"
     profile_path.parent.mkdir(parents=True, exist_ok=True)
-    profile_path.write_text(json.dumps(_speedscope_doc(random.Random(seed + 100))), encoding="utf-8")
+    profile_path.write_text(
+        json.dumps(_speedscope_doc(random.Random(seed + 100))), encoding="utf-8"
+    )
 
     frames_a = load_speedscope_frames(tmp_path)
     frames_b = load_speedscope_frames(tmp_path)
@@ -511,25 +510,40 @@ def test_fuzz_session_artifacts_regression(tmp_path: Path) -> None:
 
     app = session / "app"
     app.mkdir(parents=True)
-    # root=list crashed parse_bridge_spikes; world=str crashed the message build;
-    # a scalar among spikes[] crashed spike.get().
+    # world=str crashed the message build; a scalar among spikes[] crashed
+    # spike.get(); an out-of-range integer "t" crashed the timeline sort.
+    # The document root stays an object: the bridge writes one snapshot, so a
+    # list root is foreign evidence and is covered separately below.
     (app / "apm_app.json").write_text(
-        '[{"spikes":[]},'
-        '{"spikes":[{"gmUpdateDurationMs":300,"utc":"2026-01-01T00:00:00Z","world":"x"}]},'
-        '{"spikes":[5,{"gmUpdateDurationMs":250,"world":{"entities":3}}]}]',
+        '{"spikes":[{"gmUpdateDurationMs":300,"utc":"2026-01-01T00:00:00Z","world":"x"},'
+        "5,"
+        '{"gmUpdateDurationMs":250,"world":{"entities":3}}]}',
         encoding="utf-8",
     )
     threads_dir = session / "threads"
     threads_dir.mkdir(parents=True)
-    # wchan_top as list/scalar crashed .items().
+    # wchan_top as list/scalar crashed .items(); the 10**400 stamp on the last
+    # row crashed the timeline's float() with OverflowError (JSON integers are
+    # unbounded), taking the whole required events stage down with it.
     (threads_dir / "threads.jsonl").write_text(
         '{"t":1,"wchan_top":["futex_wait",7]}\n{"t":2,"wchan_top":"futex"}\n'
-        '{"t":3,"wchan_top":{"futex_wait":5}}\n',
+        '{"t":3,"wchan_top":{"futex_wait":5}}\n'
+        f'{{"t":{10**400},"wchan_top":{{"futex_wait":9}}}}\n',
         encoding="utf-8",
     )
     doc = build_timeline(session)
     kinds = {event.kind for event in doc.events}
     assert "wchan" in kinds and "frame_spike" in kinds
+
+    # A list-rooted snapshot is foreign evidence (the bridge writes one object),
+    # so it reads as absent rather than raising or inventing spikes.
+    listed = tmp_path / "session_listed"
+    (listed / "app").mkdir(parents=True)
+    (listed / "app/apm_app.json").write_text(
+        '[{"spikes":[{"gmUpdateDurationMs":300,"utc":"2026-01-01T00:00:00Z"}]}]',
+        encoding="utf-8",
+    )
+    assert not [event for event in build_timeline(listed).events if event.kind == "frame_spike"]
 
     # "1.2.3ms" crashed parse_section_line's bare float(); the mangled row is
     # skipped while its valid sibling survives.

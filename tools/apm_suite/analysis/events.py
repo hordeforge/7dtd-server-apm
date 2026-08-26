@@ -260,13 +260,12 @@ def build_timeline(session: Path) -> EventsV2:
     parse_app_scrape(sink, session / "app/bridge.jsonl")
 
     def _t(event: dict[str, Any]) -> float | None:
-        # A non-numeric "t" (corrupt or format-changed collector record) must not
-        # crash the whole timeline build; treat it as untimed instead.
-        try:
-            value = event.get("t")
-            return float(value) if value is not None else None
-        except (TypeError, ValueError):
-            return None
+        # Same coercion as every other unvalidated collector field: a corrupt or
+        # format-changed "t" reads as untimed instead of crashing the required
+        # events stage. The local float() this replaced missed OverflowError, so
+        # an out-of-range integer stamp (JSON has no int bound) aborted the whole
+        # timeline build.
+        return as_number(event.get("t"))
 
     timed: list[tuple[float, dict[str, Any]]] = []
     untimed: list[dict[str, Any]] = []

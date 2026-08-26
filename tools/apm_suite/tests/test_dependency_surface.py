@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+from apm_suite.paths import REPO
 
 HEREDOC_START = re.compile(r"<<-?(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
 
@@ -29,7 +28,7 @@ def _strip_shell_heredocs(text: str) -> str:
 def test_ci_actions_are_pinned_to_commit_shas() -> None:
     # Mutable tags (actions/checkout@v4) can be force-moved after review; CI
     # must execute immutable SHAs. Dependabot keeps the pins current.
-    workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    workflows = sorted((REPO / ".github" / "workflows").glob("*.yml"))
     assert workflows, "no GitHub Actions workflows found"
     for path in workflows:
         refs = re.findall(r"uses:\s*(\S+)", path.read_text(encoding="utf-8"))
@@ -46,9 +45,9 @@ def test_executed_npx_calls_are_version_pinned() -> None:
     # invocation in repo scripts must pin package@version. Heredoc bodies are
     # documentation (e.g. the speedscope hint in OPEN_FLAMES.txt), not runs.
     script_dirs = [
-        ROOT / "scripts",
-        ROOT / "tools" / "host_profiler",
-        ROOT / "tools" / "apm",
+        REPO / "scripts",
+        REPO / "tools" / "host_profiler",
+        REPO / "tools" / "apm",
     ]
     scripts = sorted(path for directory in script_dirs for path in directory.rglob("*.sh"))
     assert scripts, "no shell scripts found"
@@ -63,7 +62,7 @@ def test_executed_npx_calls_are_version_pinned() -> None:
             if not invocation.match(line):
                 continue
             if not versioned.search(line):
-                unpinned.append(f"{path.relative_to(ROOT)}:{lineno}: {line.strip()}")
+                unpinned.append(f"{path.relative_to(REPO)}:{lineno}: {line.strip()}")
     assert not unpinned, (
         f"npx calls must pin package@version (override vars like TSC_VERSION count): {unpinned}"
     )

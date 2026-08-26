@@ -647,8 +647,8 @@ def _rank_folded(folded: Path, limit: int) -> dict[str, list[tuple[str, float]]]
 
 
 def top_cpu_hot_paths(session: Path, limit: int = 12) -> dict[str, list[tuple[str, float]]]:
-    """Rank hot paths from the symbolized perf folded stacks - comprehensive
-    auto-discovery beyond the curated bridge sections. Views (name, percent):
+    """Rank hot paths from the symbolized perf folded stacks: auto-discovered,
+    not limited to the curated bridge sections. Views (name, percent):
       inclusive   - functions by total samples anywhere in the stack (all-thread,
         native kept); broad "where does aggregate CPU go".
       self_game   - leaf attributed to the first GAME frame (all-thread); which

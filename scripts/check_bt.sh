@@ -10,7 +10,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/ds_paths.sh"
 PRE="$ROOT/tools/host_profiler/preprocess_bt.py"
-WORK="$(mktemp -d)"
+# Repo-local scratch instead of tmpfs (/tmp is RAM-backed on typical hosts).
+WORK="$(mkdir -p "$ROOT/.scratch" && mktemp -d -p "$ROOT/.scratch")"
 trap 'rm -rf "$WORK"' EXIT
 
 if ! command -v bpftrace >/dev/null; then

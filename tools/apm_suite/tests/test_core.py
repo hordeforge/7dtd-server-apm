@@ -15,6 +15,9 @@ from typing import Any
 
 import psutil
 import pytest
+from pydantic import ValidationError
+from typer.testing import CliRunner
+
 from apm_suite import capture, paths
 from apm_suite.analysis.bridge import match_rules, parse_section_line
 from apm_suite.analysis.events import PER_SOURCE_MAX, build_timeline
@@ -25,15 +28,23 @@ from apm_suite.cli import app
 from apm_suite.finalize import finalize
 from apm_suite.io import atomic_json, load_json
 from apm_suite.models import Artifact, EventsV2, LayerScore, ManifestV2, Target, schema_dict
+from apm_suite.paths import REPO
 from apm_suite.reporting import render_session
 from apm_suite.runner import terminate_tree
 from apm_suite.session import REQUIRED, audit_session
-from pydantic import ValidationError
-from typer.testing import CliRunner
 
 runner = CliRunner()
-REPO = Path(__file__).parents[3]
+
 FIXTURES = Path(__file__).with_name("fixtures")
+
+
+def test_repo_root_resolves_to_the_checkout_marker() -> None:
+    """paths.REPO walks up for the (pyproject.toml, tools/apm_suite) marker
+    instead of counting parents. A wrong answer silently repoints every
+    collector backend, bpftrace source, and script path derived from it."""
+    assert (REPO / "pyproject.toml").is_file()
+    assert (REPO / "tools/apm_suite").is_dir()
+    assert Path(__file__).resolve().is_relative_to(REPO)
 
 
 def _meta(pid: int = 1, seconds: int = 10, only: str = "all") -> dict[str, object]:
@@ -97,8 +108,9 @@ def test_cli_help_and_dry_run() -> None:
 
 
 def test_cli_version_flag_works_without_subcommand() -> None:
-    from apm_suite import __version__
     from typer.main import get_command
+
+    from apm_suite import __version__
 
     result = runner.invoke(app, ["--version"])
     assert result.exit_code == 0
@@ -935,7 +947,7 @@ def test_export_round_trips_non_ascii_evidence_bytes(
     session = tmp_path / "session_unicode"
     (session / "io").mkdir(parents=True)
     atomic_json(session / "meta.json", _meta())
-    note = "player ☃ joined — NFD: café"
+    note = "player ☃ joined -> NFD: café"
     (session / "io/vfs.bt.out").write_text(note + "\n", encoding="utf-8")
     atomic_json(session / "summary.json", _summary("session_unicode", []))
 

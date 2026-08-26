@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>7dtd APM — {{ session.name }}</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>7dtd APM: {{ session.name }}</title>
 <style>
 /* Shared APM web tokens (report + dashboard + session index):
    bg #0f1115 · surface #161a22 · outline #2a2f3a · rule #303642 ·
@@ -8,7 +8,7 @@
 </style></head><body>
 <header><h1>7dtd APM Dashboard</h1><div class="muted">{{ session.name }} · pid {{ meta.pid or '?' }} · {{ meta.utc or '' }}</div><nav><a href="report.html">Report</a> · <a href="../index.html">All sessions</a></nav></header>
 <main>
-{% if lag.verdict %}<section class="card full"><h2>Lag diagnosis</h2><p style="font-size:18px">{{ lag.verdict }}</p>{% if lag.profile %}<p class="muted">{{ lag.profile }}</p>{% endif %}{% for c in lag.causes %}<p>· <b>{{ c.cause }}</b> ({{ c.severity }}) — {{ c.detail }}{% if c.fix %}<br><span class="muted">fix: {{ c.fix }}</span>{% endif %}</p>{% endfor %}</section>{% endif %}
+{% if lag.verdict %}<section class="card full"><h2>Lag diagnosis</h2><p style="font-size:18px">{{ lag.verdict }}</p>{% if lag.profile %}<p class="muted">{{ lag.profile }}</p>{% endif %}{% for c in lag.causes %}<p>· <b>{{ c.cause }}</b> ({{ c.severity }}): {{ c.detail }}{% if c.fix %}<br><span class="muted">fix: {{ c.fix }}</span>{% endif %}</p>{% endfor %}</section>{% endif %}
 <section class="card"><h2>Health</h2><div class="score">{{ health.grade or '?' }} · {{ health.health or '?' }}</div><p>Pressure {{ health.pressure or '?' }}</p></section>
 <section class="card"><h2>Artifacts</h2><ul>{% for label, href in links %}<li><a href="{{ href }}">{{ label }}</a></li>{% else %}<li>None produced</li>{% endfor %}</ul></section>
 <section class="card"><h2>Frame / GC</h2>
@@ -19,7 +19,7 @@
 {% if transfers %}<p>chunk stream: {{ transfers.mb_per_second }} MB/s · {{ transfers.packages_per_second }} pkg/s</p>{% endif %}
 {% if net %}<p>kernel udp (game): {{ net.udp_send_mb_per_second }} MB/s send · {{ net.udp_recv_mb_per_second }} MB/s recv</p>{% endif %}
 {% if worldinfo %}<p>world: {{ worldinfo.entities }} entities · {{ worldinfo.players }} players</p>{% endif %}</section>
-<section class="card full"><h2>Layer pressure</h2>{% for layer in layers %}<p>{{ layer.layer }} — {{ layer.score if layer.score is not none else (layer.state or 'no data') }}</p>{% if layer.score is not none %}<div class="bar" aria-hidden="true"><div class="fill" style="width:{{ layer.score }}%"></div></div>{% endif %}{% endfor %}</section>
+<section class="card full"><h2>Layer pressure</h2>{% for layer in layers %}<p>{{ layer.layer }}: {{ layer.score if layer.score is not none else (layer.state or 'no data') }}</p>{% if layer.score is not none %}<div class="bar" aria-hidden="true"><div class="fill" style="width:{{ layer.score }}%"></div></div>{% endif %}{% endfor %}</section>
 {% if attribution.subsystems %}<section class="card full"><h2>Subsystem attribution (managed, window-scoped)</h2>
 <p class="muted">measured {{ attribution.measured_ms }} ms{% if attribution.ms_per_tick %} · {{ attribution.ms_per_tick }} ms/tick{% endif %}{% if attribution.entities %} · {{ attribution.entities }} entities{% endif %}</p>
 <table><caption class="sr-only">Subsystem attribution, managed and window-scoped</caption><tr><th scope="col">Subsystem</th><th scope="col">Scaled total ms</th><th scope="col">Share</th><th scope="col">Top sections</th></tr>

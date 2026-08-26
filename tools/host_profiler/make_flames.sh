@@ -44,13 +44,13 @@ python3 "$ROOT/tools/host_profiler/interactive_flame.py" "$FOLDED" \
 cat >"$OUTDIR/OPEN_FLAMES.txt" <<EOF
 Interactive flamegraphs
 -----------------------
-1. flame.html          — annotated [GC]/[LOCK]/[AI]/… tags; click zoom, search
-2. flame.raw.html      — unannotated native frames
+1. flame.html          : annotated [GC]/[LOCK]/[AI]/… tags; click zoom, search
+2. flame.raw.html      : unannotated native frames
 3. profile.speedscope.json
      bunx speedscope profile.speedscope.json
      or drag onto https://www.speedscope.app/
-4. profile.raw.speedscope.json — raw symbols
-5. flame.svg           — static snapshot
+4. profile.raw.speedscope.json: raw symbols
+5. flame.svg           : static snapshot
 6. stacks.folded / stacks.annotated.folded
 
 Tags come from tools/host_profiler/annotate_stacks.py (catalog of native→layer labels).

@@ -3,7 +3,25 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
+
+def _repo_root() -> Path:
+    """Checkout root, found by walking up for the marker rather than counting
+    parents, so moving this module inside the tree cannot silently repoint every
+    derived path one directory off.
+
+    The marker is the pair (pyproject.toml, tools/apm_suite): an installed copy
+    living under some consumer's project must not match that project's root. No
+    match means an installed wheel with no checkout above it, which is the case
+    require_backends() reports by name.
+    """
+    here = Path(__file__).resolve()
+    for candidate in here.parents:
+        if (candidate / "pyproject.toml").is_file() and (candidate / "tools/apm_suite").is_dir():
+            return candidate
+    return here.parents[2]
+
+
+REPO = _repo_root()
 TOOLS = REPO / "tools"
 APM_BACKENDS = TOOLS / "apm"
 DEFAULT_DS = Path.home() / ".local/share/Steam/steamapps/common/7 Days to Die Dedicated Server"

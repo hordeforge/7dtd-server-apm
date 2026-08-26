@@ -86,7 +86,7 @@ in `summary.json` metadata, surfaced on the dashboard. Causes include
   managed frames resolved via the jitmap) into two views: `inclusive` (functions by
   total samples anywhere in the stack, native kept) and `self_game` (the leaf sample
   attributed to the first **game** frame, skipping native/GC/BCL noise - i.e. which
-  game code is actually hot). This is **comprehensive**: unlike the bridge section
+  game code is actually hot). **Coverage:** unlike the bridge section
   timings (a *curated* set of Harmony-hooked methods), it surfaces every hot method
   perf sampled - e.g. `StreamUtils.StreamCopy`, `ChunkBlockLayer.GetAt`,
   `Lighting3DArray.GetLight`, the writer-thread serialization cluster. **Caveat:**
