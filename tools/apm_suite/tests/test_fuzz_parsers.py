@@ -1,9 +1,12 @@
 """Deterministic fuzz targets for the untrusted profiler-text parsers.
 
-Two surfaces ingest text nobody controls at analysis time: `perf script`
-output (format varies across perf versions, perf.data can be corrupt) and
-folded-stack files (they arrive inside imported evidence bundles produced by
-other people). A crash or hang there destroys the whole session's analysis.
+Four surfaces ingest text nobody controls at analysis time: `perf script`
+output (format varies across perf versions, perf.data can be corrupt),
+folded-stack files and speedscope profiles (they arrive inside imported
+evidence bundles produced by other people), and every collector artifact the
+event timeline re-reads (bpftrace text dumps, proc/threads/bridge JSONL, the
+bridge's apm_app.json). A crash or hang there destroys the whole session's
+analysis.
 
 Each target is structure-aware: rows are generated from the real formats,
 then mutated across fixed seeds, so any failure reproduces exactly from the
@@ -18,12 +21,17 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import math
 import random
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 import pytest
+
+from apm_suite.analysis.bridge import load_speedscope_frames, parse_section_line
+from apm_suite.analysis.events import PER_SOURCE_MAX, RETAINED_MAX, build_timeline
+from apm_suite.models import EventsV2, schema_dict
 
 REPO = Path(__file__).parents[3]
 
@@ -239,3 +247,309 @@ def test_fuzz_folded_malformed_counts_regression(tmp_path: Path) -> None:
 
     rows = module.load_folded(folded)
     assert rows == [(["keep", "me"], 5)]
+
+
+# --- apm_suite session-artifact parsers (imported evidence bundles) --------------
+
+# Scalars planted into collector fields by corrupt writers, older schemas, and
+# hand edits. Includes the shapes that historically crashed the readers:
+# multi-dot "1.2.3" numbers, overlong digit runs (json.loads -> inf), bools
+# (float() accepts them; they are not measurements), and nested containers.
+SCALARS: list[Any] = [
+    1,
+    0,
+    -3,
+    12.5,
+    "12.5",
+    "abc",
+    "",
+    None,
+    True,
+    False,
+    [1],
+    {"a": 1},
+    10**400,
+    "9" * 400,
+]
+UTC_STAMPS = [
+    "2026-01-01T00:00:00Z",
+    "2026-01-02T03:04:05+02:00",
+    "2026-01-03T00:00:00",  # naive: UTC by repo convention
+    "not-a-date",
+    "",
+    None,
+    5,
+]
+WORLDS: list[Any] = [{"entities": 7}, {"entities": "x"}, {}, "x", [1], None, 0]
+WCHAN_NAMES = ["futex_wait_queue", "wait_woken", "0", "-", "unix_stream", "\x00bad", "x" * 60]
+
+SESSION_SEEDS = range(4)
+
+
+def _spike(rng: random.Random) -> Any:
+    if rng.random() < 0.8:
+        return {
+            "gmUpdateDurationMs": rng.choice(SCALARS),
+            "serverTickIntervalMs": rng.choice(SCALARS),
+            "utc": rng.choice(UTC_STAMPS),
+            "world": rng.choice(WORLDS),
+        }
+    return rng.choice(SCALARS)  # non-dict entry among spikes[]
+
+
+def _app_doc(rng: random.Random) -> Any:
+    roll = rng.random()
+    if roll < 0.75:
+        doc: dict[str, Any] = {"schema": "7dtd.apm.app.v3"}
+        spikes = [_spike(rng) for _ in range(rng.randint(0, 6))]
+        # A non-list spikes value is a format change, not an exception.
+        doc["spikes"] = spikes if roll < 0.65 else rng.choice([{"a": 1}, "x", None])
+        return doc
+    # Valid-JSON non-object roots must read as absent evidence, never raise.
+    return rng.choice([[], 5, "x", None, True])
+
+
+def _threads_record(rng: random.Random) -> Any:
+    roll = rng.random()
+    if roll > 0.92:
+        return rng.choice(["torn {", "", "[]", "[1,2]"])  # torn / non-object lines
+    wchan_roll = rng.random()
+    if wchan_roll < 0.7:
+        wchan = {
+            rng.choice(WCHAN_NAMES): rng.choice(SCALARS) for _ in range(rng.randint(0, 8))
+        }
+    else:
+        wchan = rng.choice([["futex_wait", 7], "futex", 5, None])  # truthy non-dicts
+    return {"t": rng.choice(SCALARS), "wchan_top": wchan}
+
+
+def _proc_record(rng: random.Random) -> dict[str, Any]:
+    return {
+        "t": rng.choice(SCALARS),
+        "cpu_pct": rng.choice(SCALARS),
+        "rss_mb": rng.choice(SCALARS),
+    }
+
+
+def _scrape_record(rng: random.Random) -> dict[str, Any]:
+    text_pool = [
+        f"gmUpdateDuration={rng.choice(['250.5', '1.2.3', 'abc'])}ms spike detected",
+        f"avg={rng.choice(['33.1', '99', '9' * 400])}ms tick",
+        "".join(rng.choice(NASTY) for _ in range(rng.randint(1, 3))),
+        "plain console noise with player names",
+    ]
+    return {"t": rng.choice(SCALARS), "text": rng.choice(text_pool)}
+
+
+def _bt_text(rng: random.Random) -> str:
+    lines: list[str] = []
+    for _ in range(rng.randint(0, 60)):
+        roll = rng.random()
+        if roll < 0.25:
+            lines.append(f"@wait_n: {rng.choice(['40', '-2', 'abc', '9' * 400])}\n")
+        elif roll < 0.6:
+            marker = rng.choice(
+                ["SLOW_", "SLOW ", "STALL_MAIN", "STW_PAUSE", "@little_n: 3", "@gc_n: x"]
+            )
+            payload = "".join(rng.choice(NASTY) for _ in range(rng.randint(0, 3)))
+            lines.append(f"{marker} {payload} {rng.choice(COUNTS)}\n")
+        else:
+            lines.append("".join(rng.choice(NASTY) for _ in range(rng.randint(1, 3))) + "\n")
+    return "".join(lines)
+
+
+@pytest.mark.parametrize("seed", list(SESSION_SEEDS))
+def test_fuzz_events_timeline(tmp_path: Path, seed: int) -> None:
+    """The event timeline re-reads every collector artifact from imported
+    bundles without schema guarantees; malformed shapes must degrade to
+    absent evidence and still produce a valid, deterministic EventsV2."""
+    rng = random.Random(seed)
+    session = tmp_path / f"session_{seed}"
+    app = session / "app"
+    threads_dir = session / "threads"
+    memory = session / "memory"
+    sync = session / "sync"
+    for directory in (app, threads_dir, memory, sync):
+        directory.mkdir(parents=True)
+
+    (app / "apm_app.json").write_text(json.dumps(_app_doc(rng)), encoding="utf-8")
+    (app / "bridge.jsonl").write_text(
+        "".join(json.dumps(_scrape_record(rng)) + "\n" for _ in range(rng.randint(0, 30))),
+        encoding="utf-8",
+    )
+    (threads_dir / "threads.jsonl").write_text(
+        "".join(
+            json.dumps(_threads_record(rng)) + "\n" for _ in range(rng.randint(0, 30))
+        ),
+        encoding="utf-8",
+    )
+    (memory / "proc.jsonl").write_text(
+        "".join(json.dumps(_proc_record(rng)) + "\n" for _ in range(rng.randint(0, 30))),
+        encoding="utf-8",
+    )
+    (sync / "futex.bt.out").write_text(_bt_text(rng), encoding="utf-8")
+
+    first = build_timeline(session)
+    second = build_timeline(session)
+    assert first == second, f"seed={seed}: timeline must be deterministic"
+
+    # CHECK-constraint identities the model validator also enforces.
+    assert first.count == sum(first.by_kind.values())
+    assert first.retained == len(first.events) <= RETAINED_MAX
+    assert first.dropped == first.count - first.retained >= 0
+
+    per_source = Counter(event.source or "" for event in first.events)
+    assert all(count <= PER_SOURCE_MAX for count in per_source.values()), (
+        f"seed={seed}: per-source retention bound exceeded"
+    )
+
+    # Serialization boundary: events persist as strict JSON, so the document
+    # must encode without leaking NaN/Infinity/surrogates and read back equal.
+    encoded = json.dumps(schema_dict(first), allow_nan=False)
+    restored = EventsV2.model_validate(json.loads(encoded))
+    assert restored == first
+
+
+SECTION_SEEDS = range(4)
+SECTION_NUMBERS = ["12.50", "0", "400", "1.2.3", "9" * 400, ".5", "5.", "007"]
+SECTION_NAMES = ["World.TickEntities", "EntityAlive.updateTasks", "A.B.C_d", "x" * 200]
+
+
+def _section_text(rng: random.Random) -> str:
+    parts: list[str] = []
+    for _ in range(rng.randint(0, 30)):
+        roll = rng.random()
+        num = rng.choice(SECTION_NUMBERS)
+        name = rng.choice(SECTION_NAMES)
+        if roll < 0.55:
+            parts.append(f"{name}={num}ms(x{num},max={num}) ")
+        elif roll < 0.75:
+            parts.append(f"avg={num}ms ")
+        else:
+            parts.append("".join(rng.choice(NASTY) for _ in range(rng.randint(1, 3))) + " ")
+    return "".join(parts)
+
+
+def _speedscope_doc(rng: random.Random) -> Any:
+    roll = rng.random()
+    if roll < 0.1:
+        return rng.choice([[1, 2], "root", 5, None])  # non-object roots
+    names = ["GameManager.gmUpdate", "[unknown]", "", "Entité★"]
+
+    def frame() -> Any:
+        if rng.random() < 0.85:
+            return {"name": rng.choice(names)}
+        return rng.choice(["bare", 7, None])  # non-dict frame entries
+
+    doc: dict[str, Any] = {
+        "shared": {"frames": [frame() for _ in range(rng.randint(0, 5))]},
+        "profiles": [],
+    }
+    if rng.random() < 0.15:
+        doc["shared"] = rng.choice(["x", None, 5, []])
+    for _ in range(rng.randint(0, 3)):
+        samples: list[Any] = []
+        for _ in range(rng.randint(0, 8)):
+            if rng.random() < 0.7:
+                samples.append([rng.randint(-1, 6) for _ in range(rng.randint(0, 4))])
+            else:
+                samples.append(rng.choice([[0, "x"], "abc", 3, [True], [[0]], None]))
+        profile: dict[str, Any] = {"samples": samples}
+        if rng.random() < 0.8:
+            profile["weights"] = [
+                rng.choice([1, 2.5, "3", "abc", float("inf"), float("nan"), None, True])
+                for _ in samples
+            ]
+        doc["profiles"].append(profile)
+    if rng.random() < 0.15:
+        doc["profiles"] = rng.choice(["x", 5, [1, "a"]])
+    return doc
+
+
+@pytest.mark.parametrize("seed", list(SECTION_SEEDS))
+def test_fuzz_managed_sections_surface(tmp_path: Path, seed: int) -> None:
+    """Managed section rows arrive as console scrapes and speedscope profiles
+    as unvalidated JSON/text from imported bundles; every survivor must be
+    well-typed and every run deterministic."""
+    text = _section_text(random.Random(seed))
+
+    sections_a = parse_section_line(text)
+    sections_b = parse_section_line(text)
+    assert sections_a == sections_b, f"seed={seed}: section parse must be deterministic"
+    for section in sections_a:
+        assert isinstance(section["name"], str) and section["name"]
+        avg = section["avgMs"]
+        max_ms = section["maxMs"]
+        assert type(avg) is float and math.isfinite(avg) and avg >= 0, (
+            f"seed={seed}: bad avgMs {avg!r}"
+        )
+        assert type(max_ms) is float and math.isfinite(max_ms) and max_ms >= 0, (
+            f"seed={seed}: bad maxMs {max_ms!r}"
+        )
+        calls = section["calls"]
+        assert type(calls) is int and calls >= 0, f"seed={seed}: bad calls {calls!r}"
+
+    profile_path = tmp_path / "cpu/perf/profile.speedscope.json"
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(json.dumps(_speedscope_doc(random.Random(seed + 100))), encoding="utf-8")
+
+    frames_a = load_speedscope_frames(tmp_path)
+    frames_b = load_speedscope_frames(tmp_path)
+    assert frames_a == frames_b, f"seed={seed}: speedscope load must be deterministic"
+    weights = [weight for _, weight in frames_a]
+    assert weights == sorted(weights, reverse=True), f"seed={seed}: frame ranking violated"
+    for name, weight in frames_a:
+        assert isinstance(name, str), f"seed={seed}: non-string frame name {name!r}"
+        assert type(weight) is int and weight >= 0, f"seed={seed}: bad weight {weight!r}"
+
+
+def test_fuzz_session_artifacts_regression(tmp_path: Path) -> None:
+    """Regression artifacts: each of these raised out of the required analysis
+    stages before hardening (AttributeError on non-dict roots/nested values,
+    ValueError on multi-dot numbers)."""
+    session = tmp_path / "session_regr"
+
+    app = session / "app"
+    app.mkdir(parents=True)
+    # root=list crashed parse_bridge_spikes; world=str crashed the message build;
+    # a scalar among spikes[] crashed spike.get().
+    (app / "apm_app.json").write_text(
+        '[{"spikes":[]},'
+        '{"spikes":[{"gmUpdateDurationMs":300,"utc":"2026-01-01T00:00:00Z","world":"x"}]},'
+        '{"spikes":[5,{"gmUpdateDurationMs":250,"world":{"entities":3}}]}]',
+        encoding="utf-8",
+    )
+    threads_dir = session / "threads"
+    threads_dir.mkdir(parents=True)
+    # wchan_top as list/scalar crashed .items().
+    (threads_dir / "threads.jsonl").write_text(
+        '{"t":1,"wchan_top":["futex_wait",7]}\n{"t":2,"wchan_top":"futex"}\n'
+        '{"t":3,"wchan_top":{"futex_wait":5}}\n',
+        encoding="utf-8",
+    )
+    doc = build_timeline(session)
+    kinds = {event.kind for event in doc.events}
+    assert "wchan" in kinds and "frame_spike" in kinds
+
+    # "1.2.3ms" crashed parse_section_line's bare float(); the mangled row is
+    # skipped while its valid sibling survives.
+    sections = parse_section_line("Foo=1.2.3ms(x2,max=3.4.5) Bar=6.5ms(x2,max=7.5)")
+    assert sections == [{"name": "Bar", "avgMs": 6.5, "calls": 2, "maxMs": 7.5}]
+
+    # Non-dict roots / string frames crashed load_speedscope_frames; the valid
+    # profile shape keeps aggregating exactly as before (1e999 parses to inf,
+    # whose sample is dropped like any non-finite weight).
+    profile = tmp_path / "speedscope"
+    perf_dir = profile / "cpu/perf"
+    perf_dir.mkdir(parents=True)
+    target = perf_dir / "profile.speedscope.json"
+    target.write_text(
+        '{"shared":{"frames":[{"name":"a"},{"name":"b"}]},'
+        '"profiles":[{"samples":[[0],[1],[0]],"weights":[1,2,1e999]}]}',
+        encoding="utf-8",
+    )
+    assert load_speedscope_frames(profile) == [("b", 2), ("a", 1)]
+    target.write_text("[1,2]")
+    assert load_speedscope_frames(profile) == []
+    target.write_text('{"shared":"x"}')
+    assert load_speedscope_frames(profile) == []

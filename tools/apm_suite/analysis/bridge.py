@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, iter_jsonl, load_json
-from ..models import first_number, first_present
+from ..models import as_number, first_number, first_present
 from .catalog import RULES, SECTION_TO_CSHARP
 from .flame_delta import load_weights
 
@@ -354,14 +354,31 @@ def load_speedscope_frames(session: Path) -> list[tuple[str, int]]:
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError):
         return []
-    frames = data.get("shared", {}).get("frames") or []
-    names = [str(frame.get("name", "")) for frame in frames]
+    # Imported profile JSON is unvalidated: any shape deviation (non-object
+    # root, string frames array, scalar samples) reads as absent evidence
+    # instead of raising AttributeError/TypeError mid-analysis.
+    if not isinstance(data, dict):
+        return []
+    shared = data.get("shared")
+    raw_frames = shared.get("frames") if isinstance(shared, dict) else None
+    raw_frames = raw_frames if isinstance(raw_frames, list) else []
+    # Positional alignment matters: sample indexes address this list, so a
+    # non-dict frame entry degrades to an empty name rather than shifting.
+    names = [
+        str(frame.get("name", "")) if isinstance(frame, dict) else "" for frame in raw_frames
+    ]
     counts: dict[str, int] = defaultdict(int)
-    for profile in data.get("profiles") or []:
-        samples = profile.get("samples") or []
-        weights = profile.get("weights") or [1] * len(samples)
+    profiles = data.get("profiles")
+    for profile in profiles if isinstance(profiles, list) else []:
+        if not isinstance(profile, dict):
+            continue
+        samples = profile.get("samples")
+        if not isinstance(samples, list):
+            continue
+        weights = profile.get("weights")
+        weights = weights if isinstance(weights, list) else [1] * len(samples)
         for sample, weight in zip(samples, weights, strict=False):
             # json.loads accepts Infinity/NaN literals; int(inf) would raise
             # OverflowError and crash the whole analysis. Skip non-finite weights.
@@ -371,7 +388,13 @@ def load_speedscope_frames(session: Path) -> list[tuple[str, int]]:
                 continue
             if not math.isfinite(count):
                 continue
+            if not isinstance(sample, list):
+                continue
             for index in sample:
+                # bool is an int subclass; True indexing frame 1 is corruption,
+                # not a weight. Non-int indexes are skipped the same way.
+                if isinstance(index, bool) or not isinstance(index, int):
+                    continue
                 if 0 <= index < len(names):
                     counts[names[index]] += int(count)
     return sorted(counts.items(), key=lambda kv: -kv[1])
@@ -382,6 +405,11 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
     sections: list[dict[str, Any]] = []
 
     def ingest_obj(obj: dict[str, Any]) -> None:
+        # Imported app/*.json sweeps and named dumps are re-read without schema
+        # guarantees: a valid-JSON non-object root must read as no sections,
+        # not raise AttributeError past the JSONDecodeError suppression.
+        if not isinstance(obj, dict):
+            return
         for section in obj.get("sections") or []:
             if isinstance(section, dict) and section.get("name") and section not in sections:
                 sections.append(section)
@@ -424,18 +452,26 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
 def parse_section_line(text: str) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for match in re.finditer(r"([A-Za-z0-9_.]+)=([\d.]+)ms\(x(\d+),max=([\d.]+)\)", text):
+        # as_number, not bare float(): the [\d.]+ groups also admit "1.2.3",
+        # which float() rejects with ValueError, and overlong digit runs that
+        # parse to inf. A mangled number is absent evidence, not a crash.
+        avg = as_number(match.group(2))
+        max_ms = as_number(match.group(4))
+        if avg is None or max_ms is None:
+            continue
         out.append(
             {
                 "name": match.group(1),
-                "avgMs": float(match.group(2)),
+                "avgMs": avg,
                 "calls": int(match.group(3)),
-                "maxMs": float(match.group(4)),
+                "maxMs": max_ms,
             }
         )
     frame_avg = re.search(r"avg=([\d.]+)ms", text)
     if frame_avg and not out:
-        avg = float(frame_avg.group(1))
-        out.append({"name": "GmUpdate", "avgMs": avg, "calls": 1, "maxMs": avg})
+        avg = as_number(frame_avg.group(1))
+        if avg is not None:
+            out.append({"name": "GmUpdate", "avgMs": avg, "calls": 1, "maxMs": avg})
     return out
 
 

@@ -129,8 +129,11 @@ def parse_threads_jsonl(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
     for record in iter_jsonl(path):
-        wchan = record.get("wchan_top") or {}
-        for name, raw in list(wchan.items())[:5]:
+        # wchan_top is written by our own collector but re-read from imported
+        # bundles without schema guarantees: a truthy non-dict (list, string)
+        # must degrade to "no wchan data", not raise AttributeError.
+        wchan = record.get("wchan_top")
+        for name, raw in list(wchan.items())[:5] if isinstance(wchan, dict) else []:
             waiters = as_number(raw)
             if (
                 waiters is not None
@@ -207,7 +210,15 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
         snapshot = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, ValueError):
         return
-    for spike in snapshot.get("spikes") or []:
+    # A valid-JSON non-object document ("[...]", "5", a bare string) must read
+    # as absent evidence like an unparseable one, not raise AttributeError out
+    # of the required events stage.
+    if not isinstance(snapshot, dict):
+        return
+    spikes = snapshot.get("spikes")
+    for spike in spikes if isinstance(spikes, list) else []:
+        if not isinstance(spike, dict):
+            continue
         # spikes[] sits outside BridgeSnapshotV3 validation (extra="allow"), so
         # a format-changed or hand-edited record must coerce like every other
         # collector field instead of raising float(TypeError) mid-timeline.
@@ -221,14 +232,15 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
             # shift every spike on a non-UTC analysis host.
             stamp = datetime.fromisoformat(str(spike.get("utc") or "").replace("Z", "+00:00"))
             epoch = (stamp if stamp.tzinfo else stamp.replace(tzinfo=UTC)).timestamp()
+        world = spike.get("world")
+        entities = world.get("entities") if isinstance(world, dict) else None
         sink.add(
             {
                 "t": epoch,
                 "kind": "frame_spike",
                 "severity": "error" if duration >= 200 else "warn",
                 "message": (
-                    f"gmUpdate {duration:.1f}ms tickInterval {tick_ms:.1f}ms "
-                    f"entities={((spike.get('world') or {}).get('entities'))}"
+                    f"gmUpdate {duration:.1f}ms tickInterval {tick_ms:.1f}ms entities={entities}"
                 ),
                 "source": "apm_app.json",
                 "value": duration,
