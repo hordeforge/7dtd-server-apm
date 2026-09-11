@@ -93,7 +93,7 @@ namespace DtdApmBridge
                 // Per-tick world systems visible in load-test stacks.
                 "WaterSplashCubes:Update", "World:LetBlocksFall", "World:GroupFallingBlocks",
                 // Sim hot path: entity work is spread across frames via slices
-                // (see 7dtd-engine-research/docs/loop-gmupdate.md gmUpdate phase order);
+                // (see 7dtd-engine-research/docs/loop/loop-gmupdate.md gmUpdate phase order);
                 // TickEntities alone
                 // only prepares the list.
                 "World:TickEntitiesSlice:System.Int32", "World:TickEntitiesFlush",
