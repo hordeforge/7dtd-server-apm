@@ -144,6 +144,13 @@ against 2.1.0.
   `proc_sample.py` resolves `find_server.sh` as its own sibling and no longer
   swallows every exception from that lookup.
 
+## 2.4.0 (tag v2.4.0) - bridge mod - 2026-09-11
+
+No functional change. The bridge carries the version bump so the release is
+taggable; what moved is documentation: the research citations now point at the
+grouped `docs/<subsystem>/` tree, and `AGENTS.md` states what this repository
+owns and does not own.
+
 ## 2.3.0 (tag v2.3.0) - bridge mod - 2026-08-26
 
 - Changed: the stale-temp sweep and the atomic temp-to-final publish are one
