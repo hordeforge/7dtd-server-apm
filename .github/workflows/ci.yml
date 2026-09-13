@@ -20,7 +20,7 @@ jobs:
 # Actions are pinned to immutable commit SHAs (mutable tags are a
 # supply-chain risk); Dependabot keeps the SHAs current via the comments.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
       - run: uv sync --locked
       # The lint scripts run oxlint, tsc and vnu through bunx at pinned
@@ -43,7 +43,7 @@ jobs:
 # Actions are pinned to immutable commit SHAs (mutable tags are a
 # supply-chain risk); Dependabot keeps the SHAs current via the comments.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
       - run: uv sync --locked
       - run: make coverage
       - run: uv run --locked python scripts/coverage_badge.py "$RUNNER_TEMP/coverage.svg"
