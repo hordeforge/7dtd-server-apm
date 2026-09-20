@@ -144,6 +144,13 @@ against 2.1.0.
   `proc_sample.py` resolves `find_server.sh` as its own sibling and no longer
   swallows every exception from that lookup.
 
+## 2.4.1 (tag v2.4.1) - bridge mod - 2026-09-13
+
+No functional change. The bridge carries the version bump so the release is
+taggable; what moved is tooling upkeep: the host CLI dev dependencies refresh
+pydantic, typer, and ruff patch releases via dependabot. Tagged because the
+release convention tags bridge versions, keeping the tag series unbroken.
+
 ## 2.4.0 (tag v2.4.0) - bridge mod - 2026-09-11
 
 No functional change. The bridge carries the version bump so the release is
