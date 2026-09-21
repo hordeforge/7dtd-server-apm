@@ -116,5 +116,3 @@ a[data-for="tooltip-APM"]::before {
 .apm-topbar-fill.apm-warn { background: #e6bd3a; }
 .apm-topbar-fill.apm-bad { background: #ff7070; }
 .apm-topbar-val { text-align: right; color: #c8d2e0; font-variant-numeric: tabular-nums; }
-
-}

@@ -875,7 +875,11 @@ def prune_sessions(
             )
     if doomed:
         trash = apm_root() / ".trash"
-        window = f"for {prune_grace_hours():g}h" if prune_grace_hours() > 0 else "disabled (APM_PRUNE_GRACE_HOURS=0)"
+        window = (
+            f"for {prune_grace_hours():g}h"
+            if prune_grace_hours() > 0
+            else "disabled (APM_PRUNE_GRACE_HOURS=0)"
+        )
         console.print(
             f"removed sessions stay recoverable under {trash} ({window}); restore with mv"
         )

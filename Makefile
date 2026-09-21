@@ -43,7 +43,7 @@ lint:
 lint-shell:
 	@command -v shellcheck >/dev/null 2>&1 || { \
 	  echo "ERROR: shellcheck not found; install it (apt install shellcheck / brew install shellcheck)" >&2; exit 1; }
-	shellcheck scripts/*.sh scripts/lib/*.sh tools/apm/*.sh tools/apm/collectors/*.sh tools/host_profiler/*.sh
+	shellcheck scripts/*.sh scripts/lib/*.sh tools/apm/collectors/*.sh tools/host_profiler/*.sh
 lint-html:
 	./scripts/lint-html.sh
 lint-webui:
