@@ -38,9 +38,7 @@ from .session import (
     audit_session,
     list_sessions,
     prune_grace_hours,
-    purge_expired_trash,
-    purge_stale_scenario_runs,
-    remove_sessions,
+    prune_store,
     sessions_beyond_budget,
 )
 
@@ -868,26 +866,16 @@ def prune_sessions(
         console.print(("would remove " if dry_run else "removing ") + escape(str(old)))
     if dry_run:
         return
-    grace = prune_grace_hours()
-    for old, error in remove_sessions(doomed, grace):
-        # One stuck session must not strand the rest: report and keep going.
+    # One shared pass retires sessions and runs both purge phases; a single
+    # stuck entry must not strand the rest, so each failure reports alone.
+    for _kind, entry, error in prune_store(apm_root(), doomed):
         if error is not None:
             err_console.print(
-                f"[red]could not remove {escape(str(old))}: {escape(str(error))}[/red]"
-            )
-    for entry, error in purge_expired_trash(apm_root(), grace):
-        if error is not None:
-            err_console.print(
-                f"[red]could not purge {escape(str(entry))}: {escape(str(error))}[/red]"
-            )
-    for entry, error in purge_stale_scenario_runs(apm_root(), grace):
-        if error is not None:
-            err_console.print(
-                f"[red]could not purge {escape(str(entry))}: {escape(str(error))}[/red]"
+                f"[red]could not remove {escape(str(entry))}: {escape(str(error))}[/red]"
             )
     if doomed:
         trash = apm_root() / ".trash"
-        window = f"for {grace:g}h" if grace > 0 else "disabled (APM_PRUNE_GRACE_HOURS=0)"
+        window = f"for {prune_grace_hours():g}h" if prune_grace_hours() > 0 else "disabled (APM_PRUNE_GRACE_HOURS=0)"
         console.print(
             f"removed sessions stay recoverable under {trash} ({window}); restore with mv"
         )

@@ -408,6 +408,27 @@ def purge_stale_scenario_runs(
             yield entry, None
 
 
+def prune_store(
+    root: Path, doomed: list[Path], grace_hours: float | None = None
+) -> Iterator[tuple[str, Path, OSError | None]]:
+    """One prune pass over the store: retire doomed sessions, purge expired
+    trash, sweep stale scenario manifests.
+
+    The single walk shared by the CLI `prune` command and post-capture
+    auto-prune so the two entry points cannot drift into disagreeing about
+    what gets deleted or which purge phases run. Yields (kind, entry, error)
+    events, kind in {"session", "trash", "scenario"}; error None means the
+    entry was removed (or already gone to a concurrent prune).
+    """
+    grace = prune_grace_hours() if grace_hours is None else grace_hours
+    for session, error in remove_sessions(doomed, grace):
+        yield "session", session, error
+    for entry, error in purge_expired_trash(root, grace):
+        yield "trash", entry, error
+    for entry, error in purge_stale_scenario_runs(root, grace):
+        yield "scenario", entry, error
+
+
 def verify_recorded_hashes(session: Path) -> list[str]:
     """Tamper check against the recorded manifest (the `audit` CLI contract).
 

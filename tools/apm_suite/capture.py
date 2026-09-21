@@ -44,10 +44,7 @@ from .paths import apm_root, require_backends
 from .session import (
     keep_sessions_budget,
     list_sessions,
-    prune_grace_hours,
-    purge_expired_trash,
-    purge_stale_scenario_runs,
-    remove_sessions,
+    prune_store,
     sessions_beyond_budget,
 )
 
@@ -791,23 +788,14 @@ def _auto_prune_sessions() -> None:
     keep = keep_sessions_budget()
     if keep <= 0:
         return
-    grace = prune_grace_hours()
-    for old, error in remove_sessions(
-        sessions_beyond_budget(list_sessions(apm_root()), keep), grace
-    ):
-        if error is None:
-            print(f"pruned old session {old.name} (APM_KEEP_SESSIONS={keep})", file=sys.stderr)
-        else:
-            print(f"WARNING: prune failed for {old.name}: {error}", file=sys.stderr)
-    for entry, error in purge_expired_trash(apm_root(), grace):
+    doomed = sessions_beyond_budget(list_sessions(apm_root()), keep)
+    # One shared pass with the CLI prune: same sessions, same trash and
+    # scenario purge phases, so the two entry points cannot drift.
+    for kind, entry, error in prune_store(apm_root(), doomed):
         if error is not None:
-            print(f"WARNING: trash purge failed for {entry.name}: {error}", file=sys.stderr)
-    # scenario run leaves its loadgen manifests behind every invocation; sweep
-    # them on the same retention clock so a cron-driven capture host does not
-    # accumulate .scenario entries forever.
-    for entry, error in purge_stale_scenario_runs(apm_root(), grace):
-        if error is not None:
-            print(f"WARNING: scenario purge failed for {entry.name}: {error}", file=sys.stderr)
+            print(f"WARNING: {kind} prune failed for {entry.name}: {error}", file=sys.stderr)
+        elif kind == "session":
+            print(f"pruned old session {entry.name} (APM_KEEP_SESSIONS={keep})", file=sys.stderr)
 
 
 def _launch_collectors(
