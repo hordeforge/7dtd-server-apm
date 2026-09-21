@@ -3518,27 +3518,6 @@ def test_app_scrape_keeps_utf8_split_across_reads() -> None:
     assert "\ufffd" not in text
 
 
-def test_flamegraph_svg_survives_non_finite_counts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    import importlib.util
-    import sys
-
-    spec = importlib.util.spec_from_file_location(
-        "flamegraph", REPO / "tools/host_profiler/flamegraph.py"
-    )
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    folded = tmp_path / "stacks.folded"
-    folded.write_text("alpha;beta 5\nalpha nan\nalpha inf\n")
-    out = tmp_path / "flame.svg"
-    monkeypatch.setattr(sys, "argv", ["flamegraph.py", str(folded), str(out)])
-    assert module.main() == 0
-    svg = out.read_text()
-    assert "nan" not in svg and "inf<" not in svg
-
-
 # --- scaling classification ------------------------------------------------------
 
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# From stacks.folded (or perf.script), emit static SVG + Speedscope + interactive HTML.
+# From stacks.folded (or perf.script), emit Speedscope + interactive HTML.
 # Usage: make_flames.sh OUTDIR [title]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -21,7 +21,6 @@ python3 "$ROOT/tools/host_profiler/annotate_stacks.py" "$FOLDED" -o "$ANNOTATED"
 FLAME_SRC="$ANNOTATED"
 [[ -s "$FLAME_SRC" ]] || FLAME_SRC="$FOLDED"
 
-python3 "$ROOT/tools/host_profiler/flamegraph.py" "$FLAME_SRC" "$OUTDIR/flame.svg" || true
 python3 "$ROOT/tools/host_profiler/folded_to_speedscope.py" "$FLAME_SRC" \
   -o "$OUTDIR/profile.speedscope.json" \
   --name "$TITLE" \
@@ -50,12 +49,11 @@ Interactive flamegraphs
      bunx speedscope profile.speedscope.json
      or drag onto https://www.speedscope.app/
 4. profile.raw.speedscope.json: raw symbols
-5. flame.svg           : static snapshot
-6. stacks.folded / stacks.annotated.folded
+5. stacks.folded / stacks.annotated.folded
 
 Tags come from tools/host_profiler/annotate_stacks.py (catalog of native→layer labels).
 Pair with csharp_bridge.md for Harmony targets.
 
 EOF
 echo "flames ready in $OUTDIR"
-ls -la "$OUTDIR"/flame.html "$OUTDIR"/profile.speedscope.json "$OUTDIR"/flame.svg 2>/dev/null || true
+ls -la "$OUTDIR"/flame.html "$OUTDIR"/profile.speedscope.json 2>/dev/null || true

@@ -1254,7 +1254,6 @@ def build_summary(session: Path) -> SummaryV2:
         "speedscope": "cpu/perf/profile.speedscope.json"
         if (perf_dir / "profile.speedscope.json").exists()
         else None,
-        "svg": "cpu/perf/flame.svg" if (perf_dir / "flame.svg").exists() else None,
         "folded": "cpu/perf/stacks.folded" if (perf_dir / "stacks.folded").exists() else None,
     }
     summary = SummaryV2(

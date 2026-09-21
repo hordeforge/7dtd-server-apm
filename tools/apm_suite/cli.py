@@ -358,7 +358,7 @@ def export_session(
         # full session-sized write+read for nothing.
         with zipfile.ZipFile(tmp_zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
             # perf.script / report txt / stacks.folded / flame.html / bpftrace
-            # *.out / flame.svg embed dso or file paths like /home/<user>/... -
+            # *.out / *.svg embed dso or file paths like /home/<user>/... -
             # replace the home prefix so bundles do not leak the host username.
             # Applied to known-text artifacts only.
             home = str(Path.home())
