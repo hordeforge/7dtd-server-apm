@@ -20,7 +20,7 @@ sec-review; this document is the map that aims those passes.
 
 | # | Risk | Boundary | Severity | Status |
 |---|---|---|---|---|
-| R1 | Admin-web compromise yields remote server shutdown: `POST /api/perf` executes a console `shutdown` after flipping config | B4 web user -> bridge | High | Accepted by design (ops switch); single control = dashboard auth |
+| R1 | Admin-web compromise yields remote server shutdown via the perf-config ops switch | B4 web user -> bridge | - | Removed in 2.5.0: `GET/POST /api/perf` and its console `shutdown` path were deleted; the bridge no longer edits sibling-mod config (APM measures, it never writes optimizer config) |
 | R2 | Telnet password exposed via argv: `capture --telnet-password` / `scenario --telnet-password` options put the secret in the invoking shell history and the process's own `/proc/<pid>/cmdline`, contradicting the env-only guidance | B1 operator -> CLI | Medium-High | Gap (`tools/apm_suite/cli.py:120-124`, `cli.py:806-808`) |
 | R3 | Root-adjacent collectors driven by operator input: every capture shells out to `sudo -n bpftrace/perf/mount` with an operator-chosen `--pid`; anyone able to run the CLI against passwordless sudo can profile arbitrary processes | B5 CLI -> root | Medium | Gap; no sudoers policy shipped to constrain it |
 | R4 | Session store leaks player PII (names, IPs, Steam IDs) if raw sessions leave the host; protection is filesystem permissions only | B3/B6 store -> other parties | Medium | Mitigated for captured sessions (chmod 0700), not for imported ones (G1) |
@@ -35,7 +35,7 @@ sec-review; this document is the map that aims those passes.
 | Raw telnet drain `app/bridge.jsonl` | session store, owner-only | Player names, IPs, Steam IDs disclosed |
 | Host/user identifiers in perf artifacts | perf.script, folded stacks, flame SVGs | Username/host paths leaked on sharing (home prefix scrubbed at export) |
 | Session store evidence | `~/.local/share/7dtd-server-apm` (`SEVENDTD_APM_DIR`), `tools/apm_suite/paths.py:25` | Forged or destroyed measurement history |
-| Game server availability | restarted by `POST /api/perf` (`bridge/ApmBridge/WebApi.cs:270-278`) | Downtime per flip |
+| Game server availability | no repo-owned restart path since 2.5.0 (the `/api/perf` switch was removed) | - |
 | Bridge telemetry dir | `Mods/7dtd-server-apm-bridge/telemetry/` inside the server install (`bridge/ApmBridge/BridgeMod.cs:29`) | JIT map files readable by anything with install-dir access |
 
 ## Trust boundaries
@@ -45,7 +45,7 @@ sec-review; this document is the map that aims those passes.
 | B1 | Operator -> CLI | Typer options/env wiring, `tools/apm_suite/cli.py`; env overrides `SEVENDTD_APM_DIR`, `SEVENDTD_DS_DIR` (`paths.py:12-27`), `APM_PRUNE_GRACE_HOURS`, `APM_KEEP_SESSIONS` (`docs/APM.md`) |
 | B2 | CLI -> game server telnet (outbound network) | `socket.create_connection` in `capture.py:434-497`, `collectors/app_scrape.py:20`, `doctor.py:37-47` |
 | B3 | Game server responses -> session store | Server-controlled banner/log lines discarded pre-persistence (`app_scrape.py:41-49`); requested `apm` replies persisted raw into `app/bridge.jsonl` |
-| B4 | Dashboard web user -> bridge REST (inbound listener inside server process) | `GET /api/apm`, `GET/POST /api/perf` registered on the stock V3 WebAPI scanner (`WebApi.cs:14,52`); UI caller `bridge/ApmBridge/WebMod/bundle.ts:757,763` |
+| B4 | Dashboard web user -> bridge REST (inbound listener inside server process) | `GET /api/apm` registered on the stock V3 WebAPI scanner (`WebApi.cs`); UI caller `bridge/ApmBridge/WebMod/bundle.ts` |
 | B5 | CLI -> OS root | `sudo -n` for bpftrace/perf (`capture.py:97-105`), `sudo -n mount --bind` (`capture.py:380-391`) |
 | B6 | Other parties -> store | Sanitized export zip (`cli.py:249-313`); untrusted import (`cli.py:322-357`); sibling loadgen subprocess inherits full environment (`cli.py:827-869`) |
 
@@ -57,7 +57,6 @@ sec-review; this document is the map that aims those passes.
 | `--telnet-password`, `--pid`, `SEVENDTD_*`, `LOADGEN_*`, `APM_*` env vars | argv/env input | `cli.py:120,806,938`, `paths.py`, `doctor.py:164` |
 | Telnet client actions (`apm dump/reset/jitmap`, `listplayers`, teleport/rally) | outbound network client | `capture.py:434-530`, `cli.py:882,987` |
 | Bridge `GET /api/apm` | HTTP GET, admin-gated | `WebApi.cs:18-41` |
-| Bridge `GET/POST /api/perf` | HTTP GET/POST, admin-gated; POST restarts server | `WebApi.cs:156-282` |
 | Bridge console commands `apm <dump/reset/reload/capabilities/jitmap/benchmark>` | telnet/console command | `bridge/ApmBridge/BridgeMod.cs:256-275` |
 | Zip bundle import | file parser (untrusted archive) | `cli.py:322-357` |
 | JSON/JSONL session parsing | file parser (store-trusted) | `io.py:46-50`, `analysis/*` |
@@ -90,16 +89,12 @@ sec-review; this document is the map that aims those passes.
 **B4 web user -> bridge REST**
 - Elevation: endpoints rely wholly on the stock dashboard auth;
   `DefaultMethodPermissionLevels()` returns admin-only zeros for every verb
-  (`WebApi.cs:37-41,281`); `Apm` implements GET only, while `Perf` implements
-  GET and POST (`WebApi.cs:18,156,173`). Any bypass of dashboard auth is out
-  of repo scope but lands here.
-- DoS/privilege abuse: `POST /api/perf` flips config then invokes
-  `SdtdConsole.Instance.ExecuteSync("shutdown", ...)` (`WebApi.cs:270-278`);
-  an authenticated admin can loop restarts (R1). Writes are allowlisted to
-  known group keys (`SetGroup`, `WebApi.cs:133-154`) so no arbitrary config
-  injection.
-- Tampering: config read-modify-write serialized under a lock
-  (`WebApi.cs:92,196-238`).
+  (`WebApi.cs`); `Apm` implements GET only, and no other bridge REST class
+  exists since 2.5.0 removed the `Perf` ops switch. Any bypass of dashboard
+  auth is out of repo scope but lands here.
+- Read-only surface: the single remaining endpoint answers snapshots and
+  coded errors; it accepts no writes, runs no console commands, and cannot
+  affect server availability.
 
 **B5 CLI -> root**
 - Elevation of privilege: collector argv embeds operator-supplied `--pid`
@@ -121,10 +116,6 @@ sec-review; this document is the map that aims those passes.
 
 ## Abuse cases
 
-- **Restart gaming (authenticated):** a hostile dashboard admin repeatedly
-  POSTs `{"enabled": ...}` to `/api/perf`; each real change schedules a
-  server shutdown (`WebApi.cs:267-278`). Enabling code path named above;
-  impact is availability only, config writes stay allowlisted.
 - **Arbitrary-process profiling (local):** an operator (or anything running
   as them) passes `--pid <victim>`; capture resolves `/proc/<pid>/exe`,
   bind-mounts its Mono library, and runs root profilers against it
@@ -148,7 +139,7 @@ sec-review; this document is the map that aims those passes.
 | Import zip-slip guard, exclusive-create claim, post-import audit | R5 | `cli.py:316-357` |
 | Crash-safe atomic writes + directory fsync | evidence durability | `io.py:11-43` |
 | Prune trash grace window (`APM_PRUNE_GRACE_HOURS`) | accidental destruction | `session.py`, `docs/APM.md` |
-| Bridge endpoints admin-only per verb (`Apm` GET-only), allowlisted toggles, locked RMW | R1 scope limit | `WebApi.cs:37-41,133-154,196-238` |
+| Bridge endpoint admin-only per verb (`Apm` GET-only) | B4 scope limit | `WebApi.cs` |
 | Server-controlled telnet noise discarded before persistence | PII in store | `app_scrape.py:41-49` |
 | Integrity manifests verified at finalize/import | R6 (partial) | `finalize.py`, `session.py` |
 

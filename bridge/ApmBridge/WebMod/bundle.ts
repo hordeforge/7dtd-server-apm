@@ -92,10 +92,6 @@ function strOrEmpty(candidate: unknown): string {
   // oxlint-disable-next-line typescript/no-base-to-string -- deliberate: payload values are JSON primitives (numbers, strings); String() renders them into labels
   return String(candidate);
 }
-function strOr(candidate: unknown, fallback: string): string {
-  const s = strOrEmpty(candidate);
-  return s === "" ? fallback : s;
-}
 
 type Grade = {
   tps: number;
@@ -353,55 +349,6 @@ function renderHead(h: CreateElement, g: Grade, frozen: boolean, toggleFreeze: (
       h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"),
     h("span", { className: "apm-window" },
       `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
-}
-
-// Two-step confirm for disruptive buttons (same pattern as the Efficiency
-// panel's Apply): the first click arms the button, the second fires it, and
-// arming expires so a stale armed state cannot surprise anyone later.
-const ARMED_WINDOW_MS = 4000;
-// Expiry timers per setter: a re-arm must cancel the previous window instead
-// of letting the stale timer cut the fresh confirm short.
-const armedTimers = new WeakMap<(v: boolean) => void, ReturnType<typeof setTimeout>>();
-function perfToggleLabel(perfBusy: boolean, perfEnabled: boolean, perfArmed = false): string {
-  if (perfBusy) {
-    return "restarting server…";
-  }
-  if (perfArmed) {
-    return `Confirm ${perfEnabled ? "disable" : "enable"}?`;
-  }
-  return perfEnabled ? "Disable (restarts server)" : "Enable (restarts server)";
-}
-
-function armToggle(armed: boolean, setArmed: (v: boolean) => void, fire: () => void): void {
-  const pending = armedTimers.get(setArmed);
-  if (pending !== undefined) {
-    clearTimeout(pending);
-    armedTimers.delete(setArmed);
-  }
-  if (armed) {
-    setArmed(false);
-    fire();
-    return;
-  }
-  setArmed(true);
-  armedTimers.set(setArmed, setTimeout((): void => {
-    armedTimers.delete(setArmed);
-    setArmed(false);
-  }, ARMED_WINDOW_MS));
-}
-
-function renderPerfRow(h: CreateElement, perfEnabled: boolean, perfAvailable: boolean, perfBusy: boolean, perfArmed: boolean, togglePerf: () => void): unknown {
-  return h("div", { className: "apm-perf" },
-    h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"),
-    h("span", { className: `apm-pill ${perfEnabled ? "apm-ok" : "apm-warn"}` }, perfEnabled ? "ENABLED" : "DISABLED"),
-    h("button", {
-      type: "button", className: "apm-btn", disabled: perfBusy || !perfAvailable, onClick: togglePerf,
-      "aria-label": perfArmed && !perfBusy
-        ? `Confirm ${perfEnabled ? "disable" : "enable"} now and restart the server`
-        : undefined
-    },
-      perfToggleLabel(perfBusy, perfEnabled, perfArmed)),
-    h("span", { className: "apm-window" }, "flips the config, restarts the server (~1-2 min)"));
 }
 
 // ---- charts: hand-built SVG (no chart library in the dashboard) ----
@@ -908,34 +855,6 @@ function freezeHandler(opts: {
   opts.setFrozen(!opts.frozen);
 }
 
-function togglePerfHandler(opts: {
-  HTTP: PanelProps["HTTP"];
-  perfBusy: boolean;
-  perfAvailable: boolean;
-  setPerfBusy: (v: boolean) => void;
-  perfEnabled: boolean;
-  setPerfError: (v: string) => void;
-}): void {
-  if (opts.perfBusy || !opts.perfAvailable) {
-    return;
-  }
-  opts.setPerfBusy(true);
-  // A no-op POST (config already in the requested state) answers 200 without
-  // restarting, so busy must also clear on success or the button stays
-  // disabled until a manual reload. The mod config can be missing (409
-  // UNAVAILABLE) or unwritable (500 WRITE_FAILED); surface that instead of
-  // silently snapping back to idle.
-  void opts.HTTP.post("/api/perf", { enabled: !opts.perfEnabled })
-    .then((): void => {
-      opts.setPerfError("");
-      opts.setPerfBusy(false);
-    })
-    .catch((): void => {
-      opts.setPerfError("Perf toggle failed: the perf API rejected or dropped the request.");
-      opts.setPerfBusy(false);
-    });
-}
-
 function copySnapshot(snapshot: Record<string, unknown>, setCopyStatus: (v: string) => void): void {
   const txt = JSON.stringify(snapshot, null, 2);
   // Clipboard requires a secure context; the dashboard may be served over
@@ -950,10 +869,6 @@ function copySnapshot(snapshot: Record<string, unknown>, setCopyStatus: (v: stri
     (): void => setCopyStatus("Copy failed: the clipboard write was rejected."));
 }
 
-// Feature-group row for the Efficiency panel. Toggles are staged locally
-// (pending), not applied per click; the Apply button commits them all with a
-// single restart. The row shows the effective (staged) state, a changed
-// marker, the description, and the safe/experimental status.
 // History-depth setting wired to a panel: the module variable is the single
 // source that pushHistory reads; changing it persists and trims old samples.
 function depthController(React: PanelProps["React"], hist: SparkHistory): { depth: number; changeDepth: (n: number) => void } {
@@ -965,26 +880,6 @@ function depthController(React: PanelProps["React"], hist: SparkHistory): { dept
     setDepth(n);
   };
   return { depth, changeDepth };
-}
-
-function renderPerfGroupRow(h: CreateElement, g: Record<string, unknown>, on: boolean, staged: boolean, busy: boolean, toggle: () => void): unknown {
-  const status = strOr(g.status, "safe");
-  const name = String(g.name);
-  return h("div", { key: name, className: "apm-group" },
-    h("div", { className: "apm-group-info" },
-      h("span", { className: "apm-label" }, name),
-      h("span", { className: "apm-group-desc" }, strOrEmpty(g.description))),
-    h("div", { className: "apm-group-controls" },
-      h("span", { className: `apm-status ${status === "experimental" ? "apm-status-exp" : "apm-status-safe"}` }, status),
-      h("span", { className: `apm-pill ${on ? "apm-ok" : "apm-off"}${staged ? " apm-staged" : ""}` },
-        on ? "ON" : "OFF",
-        staged ? sr(h, " (change staged)") : null),
-      // The row repeats one visible label per group; include the group name so
-      // the accessible name is unique and self-describing out of context.
-      h("button", {
-        type: "button", className: "apm-btn", disabled: busy, onClick: toggle,
-        "aria-label": `${on ? "Turn off" : "Turn on"} ${name}`
-      }, on ? "Turn off" : "Turn on")));
 }
 
 function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
@@ -1004,9 +899,6 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
       setAuthBlocked(true);
     }
   }, [query.isError, query.error]);
-  const perfQ = useQuery("apm-perf", () => HTTP.get("/api/perf"), { refetchInterval: 30_000, enabled: !authBlocked, retry: false });
-  const [perfBusy, setPerfBusy] = React.useState(false);
-  const [perfArmed, setPerfArmed] = React.useState(false);
 
   const hist = React.useRef<SparkHistory>({ last: null, tps: [], alloc: [], gm: [], gen2: [], heap: [] });
   const [frozen, setFrozen] = React.useState(false);
@@ -1033,16 +925,8 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   }
   const { update, health, gc, world, host, sections, transfers, spikes } = snapshotViewsOf(snapshot);
   const g = grade(update);
-  const perf = unwrapSnap(perfQ.data);
-  const perfEnabled = perf.enabled === true, perfAvailable = perf.available === true;
 
   const toggleFreeze = (): void => freezeHandler({ frozen, setFrozen, live, frozenSnap });
-  // Restarting the server kicks every player for a couple of minutes, so the
-  // toggle needs one explicit confirm click before it fires.
-  const [perfError, setPerfError] = React.useState("");
-  const togglePerf = (): void => armToggle(perfArmed, setPerfArmed, (): void => {
-    togglePerfHandler({ HTTP, perfBusy, perfAvailable, setPerfBusy, perfEnabled, setPerfError });
-  });
   const { depth, changeDepth } = depthController(React, hist.current);
   const setSortKey = (key: string): void => setSort((s): { key: string; dir: number } => ({ key, dir: s.key === key ? -s.dir : -1 }));
 
@@ -1050,8 +934,6 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
     renderHead(h, g, frozen, toggleFreeze, (): void => copySnapshot(snapshot, setCopyStatus), gc, update),
     h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus),
     host === null ? null : renderHostStrip(h, host),
-    renderPerfRow(h, perfEnabled, perfAvailable, perfBusy, perfArmed, togglePerf),
-    perfError === "" ? null : h("pre", { className: "apm-error", role: "alert" }, perfError),
     renderTrendsChart(h, React, hist.current, depth, changeDepth),
     h("div", { className: "apm-charts-row" },
       renderBudgetGauge(h, update),
@@ -1063,157 +945,6 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
     renderTransfersSection(h, transfers));
 }
 
-// Staged-apply helpers for the Efficiency panel: feature-group toggles are
-// staged locally (pending), not applied per click; the Apply button commits
-// them all with a single restart.
-function hasPending(pending: Record<string, boolean>, name: string): boolean {
-  return name in pending;
-}
-
-function effectiveOn(pending: Record<string, boolean>, g: Record<string, unknown>): boolean {
-  const name = String(g.name);
-  return hasPending(pending, name) ? pending[name] : g.enabled === true;
-}
-
-function stageToggle(opts: {
-  pending: Record<string, boolean>;
-  setPending: (v: Record<string, boolean> | ((prev: Record<string, boolean>) => Record<string, boolean>)) => void;
-  setPerfError: (v: string) => void;
-  group: Record<string, unknown>;
-}): void {
-  const name = String(opts.group.name);
-  const current = opts.group.enabled === true;
-  const next = !effectiveOn(opts.pending, opts.group);
-  opts.setPerfError("");
-  opts.setPending((p): Record<string, boolean> => {
-    const n = { ...p };
-    if (next === current) {
-      delete n[name];
-    } else {
-      n[name] = next;
-    }
-    return n;
-  });
-}
-
-function applyPerfGroups(opts: {
-  HTTP: PanelProps["HTTP"];
-  busy: boolean;
-  pending: Record<string, boolean>;
-  pendingCount: number;
-  setArmedApply: (v: boolean) => void;
-  setPending: (v: Record<string, boolean>) => void;
-  setBusy: (v: boolean) => void;
-  setPerfError: (v: string) => void;
-}): void {
-  if (opts.busy || opts.pendingCount === 0) {
-    return;
-  }
-  opts.setArmedApply(false);
-  opts.setBusy(true);
-  void opts.HTTP.post("/api/perf", { groups: opts.pending })
-    .then((): void => {
-      opts.setPending({});
-      opts.setBusy(false);
-    })
-    .catch((error: unknown): void => {
-      opts.setPerfError(error instanceof Error ? error.message : String(error));
-      opts.setBusy(false);
-    });
-}
-
-// Feature-group list for the Efficiency panel: heading, staging hint, any
-// apply error, then one row per group.
-function renderFeatureGroups(
-  h: CreateElement,
-  groups: Array<Record<string, unknown>>,
-  pending: Record<string, boolean>,
-  busy: boolean,
-  perfError: string,
-  onStage: (g: Record<string, unknown>) => void
-): Array<unknown> {
-  return [
-    h("h3", null, "Feature groups"),
-    h("p", { className: "apm-window" }, `${groups.length} toggles · staged here, applied with one restart`),
-    perfError === "" ? null : h("p", { className: "apm-error", role: "alert" }, perfError),
-    h("div", { className: "apm-groups" },
-      groups.map((g: Record<string, unknown>): unknown =>
-        renderPerfGroupRow(h, g, effectiveOn(pending, g), hasPending(pending, String(g.name)), busy, (): void => onStage(g)))),
-  ];
-}
-
-// Focused panel for the EfficientServer perf mod toggle (its own top-level
-// menu entry alongside APM). Same /api/perf admin endpoint.
-function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): unknown {
-  const h = React.createElement;
-  const [blocked, setBlocked] = React.useState(false);
-  const [busy, setBusy] = React.useState(false);
-  const [pending, setPending] = React.useState<Record<string, boolean>>({});
-  const [armedApply, setArmedApply] = React.useState(false);
-  const [perfError, setPerfError] = React.useState("");
-   const perfQ = useQuery("apm-perf-efficiency", () => HTTP.get("/api/perf"), { refetchInterval: 30_000, enabled: !blocked, retry: false });
-   React.useEffect((): void => {
-     // Auth-only latch, same rationale as ApmPanel: one dropped poll must not
-     // kill a live panel.
-     const status = perfQ.error?.response?.status;
-     if (perfQ.isError === true && (status === 401 || status === 403)) {
-       setBlocked(true);
-     }
-   }, [perfQ.isError, perfQ.error]);
-
-   // All hooks above the conditional return: an error on a later refetch must
-   // not change the hook count between renders (Rules of Hooks).
-   const [toggleArmed, setToggleArmed] = React.useState(false);
-
-   if (perfQ.isError === true) {
-     const status = perfQ.error?.response?.status;
-     return renderAuthError(h, "Efficiency", status,
-       "Authentication required: log in to the dashboard as an admin (permission level 0) to control the perf mod.",
-       "Perf API unavailable");
-   }
-
-   const perf = unwrapSnap(perfQ.data);
-   const enabled = perf.enabled === true;
-   const available = perf.available === true;
-   const groups = listOrEmpty<Record<string, unknown>>(perf.groups);
-   // Same two-step confirm as the APM panel: flipping the whole mod restarts
-   // the server, so a single stray click must not do it.
-   const toggle = (): void => armToggle(toggleArmed, setToggleArmed, (): void => {
-     togglePerfHandler({ HTTP, perfBusy: busy, perfAvailable: available, setPerfBusy: setBusy, perfEnabled: enabled, setPerfError });
-   });
-  const pendingCount = Object.keys(pending).length;
-  const apply = (): void => applyPerfGroups({ HTTP, busy, pending, pendingCount, setArmedApply, setPending, setBusy, setPerfError });
-
-  return h("div", { className: "seven-dtd-apm" },
-    h("div", { className: "apm-head" },
-      h("h2", null, "Efficiency"),
-      h("span", { className: `apm-pill ${enabled ? "apm-ok" : "apm-warn"}` }, enabled ? "ENABLED" : "DISABLED")),
-    h("div", { className: "apm-perf" },
-      h("span", { className: "apm-label" }, "Performance mod (EfficientServer)"),
-      h("button", {
-        type: "button", className: "apm-btn", disabled: busy || !available, onClick: toggle,
-        "aria-label": toggleArmed && !busy
-          ? `Confirm ${enabled ? "disable" : "enable"} now and restart the server`
-          : undefined
-      },
-        perfToggleLabel(busy, enabled, toggleArmed)),
-      h("span", { className: "apm-window" }, available ? "flips the whole mod, restarts the server (~1-2 min)" : "perf config unavailable on this server")),
-
-    ...renderFeatureGroups(h, groups, pending, busy, perfError, (g): void => stageToggle({ pending, setPending, setPerfError, group: g })),
-    h("div", { className: "apm-perf" },
-      h("button", {
-        type: "button",
-        className: `apm-btn apm-primary${armedApply ? " apm-armed" : ""}`,
-        disabled: busy || pendingCount === 0,
-        "aria-label": armedApply ? `Confirm apply of ${pendingCount} change${pendingCount === 1 ? "" : "s"} and restart now` : undefined,
-        onClick: (): void => armToggle(armedApply, setArmedApply, apply)
-      }, armedApply ? "Confirm apply?" : `Apply ${pendingCount} change${pendingCount === 1 ? "" : "s"} & restart`),
-      pendingCount > 0
-        ? h("button", { type: "button", className: "apm-btn", disabled: busy, onClick: (): void => setPending({}) }, "Discard")
-        : null,
-      h("span", { className: "apm-window" }, "stages changes · one restart applies them all")));
-}
-
 // The stock dashboard renders every webmod `routes` entry as a direct sidebar
 // item and every `settings` entry as a tab under Settings, unconditionally.
 // The session cookie is set HttpOnly (see ../7dtd-engine-research/docs), so it
@@ -1222,7 +953,7 @@ function EfficiencyPanel({ React, HTTP, useQuery }: PanelProps): unknown {
 // their auth-required state; the dashboard reloads the page after login.
 const webMod = {
   about: "Live, low-overhead managed telemetry from 7dtd-server-apm-bridge.",
-  routes: { "APM": ApmPanel, "Efficiency": EfficiencyPanel },
+  routes: { "APM": ApmPanel },
   settings: {},
   mapComponents: []
 };
