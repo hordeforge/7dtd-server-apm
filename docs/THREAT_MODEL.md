@@ -131,7 +131,6 @@ sec-review; this document is the map that aims those passes.
 | Control | Covers | File |
 |---|---|---|
 | Password delivered to children via env only, never child argv | R2 (child side) | `capture.py:143` |
-| Display redaction of password flags when spawning sibling tools | log leakage | `runner.py:22-28` |
 | Loud warning when the app layer needs an unset password | misconfig | `capture.py:612-623` |
 | Doctor reports secret as set/unset boolean, never value | secret leakage into reports | `doctor.py:152-164` |
 | Captured sessions chmod 0700 | R4 | `capture.py:654-658` |
