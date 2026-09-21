@@ -4,8 +4,9 @@ This directory holds only the standalone collector programs and probe scripts
 launched by the `apm_suite.capture` orchestrator: telnet scrapes, /proc
 samplers, bpftrace sources, and perf wrappers. Every collector runs behind a
 typed `CollectorSpec` adapter and writes a versioned `*.result.json` with exit
-code, duration, tool version, sample count, and failure reason. `capture.sh`
-is a thin compatibility shim that execs the CLI.
+code, duration, tool version, sample count, and failure reason. Capture
+orchestration lives entirely in the Python CLI:
+`uv run 7dtd-server-apm capture`.
 
 All analysis (summary scoring, health, events, managed bridge mapping,
 budgets, compare, index) lives in the `apm_suite.analysis` package and runs
