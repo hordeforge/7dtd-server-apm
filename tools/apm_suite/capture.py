@@ -246,31 +246,31 @@ def _unmount_mono(link: Path | None) -> None:
 
 
 def telnet_command(host: str, port: int, password: str, command: str) -> bool:
-    """Fire one console command over the dedicated telnet interface."""
-    import socket
+    """Fire one console command over the dedicated telnet interface.
 
-    try:
-        with socket.create_connection((host, port), timeout=3) as sock:
-            sock.settimeout(2)
-            with suppress(TimeoutError, OSError):
-                sock.recv(4096)
-            if password:
-                sock.sendall((password + "\n").encode("utf-8"))
-                time.sleep(0.3)
-                with suppress(TimeoutError, OSError):
-                    sock.recv(4096)
-            sock.sendall((command + "\n").encode("utf-8"))
-            time.sleep(0.3)
-            sock.sendall(b"exit\n")
-        return True
-    except OSError:
-        return False
+    Thin wrapper over the shared telnet session: callers only need a success
+    boolean, not the reply text. False means the connection or send failed.
+    """
+    ok, _ = _telnet_session(host, port, password, command)
+    return ok
 
 
 def telnet_exec(
     host: str, port: int, password: str, command: str, read_seconds: float = 2.0
 ) -> str:
     """Run one console command and return the accumulated output text."""
+    return _telnet_session(host, port, password, command, read_seconds)[1]
+
+
+def _telnet_session(
+    host: str, port: int, password: str, command: str, read_seconds: float = 2.0
+) -> tuple[bool, str]:
+    """The one telnet round-trip: connect, authenticate, send, drain, exit.
+
+    Returns (reached, output): reached is False only when the socket work
+    itself failed (unreachable host, refused, reset); output is everything
+    the server sent, empty when it stayed silent.
+    """
     import socket
 
     chunks: list[bytes] = []
@@ -295,8 +295,8 @@ def telnet_exec(
             drain(read_seconds)
             sock.sendall(b"exit\n")
     except OSError:
-        return ""
-    return b"".join(chunks).decode("utf-8", "replace")
+        return False, ""
+    return True, b"".join(chunks).decode("utf-8", "replace")
 
 
 def rally_players(host: str, port: int, password: str, at: tuple[int, int] | None = None) -> int:
