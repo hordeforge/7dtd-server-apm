@@ -144,6 +144,36 @@ against 2.1.0.
   `proc_sample.py` resolves `find_server.sh` as its own sibling and no longer
   swallows every exception from that lookup.
 
+## 2.5.0 (tag v2.5.0) - bridge mod - 2026-09-21
+
+Feature-removal release (minor bump): the cuts come from the workspace audit;
+everything removed was either outside this repository's boundary or a second
+copy of something that already exists.
+
+- Removed: the `/api/perf` admin switch. `POST /api/perf` let a dashboard
+  admin edit the sibling EfficientServer config and schedule a console
+  `shutdown`; that is a workspace-boundary violation (APM measures, it never
+  writes optimizer config) and the subject of THREAT_MODEL R1, now closed.
+  Gone: the `Perf` REST class, the `PerfModConfigPath` bridge config knob,
+  the dashboard's Efficiency panel with its feature-group toggles, their
+  styles, and the two contract tests pinning the endpoint's behavior.
+- Removed: `tools/apm/capture.sh`, an argv-forwarding wrapper around the
+  Python CLI that re-typed a subset of the capture flags and drifted from
+  the real surface. Use `uv run 7dtd-server-apm capture`.
+- Removed: `tools/host_profiler/flamegraph.py` and the static `flame.svg`
+  output. The interactive `flame.html` and the speedscope profiles cover the
+  same folded stacks with search and zoom; the summary `flames.svg` link is
+  gone with it.
+- Changed: `telnet_command` is now a thin wrapper over the shared telnet
+  session (`_telnet_session`), which `telnet_exec` also uses; the two had
+  drifted into different timeout and drain behavior.
+- Changed: the CLI `prune` command and post-capture auto-prune walk one
+  shared `session.prune_store` pass instead of two copies of the same
+  three-phase loop.
+- Changed: `runner.run` no longer carries an argv password-redaction loop;
+  repo policy forbids passwords in child-process argv and no call site
+  passed one.
+
 ## 2.4.1 (tag v2.4.1) - bridge mod - 2026-09-20
 
 No functional change. The bridge carries the version bump so the release is
