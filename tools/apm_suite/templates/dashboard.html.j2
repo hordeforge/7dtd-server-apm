@@ -1,18 +1,18 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>7dtd APM: {{ session.name }}</title>
 <style>{{ css|safe }}</style></head><body>
-<header><h1>7dtd APM Dashboard</h1><div class="muted">{{ session.name }} · pid {{ meta.pid or '?' }} · {{ meta.utc or '' }}</div><nav><a href="report.html">Report</a> · <a href="../index.html">All sessions</a></nav></header>
+<header><h1>7dtd APM Dashboard</h1><div class="muted">{{ session.name }}{% if meta.pid %} · pid {{ meta.pid }}{% endif %}{% if meta.utc %} · {{ meta.utc }}{% endif %}</div><nav><a href="report.html">Report</a> · <a href="../index.html">All sessions</a></nav></header>
 <main>
 <div class="tiles">
 {% if lag.verdict %}<section class="tile"><h2>Lag diagnosis</h2><p class="verdict">{{ lag.verdict }}</p>{% if lag.profile %}<p class="muted">{{ lag.profile }}</p>{% endif %}{% for c in lag.causes %}<p>· <b>{{ c.cause }}</b> ({{ c.severity }}): {{ c.detail }}{% if c.fix %}<br><span class="muted">fix: {{ c.fix }}</span>{% endif %}</p>{% endfor %}</section>{% endif %}
-<section class="tile"><h2>Health</h2><div class="grade">{{ health.grade or '?' }} <span class="muted">{{ health.health or '?' }}</span></div><p class="muted">pressure {{ health.pressure or '?' }}</p></section>
+<section class="tile"><h2>Health</h2>{% if health.grade or health.health %}<div class="grade">{{ health.grade or '?' }} <span class="muted">{{ health.health or '?' }}</span></div><p class="muted">pressure {{ health.pressure ~ '%' if health.pressure is number else '?' }}</p>{% else %}<p class="muted">No health score was produced for this session.</p>{% endif %}</section>
 <section class="tile"><h2>Frame / GC</h2>
 {% if frameinfo %}<p>tick avg <span class="mono">{{ frameinfo.tickIntervalAvgMs|round(1) if frameinfo.tickIntervalAvgMs is number else '?' }}</span> ms · gmUpdate <span class="mono">{{ frameinfo.gmUpdateAvgMs|round(1) if frameinfo.gmUpdateAvgMs is number else '?' }}</span> ms · late ticks <span class="mono">{{ frameinfo.lateTicks }}</span></p>{% endif %}
-{% if gcinfo %}<p>GC: {% if gcinfo.grossAllocMBPerSecond is not none %}<span class="mono">{{ gcinfo.grossAllocMBPerSecond }}</span> MB/s gross churn · {% endif %}<span class="mono">{{ gcinfo.allocMBPerSecond }}</span> MB/s net heap · <span class="mono">{{ gcinfo.fullCollections }}</span> full STW collections</p>
+{% if gcinfo %}<p>GC: {% if gcinfo.grossAllocMBPerSecond is not none %}<span class="mono">{{ gcinfo.grossAllocMBPerSecond|round(1) if gcinfo.grossAllocMBPerSecond is number else '?' }}</span> MB/s gross churn · {% endif %}<span class="mono">{{ gcinfo.allocMBPerSecond|round(1) if gcinfo.allocMBPerSecond is number else '?' }}</span> MB/s net heap · <span class="mono">{{ gcinfo.fullCollections }}</span> full STW collections</p>
 {% if churn_sites %}<p class="muted">steady churn: {{ churn_sites|join(', ') }}</p>{% endif %}
 {% if alloc_sites %}<p class="muted">large-alloc spikes: {{ alloc_sites|join(', ') }}</p>{% endif %}{% endif %}
-{% if transfers %}<p>chunk stream: <span class="mono">{{ transfers.mb_per_second }}</span> MB/s · <span class="mono">{{ transfers.packages_per_second }}</span> pkg/s</p>{% endif %}
-{% if net %}<p>kernel udp (game): <span class="mono">{{ net.udp_send_mb_per_second }}</span> MB/s send · <span class="mono">{{ net.udp_recv_mb_per_second }}</span> MB/s recv</p>{% endif %}
+{% if transfers %}<p>chunk stream: <span class="mono">{{ transfers.mb_per_second|round(1) if transfers.mb_per_second is number else '?' }}</span> MB/s · <span class="mono">{{ transfers.packages_per_second|round(1) if transfers.packages_per_second is number else '?' }}</span> pkg/s</p>{% endif %}
+{% if net %}<p>kernel udp (game): <span class="mono">{{ net.udp_send_mb_per_second|round(1) if net.udp_send_mb_per_second is number else '?' }}</span> MB/s send · <span class="mono">{{ net.udp_recv_mb_per_second|round(1) if net.udp_recv_mb_per_second is number else '?' }}</span> MB/s recv</p>{% endif %}
 {% if worldinfo %}<p>world: <span class="mono">{{ worldinfo.entities }}</span> entities · <span class="mono">{{ worldinfo.players }}</span> players</p>{% endif %}{% if not (frameinfo or gcinfo or transfers or net or worldinfo) %}<p class="muted">No frame, GC, or network samples were collected for this session.</p>{% endif %}</section>
 <section class="tile"><h2>Artifacts</h2><ul>{% for label, href in links %}<li><a href="{{ href }}">{{ label }}</a></li>{% else %}<li class="muted">None produced</li>{% endfor %}</ul></section>
 </div>

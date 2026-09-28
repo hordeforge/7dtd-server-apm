@@ -29,42 +29,47 @@ from apm_suite.web_tokens import base_css
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from folded_to_speedscope import dumps_deep, load_folded, to_d3_tree
 
+# The flame page is a fifth view of the same product as the report, dashboard,
+# and session index, so it reads the same tokens instead of a hand-copied
+# palette that drifts the moment a token changes.
+FLAME_CSS = """
+body{margin:0;padding:0}
+header{padding:12px 16px;background:var(--apm-surface);display:flex;flex-wrap:wrap;
+  gap:12px;align-items:center;border-bottom:1px solid var(--apm-rule)}
+header h1{font-size:16px;margin:0;font-weight:600}
+header .muted{color:var(--apm-muted);font-size:13px}
+#controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:auto}
+input[type=search]{background:var(--apm-bg);border:1px solid var(--apm-rule);
+  color:var(--apm-text);padding:6px 10px;border-radius:6px;min-width:200px}
+button{background:var(--apm-outline);border:1px solid var(--apm-rule);
+  color:var(--apm-text);padding:6px 12px;border-radius:6px;cursor:pointer}
+button:hover{border-color:var(--apm-link)}
+#search-status{color:var(--apm-muted);font-size:12px;min-width:9ch}
+#breadcrumb{padding:8px 16px;font-size:12px;color:var(--apm-muted);word-break:break-all;min-height:1.5em}
+#breadcrumb a{color:var(--apm-link);cursor:pointer;text-decoration:underline;margin-right:4px}
+#breadcrumb a:hover,#breadcrumb a:focus-visible{text-decoration:none}
+#chart{width:100%;overflow:hidden}
+svg{display:block;width:100%}
+.frame rect{stroke:var(--apm-bg);stroke-width:.5;cursor:pointer}
+.frame text{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;fill:var(--apm-bg);pointer-events:none}
+.frame.dim rect{opacity:.25}
+.frame.hit rect{stroke:var(--apm-accent);stroke-width:1.5}
+#tip{display:none;position:fixed;z-index:10;background:var(--apm-surface);
+  border:1px solid var(--apm-rule);padding:8px 10px;border-radius:6px;font-size:12px;
+  max-width:480px;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.4)}
+#tip b{color:var(--apm-accent)}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+footer{padding:8px 16px;font-size:12px;color:var(--apm-muted)}
+footer a{color:var(--apm-link)}
+"""
+
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>__TITLE__</title>
-<style>
-__BASE_CSS__
-  * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, sans-serif; background:var(--apm-bg); color:var(--apm-text); }
-  header { padding:12px 16px; background:var(--apm-surface); display:flex; flex-wrap:wrap; gap:12px; align-items:center; border-bottom:1px solid var(--apm-rule); }
-  header h1 { font-size:16px; margin:0; font-weight:600; }
-  header .muted { color:var(--apm-muted); font-size:13px; }
-  #controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-left:auto; }
-  input[type=search] { background:var(--apm-bg); border:1px solid var(--apm-rule); color:var(--apm-text); padding:6px 10px; border-radius:6px; min-width:200px; }
-  button { background:var(--apm-outline); border:1px solid var(--apm-rule); color:var(--apm-text); padding:6px 12px; border-radius:6px; cursor:pointer; }
-  button:hover { border-color:var(--apm-link); }
-  #breadcrumb { padding:8px 16px; font-size:12px; color:var(--apm-muted); word-break:break-all; min-height:1.5em; }
-  #breadcrumb a { color:var(--apm-link); cursor:pointer; text-decoration:underline; margin-right:4px; }
-  #breadcrumb a:hover, #breadcrumb a:focus-visible { text-decoration:none; }
-  #chart { width:100%; overflow:hidden; }
-  svg { display:block; width:100%; }
-  .frame rect { stroke:var(--apm-bg); stroke-width:0.5; cursor:pointer; }
-  .frame text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; fill:#111; pointer-events:none; }
-  .frame.dim rect { opacity:0.25; }
-  .frame.hit rect { stroke:var(--apm-accent); stroke-width:1.5; }
-  #tip {
-    display:none; position:fixed; z-index:10; background:var(--apm-surface); border:1px solid var(--apm-rule);
-    padding:8px 10px; border-radius:6px; font-size:12px; max-width:480px; pointer-events:none;
-    box-shadow:0 4px 16px rgba(0,0,0,.4);
-  }
-  #tip b { color:var(--apm-accent); }
-  .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; clip-path:inset(50%); overflow:hidden; white-space:nowrap; }
-  footer { padding:8px 16px; font-size:12px; color:var(--apm-muted); }
-  footer a { color:var(--apm-link); }
-</style>
+<style>__CSS__</style>
 </head>
 <body>
 <header>
@@ -72,6 +77,7 @@ __BASE_CSS__
   <span class="muted" id="meta"></span>
   <div id="controls">
     <input type="search" id="q" placeholder="Search frames…" aria-label="Search frames" autocomplete="off"/>
+    <span id="search-status" class="muted"></span>
     <button type="button" id="reset">Reset zoom</button>
     <button type="button" id="pct">Toggle % total / self</button>
   </div>
@@ -102,7 +108,21 @@ const chart = document.getElementById("chart");
 const tip = document.getElementById("tip");
 const crumb = document.getElementById("breadcrumb");
 const meta = document.getElementById("meta");
+const searchStatus = document.getElementById("search-status");
 meta.textContent = `samples=${ROOT.value}`;
+
+// Search feedback is visible, not screen-reader-only: dimming every non-matching
+// frame looks like a rendering bug when the term simply has no hits.
+function countMatches() {
+  let hits = 0;
+  (function walk(n) { if (matches(n)) hits++; (n.children || []).forEach(walk); })(ROOT);
+  return hits;
+}
+
+function showSearchStatus(hits) {
+  if (!search) { searchStatus.textContent = ""; return; }
+  searchStatus.textContent = hits === 0 ? "no frames match" : `${hits} frame${hits === 1 ? "" : "s"}`;
+}
 
 // Coalesce render requests to one per animation frame: a resize drag or
 // search-as-you-type otherwise rebuilds the whole SVG many times per second.
@@ -279,21 +299,27 @@ function escapeXml(s) {
   return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 }
 
-document.getElementById("reset").onclick = () => { focus = ROOT; search = ""; document.getElementById("q").value = ""; render(); announce("Reset zoom, showing the whole profile"); };
+function clearSearch() {
+  search = "";
+  document.getElementById("q").value = "";
+  showSearchStatus(0);
+}
+
+document.getElementById("reset").onclick = () => { focus = ROOT; clearSearch(); render(); announce("Reset zoom, showing the whole profile"); };
 document.getElementById("pct").onclick = () => { showTotal = !showTotal; render(); announce(showTotal ? "Showing percent of total" : "Showing self samples"); };
 document.getElementById("q").addEventListener("input", e => {
   search = (e.target.value || "").trim().toLowerCase();
-  // Coalesced with the render so typing does not walk the tree twice per
-  // keystroke (once to redraw, once to count matches).
-  scheduleRender(() => {
-    if (!search) return;
-    let hits = 0;
-    (function count(n) { if (matches(n)) hits++; (n.children || []).forEach(count); })(ROOT);
-    announce(`${hits} frame${hits === 1 ? "" : "s"} match "${search}"`);
-  });
+  // One walk answers both the visible count and the announcement; the render
+  // itself stays coalesced so typing does not rebuild the SVG twice a keystroke.
+  const hits = search ? countMatches() : 0;
+  showSearchStatus(hits);
+  if (!search) { scheduleRender(); return; }
+  scheduleRender(() => announce(hits === 0
+    ? `No frames match "${search}"`
+    : `${hits} frame${hits === 1 ? "" : "s"} match "${search}"`));
 });
 window.addEventListener("keydown", e => {
-  if (e.key === "Escape") { focus = ROOT; search = ""; document.getElementById("q").value = ""; render(); announce("Reset zoom"); }
+  if (e.key === "Escape") { focus = ROOT; clearSearch(); render(); announce("Reset zoom"); }
 });
 window.addEventListener("resize", () => scheduleRender());
 render();
@@ -301,6 +327,16 @@ render();
 </body>
 </html>
 """
+
+
+def build_html(tree_json: str, title: str, speedscope_name: str) -> str:
+    """Fill the page template. `tree_json` must already be < and > escaped."""
+    return (
+        HTML.replace("__TITLE__", html.escape(title))
+        .replace("__CSS__", base_css(FLAME_CSS))
+        .replace("__TREE_JSON__", tree_json)
+        .replace("__SPEEDSCOPE_NAME__", html.escape(speedscope_name))
+    )
 
 
 def main() -> int:
@@ -332,12 +368,7 @@ def main() -> int:
     tree_json = (
         dumps_deep(tree).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     )
-    page = (
-        HTML.replace("__BASE_CSS__", base_css())
-        .replace("__TITLE__", html.escape(args.title))
-        .replace("__TREE_JSON__", tree_json)
-        .replace("__SPEEDSCOPE_NAME__", html.escape(args.speedscope_name))
-    )
+    page = build_html(tree_json, args.title, args.speedscope_name)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(page, encoding="utf-8")
     print(f"wrote {args.output} (open in browser; click to zoom)")

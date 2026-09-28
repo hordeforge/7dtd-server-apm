@@ -546,7 +546,12 @@
                 }
             })),
             h("div", { className: "apm-table-scroll" }, h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Managed sections timing"), h("thead", null, h("tr", null, th("Section", "name"), th("Calls", "calls"), th("Avg", "avgMs"), th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"), h("th", { key: "budget", scope: "col" }, "% of 50ms"))), h("tbody", null, shown.length === 0
-                ? h("tr", null, h("td", { className: "apm-empty", colSpan: 7 }, "No section matches this filter."))
+                // Two different gaps, one message each: blaming the filter when the
+                // bridge reported no sections at all sends the reader hunting for a
+                // typo in a box they never touched.
+                ? h("tr", null, h("td", { className: "apm-empty", colSpan: 7 }, sections.length === 0
+                    ? "No section timings were collected for this window."
+                    : `No section matches “${filter}”. Clear the filter to see all ${sections.length}.`))
                 : shown.map((s) => {
                     const frac = num(s.avgMs) / TICK_BUDGET_MS;
                     const note = severityNote(num(s.p95Ms));
@@ -583,16 +588,28 @@
         }
         opts.setFrozen(!opts.frozen);
     }
+    // The copy notice is a transient confirmation, not a status line: the panel
+    // underneath keeps streaming new numbers every 2 s, so a message that never
+    // clears reads as a permanent state long after the click it reported.
+    const COPY_STATUS_MS = 8000;
+    let copyStatusTimer = null;
+    function setCopyMessage(setCopyStatus, message) {
+        setCopyStatus(message);
+        if (copyStatusTimer !== null) {
+            clearTimeout(copyStatusTimer);
+        }
+        copyStatusTimer = setTimeout(() => setCopyStatus(""), COPY_STATUS_MS);
+    }
     function copySnapshot(snapshot, setCopyStatus) {
         const txt = JSON.stringify(snapshot, null, 2);
         // Clipboard requires a secure context; the dashboard may be served over
         // plain http. Either way, say what happened (role=status announces it).
         // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: clipboard is typed as always-present, but browsers omit it outside secure contexts
         if (navigator.clipboard === undefined) {
-            setCopyStatus("Copy failed: clipboard is unavailable over plain HTTP.");
+            setCopyMessage(setCopyStatus, "Copy failed: clipboard is unavailable over plain HTTP.");
             return;
         }
-        void navigator.clipboard.writeText(txt).then(() => setCopyStatus("Snapshot JSON copied to clipboard."), () => setCopyStatus("Copy failed: the clipboard write was rejected."));
+        void navigator.clipboard.writeText(txt).then(() => setCopyMessage(setCopyStatus, "Snapshot JSON copied to clipboard."), () => setCopyMessage(setCopyStatus, "Copy failed: the clipboard write was rejected."));
     }
     // History-depth setting wired to a panel: the module variable is the single
     // source that pushHistory reads; changing it persists and trims old samples.

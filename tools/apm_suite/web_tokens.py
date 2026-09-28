@@ -1,11 +1,12 @@
 """The APM web design tokens and the base stylesheet every generated page uses.
 
-Report, dashboard, session index, and flame delta are four views of one product.
-They used to carry four copies of the same palette as raw hex literals, and they
-had already drifted: the dashboard alone had a 10px card radius and a 14px body,
-the index and flame pages fell back to the 16px UA default, and the bridge
-WebMod had picked up two extra grays of its own. One source, rendered into every
-page, is what keeps a reader from seeing four different products.
+Report, dashboard, session index, flame delta, and the interactive flamegraph
+are five views of one product. They used to carry five copies of the same
+palette as raw hex literals, and they had already drifted: the dashboard alone
+had a 10px card radius and a 14px body, the index and flame pages fell back to
+the 16px UA default, and the interactive flamegraph hand-copied its own :root
+block. One source, rendered into every page, is what keeps a reader from seeing
+five different products.
 
 The look is deliberately plain: hairline rules separate, surfaces stay flat, and
 the only saturated colors are the amber accent and the ok/bad status pair. This

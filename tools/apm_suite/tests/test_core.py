@@ -3140,11 +3140,13 @@ def test_golden_report_render(tmp_path: Path) -> None:
 
 
 def test_every_generated_page_carries_the_shared_tokens(tmp_path: Path) -> None:
-    """Report, dashboard, session index, and flame delta are four views of one
-    product. Each used to inline its own copy of the palette and they drifted
-    (a card radius and a 14px body on the dashboard, the 16px UA default on the
-    others). The one source is apm_suite.web_tokens, so a page's stylesheet must
-    declare the tokens and must not name a raw color of its own."""
+    """Report, dashboard, session index, flame delta, and the interactive
+    flamegraph are five views of one product. Each used to inline its own copy
+    of the palette and they drifted (a card radius and a 14px body on the
+    dashboard, the 16px UA default on the others, a hand-copied :root block in
+    the flame page). The one source is apm_suite.web_tokens, so a page's
+    stylesheet must declare the tokens and must not name a raw color of its
+    own."""
     from apm_suite.analysis.index import html_index
     from apm_suite.web_tokens import TOKENS
 
@@ -3157,18 +3159,24 @@ def test_every_generated_page_carries_the_shared_tokens(tmp_path: Path) -> None:
     # path the same way the other script tests do.
     import importlib.util
 
-    spec = importlib.util.spec_from_file_location(
-        "flame_diff_html", REPO / "tools/host_profiler/flame_diff_html.py"
-    )
-    assert spec and spec.loader
-    flame = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(flame)
+    def _load(name: str) -> Any:
+        spec = importlib.util.spec_from_file_location(name, REPO / f"tools/host_profiler/{name}.py")
+        assert spec and spec.loader
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    flame = _load("flame_diff_html")
+    interactive = _load("interactive_flame")
 
     pages = {
         "report": (session / "report.html").read_text(),
         "dashboard": (session / "dashboard.html").read_text(),
         "index": html_index([]),
         "flame": flame.build_html(Path("a"), Path("b"), []),
+        "interactive_flame": interactive.build_html(
+            '{"name": "root", "value": 1, "children": []}', "t", "profile.speedscope.json"
+        ),
     }
     stray = re.compile(r"#[0-9a-fA-F]{3,8}")
     for name, page in pages.items():
@@ -3264,6 +3272,47 @@ def test_dashboard_render_survives_non_numeric_frame_and_share(tmp_path: Path) -
     # .mono span so the figures line up column-wise, so match the markup.
     assert '<span class="mono">?</span> ms' in html
     assert "junk" not in html
+
+
+def test_dashboard_missing_sections_state_instead_of_placeholders(tmp_path: Path) -> None:
+    """A session with no health.json and no meta.json used to print '? ? ?' in
+    the header and a lone '?' grade: a fake reading rather than a stated gap.
+    The Frame/GC tile already says what is missing, so Health and the header
+    line follow the same rule."""
+    session = tmp_path / "session_sparse"
+    session.mkdir()
+    atomic_json(
+        session / "summary.json",
+        {
+            "schema": "7dtd.apm.summary.v2",
+            "session_id": session.name,
+            "layers": [],
+        },
+    )
+    render_session(session)
+    html = (session / "dashboard.html").read_text()
+    assert "No health score was produced for this session." in html
+    header = html.split("<nav>", 1)[0]
+    # Trailing separators from fields that were never collected.
+    assert "pid ?" not in html
+    assert "· ·" not in header
+    assert "No frame, GC, or network samples were collected for this session." in html
+
+
+def test_flame_delta_empty_result_says_so() -> None:
+    """An empty delta table is indistinguishable from a broken page: name the
+    result instead of leaving the reader with headers and nothing under them."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "flame_diff_empty", REPO / "tools/host_profiler/flame_diff_html.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    page = module.build_html(Path("a"), Path("b"), [])
+    assert "No frames differ between these two sessions" in page
+    assert 'href="report.html"' in page
 
 
 # --- integration: finalize pipeline on a synthetic session ---------------------

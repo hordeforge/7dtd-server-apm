@@ -793,7 +793,13 @@ function renderSectionsSection(
           th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"),
           h("th", { key: "budget", scope: "col" }, "% of 50ms"))),
         h("tbody", null, shown.length === 0
-          ? h("tr", null, h("td", { className: "apm-empty", colSpan: 7 }, "No section matches this filter."))
+          // Two different gaps, one message each: blaming the filter when the
+          // bridge reported no sections at all sends the reader hunting for a
+          // typo in a box they never touched.
+          ? h("tr", null, h("td", { className: "apm-empty", colSpan: 7 },
+            sections.length === 0
+              ? "No section timings were collected for this window."
+              : `No section matches “${filter}”. Clear the filter to see all ${sections.length}.`))
           : shown.map((s): unknown => {
             const frac = num(s.avgMs) / TICK_BUDGET_MS;
             const note = severityNote(num(s.p95Ms));
@@ -869,18 +875,32 @@ function freezeHandler(opts: {
   opts.setFrozen(!opts.frozen);
 }
 
+// The copy notice is a transient confirmation, not a status line: the panel
+// underneath keeps streaming new numbers every 2 s, so a message that never
+// clears reads as a permanent state long after the click it reported.
+const COPY_STATUS_MS = 8000;
+let copyStatusTimer: ReturnType<typeof setTimeout> | null = null;
+
+function setCopyMessage(setCopyStatus: (v: string) => void, message: string): void {
+  setCopyStatus(message);
+  if (copyStatusTimer !== null) {
+    clearTimeout(copyStatusTimer);
+  }
+  copyStatusTimer = setTimeout((): void => setCopyStatus(""), COPY_STATUS_MS);
+}
+
 function copySnapshot(snapshot: Record<string, unknown>, setCopyStatus: (v: string) => void): void {
   const txt = JSON.stringify(snapshot, null, 2);
   // Clipboard requires a secure context; the dashboard may be served over
   // plain http. Either way, say what happened (role=status announces it).
   // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: clipboard is typed as always-present, but browsers omit it outside secure contexts
   if (navigator.clipboard === undefined) {
-    setCopyStatus("Copy failed: clipboard is unavailable over plain HTTP.");
+    setCopyMessage(setCopyStatus, "Copy failed: clipboard is unavailable over plain HTTP.");
     return;
   }
   void navigator.clipboard.writeText(txt).then(
-    (): void => setCopyStatus("Snapshot JSON copied to clipboard."),
-    (): void => setCopyStatus("Copy failed: the clipboard write was rejected."));
+    (): void => setCopyMessage(setCopyStatus, "Snapshot JSON copied to clipboard."),
+    (): void => setCopyMessage(setCopyStatus, "Copy failed: the clipboard write was rejected."));
 }
 
 // History-depth setting wired to a panel: the module variable is the single

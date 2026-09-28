@@ -44,6 +44,13 @@ def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
             f'<td class="num delta-{tone}">{r["delta"]:+}</td>'
             f'<td><div aria-hidden="true" class="mag {tone}" style="width:{w:.1f}%"></div></td></tr>'
         )
+    if not rows:
+        # An empty table of headers is a dead end: the reader cannot tell a
+        # no-difference result from a page that failed to build. Say which.
+        tr.append(
+            '<tr><td class="empty" colspan="5">No frames differ between these '
+            "two sessions (no common frames with a non-zero delta).</td></tr>"
+        )
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Flame delta</title>
 <style>{base_css(FLAME_CSS)}</style></head><body>
@@ -51,7 +58,7 @@ def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
 <h1>Speedscope / folded frame delta</h1>
 <p class="muted">A={html.escape(str(a), quote=True)}<br/>B={html.escape(str(b), quote=True)}<br/>
 Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
-<p><a href="dashboard.html">Dashboard</a> · <a href="../index.html">All sessions</a></p>
+<p><a href="dashboard.html">Dashboard</a> · <a href="report.html">Report</a> · <a href="../index.html">All sessions</a></p>
 <div class="scroll"><table>
 <caption class="sr-only">Frame weight delta between sessions A and B</caption>
 <tr><th scope="col">Frame</th><th scope="col" class="num">A</th><th scope="col" class="num">B</th><th scope="col" class="num">Δ</th><th scope="col">Relative Δ magnitude</th></tr>
