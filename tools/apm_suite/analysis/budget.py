@@ -65,37 +65,31 @@ def check(
     sections = load_sections(session)
     metadata = summary.get("metadata") or {}
 
+    def gate(label: str, value: float, limit: Any) -> None:
+        """Append the ok/FAIL line for one budgeted number and latch the verdict."""
+        nonlocal ok
+        if value > float(limit):
+            ok = False
+            lines.append(f"FAIL {label}={value} > budget {limit}")
+        else:
+            lines.append(f"ok   {label}={value} <= {limit}")
+
     for name, limit in (budget.get("max_layer_scores") or {}).items():
         if name not in layers:
             ok = False
             lines.append(f"UNKNOWN layer {name}: no usable evidence")
             continue
-        value = layers[name]
-        if value > float(limit):
-            ok = False
-            lines.append(f"FAIL layer {name}={value} > budget {limit}")
-        else:
-            lines.append(f"ok   layer {name}={value} <= {limit}")
+        gate(f"layer {name}", layers[name], limit)
 
     max_sum = budget.get("max_sum_layer_score")
     if max_sum is not None:
-        total = sum(layers.values())
-        if total > float(max_sum):
-            ok = False
-            lines.append(f"FAIL sum_layers={total} > budget {max_sum}")
-        else:
-            lines.append(f"ok   sum_layers={total} <= {max_sum}")
+        gate("sum_layers", sum(layers.values()), max_sum)
 
     for name, limit in (budget.get("max_section_heat") or {}).items():
         if name not in sections:
             lines.append(f"skip section {name} (no heat data)")
             continue
-        value = sections[name]
-        if value > float(limit):
-            ok = False
-            lines.append(f"FAIL section {name}={value} > budget {limit}")
-        else:
-            lines.append(f"ok   section {name}={value} <= {limit}")
+        gate(f"section {name}", sections[name], limit)
 
     if baseline is not None:
         base_layers = load_layers(baseline)

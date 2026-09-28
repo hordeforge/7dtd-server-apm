@@ -149,24 +149,9 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
         if {k: doc_a.get(k) for k in keys} != {k: doc_b.get(k) for k in keys}:
             raise ValueError("workload manifests are not equivalent")
 
-    layer_deltas: list[dict[str, Any]] = []
-    better_a = better_b = 0
-    for name in sorted(set(layers_a) | set(layers_b)):
-        value_a, value_b = layers_a[name], layers_b[name]
-        difference = value_b - value_a  # negative => B improved (lower pressure)
-        winner = _winner(difference)
-        better_a += winner == "A"
-        better_b += winner == "B"
-        layer_deltas.append(
-            {
-                "layer": name,
-                "a_score": value_a,
-                "b_score": value_b,
-                "delta_b_minus_a": round(difference, 3),
-                "better": winner,
-            }
-        )
-    layer_deltas.sort(key=lambda d: abs(float(d["delta_b_minus_a"])), reverse=True)
+    layer_deltas = _paired_deltas(layers_a, layers_b, "layer", "a_score", "b_score", 3)
+    better_a = sum(d["better"] == "A" for d in layer_deltas)
+    better_b = sum(d["better"] == "B" for d in layer_deltas)
 
     sections_a, sections_b = load_sections(a), load_sections(b)
     section_deltas = _paired_deltas(sections_a, sections_b, "section", "a_heat", "b_heat", 3)

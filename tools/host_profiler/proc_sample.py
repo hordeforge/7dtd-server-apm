@@ -238,7 +238,6 @@ def _sample_loop(
             print("process exited or /proc read raced")
             break
         mono_after = time.monotonic()
-        # fix cpu for first sample interval after sleep
         if prev is not None and prev_mono is not None:
             dt = max(mono_after - prev_mono, 1e-3)
             user_hz = os.sysconf("SC_CLK_TCK")
@@ -275,7 +274,6 @@ def _sample_loop(
         last = s
         prev = s
         prev_mono = mono_after
-        # sleep remaining
         time.sleep(max(0.0, args.interval - (time.monotonic() - mono_before)))
 
     if last is not None:

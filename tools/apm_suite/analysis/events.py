@@ -259,18 +259,12 @@ def build_timeline(session: Path) -> EventsV2:
     parse_threads_jsonl(sink, session / "threads/threads.jsonl")
     parse_app_scrape(sink, session / "app/bridge.jsonl")
 
-    def _t(event: dict[str, Any]) -> float | None:
-        # Same coercion as every other unvalidated collector field: a corrupt or
-        # format-changed "t" reads as untimed instead of crashing the required
-        # events stage. The local float() this replaced missed OverflowError, so
-        # an out-of-range integer stamp (JSON has no int bound) aborted the whole
-        # timeline build.
-        return as_number(event.get("t"))
-
     timed: list[tuple[float, dict[str, Any]]] = []
     untimed: list[dict[str, Any]] = []
     for event in sink.events:
-        stamp = _t(event)
+        # A corrupt or format-changed "t" reads as untimed instead of crashing
+        # the events stage, the same coercion every other collector field gets.
+        stamp = as_number(event.get("t"))
         if stamp is None:
             untimed.append(event)
         else:

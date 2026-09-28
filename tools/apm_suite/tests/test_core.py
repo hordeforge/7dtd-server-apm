@@ -391,6 +391,22 @@ class _CaptureOutcome:
         self.exit_code = exit_code
 
 
+def _fake_loadgen_tree(tmp_path: Path) -> tuple[Path, Path]:
+    """A sibling loadgen checkout with a no-op runner, plus an empty APM store.
+
+    Returns (repo, store): the repo stands in for the checkout cli.REPO points
+    at, the store for the apm_root the scenario command writes under.
+    """
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    loadgen = tmp_path / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
+    loadgen.parent.mkdir(parents=True)
+    loadgen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    store = tmp_path / "store"
+    store.mkdir()
+    return repo, store
+
+
 def _scenario_env(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -405,13 +421,7 @@ def _scenario_env(
     the loadgen writing its manifest + stats beside the claimed path."""
     import apm_suite.cli as cli_module
 
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    loadgen = tmp_path / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
-    loadgen.parent.mkdir(parents=True)
-    loadgen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    store = tmp_path / "store"
-    store.mkdir()
+    repo, store = _fake_loadgen_tree(tmp_path)
 
     started: list[str] = []
     captured: list[dict[str, object]] = []
@@ -3410,13 +3420,7 @@ def test_scenario_run_reports_unspawnable_loadgen_cleanly(
     exit 2), not as a PermissionError traceback out of Popen."""
     import apm_suite.cli as cli_module
 
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    loadgen = tmp_path / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
-    loadgen.parent.mkdir(parents=True)
-    loadgen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    store = tmp_path / "store"
-    store.mkdir()
+    repo, store = _fake_loadgen_tree(tmp_path)
     monkeypatch.setattr(cli_module, "REPO", repo)
     monkeypatch.setattr(cli_module, "apm_root", lambda: store)
 
@@ -3905,13 +3909,7 @@ def test_scenario_run_teardown_survives_second_interrupt(
     game sockets), the exact leak the finally block exists to prevent."""
     import apm_suite.cli as cli_module
 
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    loadgen = tmp_path / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
-    loadgen.parent.mkdir(parents=True)
-    loadgen.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-    store = tmp_path / "store"
-    store.mkdir()
+    repo, store = _fake_loadgen_tree(tmp_path)
     started: list[str] = []
 
     class _InterruptedLoadgen:
@@ -3949,7 +3947,7 @@ def test_scenario_run_teardown_survives_second_interrupt(
 
     result = runner.invoke(app, ["scenario", "run"], env={"COLUMNS": "4096"})
 
-    assert started == [str(loadgen)]
+    assert started == [str(tmp_path / "7dtd-loadgen" / "scripts" / "run_loadgen.sh")]
     assert teardowns == [424242]  # the group kill ran despite the interrupt
     assert result.exit_code == 130
 

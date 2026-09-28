@@ -1219,7 +1219,6 @@ def build_summary(session: Path) -> SummaryV2:
     net = _net_rates(texts.get("io_net", ""), net_window)
     if net:
         metadata["net"] = net
-    # The alloc text read above also feeds both site rankings.
     metadata["top_alloc_sites"] = top_alloc_sites(session, text=alloc_text)
     metadata["top_churn_sites"] = top_churn_sites(session, text=alloc_text)
     metadata["cpu_hot_paths"] = top_cpu_hot_paths(session)

@@ -84,6 +84,12 @@ def _require_backends() -> None:
         raise typer.Exit(2) from None
 
 
+def _require_session_dir(session: Path) -> None:
+    if not session.is_dir():
+        err_console.print(f"[red]not a session directory: {escape(str(session))}[/red]")
+        raise typer.Exit(2)
+
+
 def _version_callback(value: bool) -> None:
     if value:
         print(__version__)
@@ -219,9 +225,7 @@ def finalize(
     ] = False,
 ) -> None:
     """Run finalization stages and write summary artifacts for a raw session."""
-    if not session.is_dir():
-        err_console.print(f"[red]not a session directory: {escape(str(session))}[/red]")
-        raise typer.Exit(2)
+    _require_session_dir(session)
     # Deferred so commands that never finalize (audit, prune, monitor, export...)
     # skip the finalize chain's reporting/jinja2 import at startup.
     from .finalize import finalize as finalize_session
@@ -237,9 +241,7 @@ def audit(
     ] = False,
 ) -> None:
     """Verify session artifact integrity against recorded hashes."""
-    if not session.is_dir():
-        err_console.print(f"[red]not a session directory: {escape(str(session))}[/red]")
-        raise typer.Exit(2)
+    _require_session_dir(session)
     manifest, valid = audit_session(session, verify_recorded=True)
     console.print(
         f"audit: {'valid' if valid else 'INVALID'}; "
@@ -1027,9 +1029,7 @@ def bridge(
     ] = None,
 ) -> None:
     """Correlate managed timings into csharp_bridge.json with a remediation playbook."""
-    if not session.is_dir():
-        err_console.print(f"[red]not a session directory: {escape(str(session))}[/red]")
-        raise typer.Exit(2)
+    _require_session_dir(session)
     # Same contract as compare/budget: a malformed summary.json is an operator
     # error naming the file, never a traceback (analyze re-reads unvalidated
     # session JSON; JSONDecodeError is a ValueError subclass).

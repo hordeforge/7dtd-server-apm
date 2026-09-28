@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import sys
 from pathlib import Path
@@ -57,7 +58,7 @@ Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
 
 
 def _esc(s: str) -> str:
-    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    return html.escape(s, quote=True)
 
 
 def main() -> int:

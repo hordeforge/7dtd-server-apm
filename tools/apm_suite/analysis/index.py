@@ -116,18 +116,19 @@ def html_index(rows: list[dict[str, Any]]) -> str:
             safe_link = html.escape(link, quote=True)
             name = f'<a href="{safe_link}">{name}</a>'
         stw = row.get("stw_worst_ms")
-        flame_icon = ""
-        if row.get("has_flame"):
-            flame_icon = (
-                f'<a class="artifact" href="{html.escape(row["dir"], quote=True)}/cpu/perf/flame.html">'
-                '<span role="img" aria-label="flamegraph report available (open it)">\U0001f525</span></a>'
-            )
-        bridge_icon = ""
-        if row.get("has_bridge"):
-            bridge_icon = (
-                f'<a class="artifact" href="{html.escape(row["dir"], quote=True)}/csharp_bridge.md">'
-                '<span role="img" aria-label="bridge capture available (open it)">\U0001f309</span></a>'
-            )
+        base = html.escape(row["dir"], quote=True)
+        flame_icon = (
+            f'<a class="artifact" href="{base}/cpu/perf/flame.html">'
+            '<span role="img" aria-label="flamegraph report available (open it)">\U0001f525</span></a>'
+            if row.get("has_flame")
+            else ""
+        )
+        bridge_icon = (
+            f'<a class="artifact" href="{base}/csharp_bridge.md">'
+            '<span role="img" aria-label="bridge capture available (open it)">\U0001f309</span></a>'
+            if row.get("has_bridge")
+            else ""
+        )
         body.append(
             f"<tr>"
             f"<td>{name}</td>"

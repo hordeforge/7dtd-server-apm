@@ -4,7 +4,7 @@ import os
 import shutil
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -340,6 +340,25 @@ def remove_sessions(
         yield session, _move_into_trash(trash, session)
 
 
+def _expired(
+    entries: Iterable[Path], cutoff: float, remove: Callable[[Path], None]
+) -> Iterator[tuple[Path, OSError | None]]:
+    """Remove entries whose mtime is past the grace cutoff, yielding each entry
+    with the failure that stopped it (None on success). A concurrent purge that
+    got there first is not a failure: the intended end state already holds."""
+    for entry in sorted(entries):
+        try:
+            if entry.stat().st_mtime > cutoff:
+                continue
+            remove(entry)
+        except FileNotFoundError:
+            yield entry, None
+        except OSError as error:
+            yield entry, error
+        else:
+            yield entry, None
+
+
 def purge_expired_trash(
     store: Path, grace_hours: float | None = None
 ) -> Iterator[tuple[Path, OSError | None]]:
@@ -349,24 +368,12 @@ def purge_expired_trash(
     With grace disabled (0) any legacy trash is dropped outright so the
     setting cannot leak unbounded disk use.
     """
-    grace = prune_grace_hours() if grace_hours is None else grace_hours
-    cutoff = time.time() - max(0.0, grace) * 3600
     trash = _trash_dir(store)
     if not trash.is_dir():
-        return
-    for entry in sorted(trash.glob("session_*")):
-        try:
-            if entry.stat().st_mtime > cutoff:
-                continue
-            shutil.rmtree(entry)
-        except FileNotFoundError:
-            # A concurrent purge got there first: same contract as
-            # remove_sessions, the intended end state already holds.
-            yield entry, None
-        except OSError as error:
-            yield entry, error
-        else:
-            yield entry, None
+        return iter(())
+    grace = prune_grace_hours() if grace_hours is None else grace_hours
+    cutoff = time.time() - max(0.0, grace) * 3600
+    return _expired(trash.glob("session_*"), cutoff, shutil.rmtree)
 
 
 def _scenario_dir(store: Path) -> Path:
@@ -390,22 +397,9 @@ def purge_stale_scenario_runs(
     cutoff = time.time() - max(0.0, grace) * 3600
     scenario = _scenario_dir(store)
     if not scenario.is_dir():
-        return
-    for entry in sorted(scenario.glob("loadgen_*")):
-        if not entry.is_file():
-            continue
-        try:
-            if entry.stat().st_mtime > cutoff:
-                continue
-            entry.unlink()
-        except FileNotFoundError:
-            # A concurrent purge got there first: the file is gone, which is
-            # the intended end state, not a purge failure.
-            yield entry, None
-        except OSError as error:
-            yield entry, error
-        else:
-            yield entry, None
+        return iter(())
+    files = (entry for entry in scenario.glob("loadgen_*") if entry.is_file())
+    return _expired(files, cutoff, Path.unlink)
 
 
 def prune_store(
