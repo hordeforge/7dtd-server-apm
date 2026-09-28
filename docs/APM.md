@@ -112,16 +112,21 @@ perf data, stderr, command lines, and executable paths, and scrub the host home
 prefix from JSON, JSONL, bpftrace output, flamegraph SVG, and other text
 artifacts. Event timelines carry only extracted bridge metrics, never raw
 console text (the telnet stream can contain player names, IPs, and Steam IDs).
+Exclusion is by what a file holds, not by extension: an operator-attached
+`app/efficientserver_log_excerpt.txt` is a slice of the same server log and
+stays out of bundles for the same reason `app/bridge.jsonl` does. Its section
+timings survive in `csharp_bridge.json`.
 Inspect a bundle before sharing because game-derived artifacts may still
 contain player or world data.
 
 Raw sessions keep the full telnet drain in `app/bridge.jsonl` as owner-only
-evidence (captured sessions and their store root are chmod 0700 at capture
-time; `import`-restored sessions keep the default umask permissions, so
-restrict a shared store yourself); raw evidence never enters export bundles.
-The scrape
-itself discards the telnet banner and post-logon reply and persists only the
-requested `apm` command responses.
+evidence (captured and `import`-restored sessions are chmod 0700, store root
+included); raw evidence never enters export bundles. The scrape discards the
+telnet banner and post-logon reply, and persists only the requested `apm`
+command responses. A streamed console-log line is cut at its timestamp
+wherever that timestamp falls in the received line, not only when the line
+begins with one, so a log line the server writes without a leading newline is
+dropped along with its player names, IPs, and Steam IDs.
 
 ```bash
 uv run 7dtd-server-apm export SESSION -o support.zip

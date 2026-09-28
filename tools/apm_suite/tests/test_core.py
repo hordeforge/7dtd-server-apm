@@ -778,6 +778,12 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
     (session / "cpu/perf/flame.svg").write_text(f"<title>frame {home}/libgame.so</title>\n")
     # bridge.jsonl is raw telnet evidence and must stay out of bundles entirely.
     (session / "app/bridge.jsonl").write_text("Player 'Alice' joined from 203.0.113.7\n")
+    # An operator-attached slice of the same server log is PII by content, not
+    # by suffix: it must be excluded the same way, not merely home-scrubbed.
+    (session / "app/efficientserver_log_excerpt.txt").write_text(
+        "2026-08-23T10:00:00 42.0 INF Player 'Alice' joined from 203.0.113.7\n"
+        "World.TickEntities=41.2ms(x100,max=99.0)\n"
+    )
 
     bundle = tmp_path / "bundle.zip"
     result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
@@ -787,12 +793,19 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
         events_line = archive.read("events.jsonl").decode()
         vfs = archive.read("io/vfs.bt.out").decode()
         svg = archive.read("cpu/perf/flame.svg").decode()
+        leaked = "".join(
+            archive.read(name).decode("utf-8", errors="replace")
+            for name in names
+            if "203.0.113.7" in name or "efficientserver" in name
+        )
     assert home not in events_line + vfs + svg
     assert '"cmdline": "<redacted>"' in events_line
     assert "~/save" in events_line and "truncated-line ~/more" in events_line
     assert f"openat {home}" not in vfs and "openat ~/steamapps/common" in vfs
     assert "~/libgame.so" in svg
     assert "app/bridge.jsonl" not in names
+    assert "app/efficientserver_log_excerpt.txt" not in names
+    assert "203.0.113.7" not in leaked and "Alice" not in leaked
 
 
 def test_export_unreadable_member_names_file_and_keeps_prior_bundle(
@@ -3538,6 +3551,61 @@ def test_app_scrape_session_persists_only_command_responses() -> None:
         "198.51.100.9",
         "76561198000000002",
     ):
+        assert leaked not in text
+
+
+def test_app_scrape_cuts_stream_line_glued_to_a_reply_tail() -> None:
+    """A streamed log line needs no newline of its own to leak player data.
+
+    The server does not promise a stream write ends the line the command reply
+    left open, so a log line can arrive glued to that reply's tail. The filter
+    searches for the log timestamp rather than anchoring to the line start, so
+    the player text is cut even there; the reply ahead of it still survives.
+    """
+    import importlib.util
+    import socket
+    import threading
+
+    spec = importlib.util.spec_from_file_location(
+        "app_scrape", REPO / "tools/apm/collectors/app_scrape.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    def server(listener: socket.socket) -> None:
+        ready.set()
+        conn, _ = listener.accept()
+        try:
+            with conn:
+                conn.sendall(b"greeting\n")
+                conn.recv(1024)  # password line
+                conn.recv(1024)  # apm status
+                # No newline before the timestamp: the log line continues the
+                # reply line the server never terminated.
+                conn.sendall(
+                    b"frameAvg=41.2ms"
+                    b"2026-08-23T10:00:00 42.0 INF Player 'Bob' joined "
+                    b"[198.51.100.9] steamid=76561198000000002\n"
+                )
+        except OSError:
+            pass
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    ready = threading.Event()
+    thread = threading.Thread(target=server, args=(listener,), daemon=True)
+    thread.start()
+    try:
+        text = module.session("127.0.0.1", port, "pw", ["apm status"], timeout=2.0)
+    finally:
+        thread.join(timeout=5)
+        listener.close()
+
+    assert "frameAvg=41.2ms" in text  # the reply ahead of the cut survives
+    for leaked in ("Bob", "198.51.100.9", "76561198000000002", "INF Player"):
         assert leaked not in text
 
 

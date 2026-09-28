@@ -486,7 +486,19 @@ def export_session(
         raise typer.BadParameter("session directory does not exist")
     # manifest.json is excluded too: it describes the source session, and the
     # bundle carries its own manifest describing the bundle (below).
-    excluded = {"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json"}
+    # Raw server console output, kept out of bundles for the same reason
+    # bridge.jsonl is: the dedicated server's log lines carry player names,
+    # client IPs, and Steam IDs. `efficientserver_log_excerpt.txt` is an
+    # operator-attached slice of that same log (analysis.bridge reads its
+    # section timings), so it is PII by construction, not by filename suffix.
+    # Scenarios that need it keep the section timings in csharp_bridge.json.
+    excluded = {
+        "perf.data",
+        "bridge.jsonl",
+        "FINALIZE.txt",
+        "manifest.json",
+        "efficientserver_log_excerpt.txt",
+    }
     output.parent.mkdir(parents=True, exist_ok=True)
     # An output inside the session would otherwise be swept up by the walk below
     # (a truncated copy of the archive being written, or a prior export of it).

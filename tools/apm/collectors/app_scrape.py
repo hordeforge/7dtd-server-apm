@@ -25,7 +25,13 @@ from pathlib import Path
 # reads, so the unfinished tail is carried into the next chunk and rejoined),
 # and the fragment left over when the socket closes is discarded rather than
 # persisted: without its head it cannot be classified.
-STREAMED_LOG_LINE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
+#
+# The timestamp is searched, not anchored: nothing guarantees the server ends
+# a stream write with a newline, so a streamed log line can land glued to the
+# tail of the command reply before it. An anchored match would keep that whole
+# line, player data included. Everything from the first timestamp on is the
+# server's log, so the reply text ahead of it is what gets kept.
+STREAMED_LOG_LINE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
 
 def session(host: str, port: int, password: str, cmds: list[str], timeout: float = 2.0) -> str:
@@ -37,15 +43,17 @@ def session(host: str, port: int, password: str, cmds: list[str], timeout: float
     pending = b""
 
     def feed(raw: bytes) -> str:
-        """Filter one received chunk into persistable text: complete lines are
-        kept unless they are streamed console-log lines; the trailing partial
-        line waits for the rest of itself."""
+        """Filter one received chunk into persistable text: each complete line
+        is cut at the first console-log timestamp, keeping only the reply text
+        ahead of it; the trailing partial line waits for the rest of itself."""
         nonlocal pending
         stream = pending + raw
         *lines, pending = stream.replace(b"\r\n", b"\n").replace(b"\r", b"\n").split(b"\n")
-        decoded = [line.decode("utf-8", errors="replace") for line in lines]
-        kept = [line for line in decoded if not STREAMED_LOG_LINE.match(line)]
-        return "".join(line + "\n" for line in kept)
+        kept = [
+            STREAMED_LOG_LINE.split(line.decode("utf-8", errors="replace"), maxsplit=1)[0]
+            for line in lines
+        ]
+        return "".join(line + "\n" for line in kept if line)
 
     with socket.create_connection((host, port), timeout=5) as sock:
         sock.settimeout(timeout)
