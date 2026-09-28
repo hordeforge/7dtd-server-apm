@@ -19,6 +19,13 @@ to 2.3.0 and 2.2.4 stays skipped.
 
 ## Unreleased - host CLI
 
+- Audit: `manifest.json` window stamps now describe the capture instead of the
+  machine that read it. `started_at`/`ended_at` come from `meta.json`
+  (`utc`, `utc + seconds`), and an export bundle carries the recorded stamps
+  over unchanged, so auditing or bundling the same session twice writes the same
+  bytes. A `meta.json` with no usable `utc` records `started_at: null` plus a
+  warning; it no longer stamps the auditing host's wall clock as the capture
+  start.
 - Packaging: the build backend is now bounded to one major
   (`hatchling>=1.27,<2`). It is the one dependency `uv.lock` cannot hash-pin,
   because PEP 517 build isolation resolves it outside the lock on every

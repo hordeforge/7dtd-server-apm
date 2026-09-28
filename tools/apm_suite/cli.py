@@ -11,7 +11,6 @@ import unicodedata
 import zipfile
 import zlib
 from contextlib import suppress
-from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
@@ -48,6 +47,7 @@ from .runner import backend_python, run, terminate_tree
 from .session import (
     MISSING_PREFIX,
     audit_session,
+    capture_window,
     list_sessions,
     prune_grace_hours,
     prune_store,
@@ -460,14 +460,15 @@ def _bundle_manifest(session: Path, artifacts: list[Artifact]) -> ManifestV2:
     The session's own manifest is the descriptive base when it exists; the
     artifact list always comes from the archive. Members the export drops on
     purpose (raw perf.data, telnet bridge.jsonl) must not be recorded, or a
-    hand-extracted bundle audits as tampered.
+    hand-extracted bundle audits as tampered. The window stamps carry over
+    unchanged: they describe the capture, so bundling the same session twice
+    produces the same manifest.
     """
     with suppress(ValueError, OSError, ValidationError):
         recorded = ManifestV2.model_validate(load_json(session / "manifest.json"))
         return recorded.model_copy(
             update={
                 "session_id": session.name,
-                "ended_at": datetime.now(UTC),
                 "artifacts": artifacts,
             }
         )
@@ -475,12 +476,11 @@ def _bundle_manifest(session: Path, artifacts: list[Artifact]) -> ManifestV2:
     with suppress(ValueError, OSError):
         meta = load_json(session / "meta.json")
     only = str(meta.get("only") or "all")
+    started_at, ended_at = capture_window(meta)
     return ManifestV2(
         session_id=session.name,
-        started_at=datetime.fromisoformat(str(meta["utc"]))
-        if meta.get("utc")
-        else datetime.now(UTC),
-        ended_at=datetime.now(UTC),
+        started_at=started_at,
+        ended_at=ended_at,
         target=Target(
             pid=int(as_number(meta.get("pid")) or 1),
             comm=str(meta.get("comm") or SERVER_COMM),

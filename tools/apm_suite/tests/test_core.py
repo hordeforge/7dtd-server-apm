@@ -5700,3 +5700,44 @@ def test_live_server_doctor_reports_target() -> None:
     result = inspect(None, "127.0.0.1", 8081)
     assert result["schema"] == "7dtd.apm.doctor.v2"
     assert result["checks"]["target"]["ok"], "server process not found"
+
+
+def test_audit_manifest_is_replay_stable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auditing the same session bytes twice must produce the same manifest.
+
+    The window stamps describe the capture, so they come from meta.json. Stamping
+    them from the auditing host's wall clock made every replay of a session
+    differ, which defeats diffing two captures artifact by artifact.
+    """
+    from apm_suite import session as session_mod
+
+    first = _session(tmp_path / "session_replay_a")
+    audit_session(first)
+    recorded = (first / "manifest.json").read_bytes()
+
+    class _LateClock(datetime):
+        @classmethod
+        def now(cls, tz: object | None = None) -> _LateClock:
+            return cls(2031, 7, 8, 9, 10, 11, tzinfo=UTC)
+
+    monkeypatch.setattr(session_mod, "datetime", _LateClock)
+    audit_session(first)
+    assert (first / "manifest.json").read_bytes() == recorded
+
+    manifest = ManifestV2.model_validate(load_json(first / "manifest.json"))
+    assert manifest.started_at == datetime(2026, 1, 1, tzinfo=UTC)
+    assert manifest.ended_at == datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC)
+
+
+def test_audit_records_unknown_start_instead_of_the_auditing_clock(tmp_path: Path) -> None:
+    """A meta.json without a usable stamp is missing evidence, not a fresh one."""
+    meta = _meta()
+    meta["utc"] = "not-a-timestamp"
+    broken = _session(tmp_path / "session_replay_b")
+    atomic_json(broken / "meta.json", meta)
+
+    manifest, _ = audit_session(broken)
+    assert manifest.started_at is None
+    assert manifest.ended_at is None
+    assert "capture start time is unknown" in " ".join(manifest.warnings)
+    assert ManifestV2.model_validate(load_json(broken / "manifest.json")).started_at is None

@@ -6,7 +6,7 @@ import sys
 import time
 from collections.abc import Callable, Iterable, Iterator
 from contextlib import suppress
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 
@@ -57,17 +57,35 @@ VALIDATED_DOCUMENTS: tuple[tuple[str, type[BaseModel]], ...] = (
 )
 
 
-def _date(value: Any) -> datetime:
-    # Always return an aware UTC datetime: a naive result (from an ISO string
-    # without a timezone) would later raise TypeError when compared/subtracted
-    # against aware datetimes (e.g. the bridge snapshot stamp).
+def parse_stamp(value: Any) -> datetime | None:
+    """An ISO stamp as an aware UTC datetime, or None when it is unusable.
+
+    A naive result (from an ISO string without a timezone) would later raise
+    TypeError when compared/subtracted against aware datetimes (e.g. the bridge
+    snapshot stamp). A missing or unparseable stamp is missing evidence and
+    stays None: substituting the current wall clock made two audits of the same
+    session bytes disagree, and reported a start time nobody measured.
+    """
     if isinstance(value, str):
         try:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
             return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
         except ValueError:
             pass
-    return datetime.now(UTC)
+    return None
+
+
+def capture_window(meta: dict[str, Any]) -> tuple[datetime | None, datetime | None]:
+    """The capture's own (start, end), derived only from what meta.json records.
+
+    Both stamps are evidence about the captured window, not about the machine
+    that read the session, so replaying an audit or an export of the same bytes
+    rewrites the same manifest.
+    """
+    started = parse_stamp(meta.get("utc"))
+    seconds = _int(meta.get("seconds"), 0)
+    ended = started + timedelta(seconds=seconds) if started and seconds > 0 else None
+    return started, ended
 
 
 def _int(value: Any, default: int) -> int:
@@ -577,10 +595,13 @@ def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[Mani
             # (same contract as _mtime) instead of crashing every audit that
             # overlaps a prune.
             continue
+    started_at, ended_at = capture_window(meta)
+    if started_at is None:
+        warnings.append("meta.json records no usable utc stamp; capture start time is unknown")
     manifest = ManifestV2(
         session_id=session.name,
-        started_at=_date(meta.get("utc")),
-        ended_at=datetime.now(UTC),
+        started_at=started_at,
+        ended_at=ended_at,
         target=Target(
             pid=_int(meta.get("pid"), 1),
             comm=str(meta.get("comm") or SERVER_COMM),

@@ -103,7 +103,9 @@ class Artifact(StrictModel):
 class ManifestV2(StrictModel):
     schema_: Literal["7dtd.apm.manifest.v2"] = Field(default="7dtd.apm.manifest.v2", alias="schema")
     session_id: str
-    started_at: datetime
+    # A session whose meta.json carries no usable stamp records an unknown
+    # start rather than the wall clock of whoever last audited it.
+    started_at: datetime | None = None
     ended_at: datetime | None = None
     target: Target
     requested_layers: list[str]
