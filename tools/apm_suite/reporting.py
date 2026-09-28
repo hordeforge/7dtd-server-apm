@@ -6,6 +6,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .io import atomic_text, load_json
+from .web_tokens import DASHBOARD_CSS, REPORT_CSS, base_css
 
 TEMPLATES = Path(__file__).with_name("templates")
 ENV = Environment(
@@ -62,5 +63,11 @@ def render_session(session: Path) -> None:
         "frameinfo": (summary.get("metadata") or {}).get("frame") or {},
         "links": [(label, href) for label, href in candidates if (session / href).is_file()],
     }
-    atomic_text(session / "report.html", ENV.get_template("report.html.j2").render(**context))
-    atomic_text(session / "dashboard.html", ENV.get_template("dashboard.html.j2").render(**context))
+    atomic_text(
+        session / "report.html",
+        ENV.get_template("report.html.j2").render(**context, css=base_css(REPORT_CSS)),
+    )
+    atomic_text(
+        session / "dashboard.html",
+        ENV.get_template("dashboard.html.j2").render(**context, css=base_css(DASHBOARD_CSS)),
+    )

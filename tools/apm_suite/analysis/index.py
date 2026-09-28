@@ -13,6 +13,16 @@ from typing import Any
 from ..io import atomic_json, atomic_text, load_json
 from ..models import as_mapping, as_number, layer_signals
 from ..paths import apm_root
+from ..web_tokens import base_css
+
+INDEX_CSS = """
+main{max-width:1400px;margin:0 auto}
+main>p{margin:.2rem 0 1rem}
+/* Artifact links are words, not glyphs: an emoji is a different visual
+   language from every other cell here and reads as decoration. */
+a.artifact{text-decoration:none;white-space:nowrap}
+a.artifact+a.artifact{margin-left:.5rem}
+"""
 
 
 def _text(value: Any) -> str:
@@ -124,15 +134,13 @@ def html_index(rows: list[dict[str, Any]]) -> str:
             name = f'<a href="{safe_link}">{name}</a>'
         stw = row.get("stw_worst_ms")
         base = html.escape(row["dir"], quote=True)
-        flame_icon = (
-            f'<a class="artifact" href="{base}/cpu/perf/flame.html">'
-            '<span role="img" aria-label="flamegraph report available (open it)">\U0001f525</span></a>'
+        flame_link = (
+            f'<a class="artifact" href="{base}/cpu/perf/flame.html">flame</a>'
             if row.get("has_flame")
             else ""
         )
-        bridge_icon = (
-            f'<a class="artifact" href="{base}/csharp_bridge.md">'
-            '<span role="img" aria-label="bridge capture available (open it)">\U0001f309</span></a>'
+        bridge_link = (
+            f'<a class="artifact" href="{base}/csharp_bridge.md">bridge</a>'
             if row.get("has_bridge")
             else ""
         )
@@ -140,15 +148,15 @@ def html_index(rows: list[dict[str, Any]]) -> str:
             f"<tr>"
             f"<td>{name}</td>"
             f"<td>{_cell(row.get('utc'))}</td>"
-            f"<td>{_cell(row.get('pid'))}</td>"
-            f"<td>{_cell(row.get('entities'))}/{_cell(row.get('players'))}</td>"
+            f'<td class="num">{_cell(row.get("pid"))}</td>'
+            f'<td class="num">{_cell(row.get("entities"))}/{_cell(row.get("players"))}</td>'
             f"<td>{_cell(row.get('health'), '?')}</td>"
             f"<td>{_cell(row.get('grade'))}</td>"
             f"<td>{_cell(row.get('verdict'))}</td>"
             f"<td>{_cell(row.get('profile'))}</td>"
-            f"<td>{_cell(row.get('gross_alloc_mb_s'))}"
+            f'<td class="num">{_cell(row.get("gross_alloc_mb_s"))}'
             f"{(' / ' + _cell(stw) + 'ms STW') if stw else ''}</td>"
-            f"<td>{flame_icon}{bridge_icon}</td>"
+            f"<td>{flame_link}{bridge_link}</td>"
             f"</tr>"
         )
     if not rows:
@@ -159,28 +167,15 @@ def html_index(rows: list[dict[str, Any]]) -> str:
         )
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>7dtd APM sessions</title>
-<style>
-/* Shared APM web tokens (report + dashboard + session index):
-   bg #0f1115 · surface #161a22 · outline #2a2f3a · rule #303642 ·
-   text #e8eaed · muted #9aa0a6 · link #8ab4f8 · accent #e6bd3a */
-body{{font-family:system-ui;background:#0f1115;color:#e8eaed;margin:24px}}
-a{{color:#8ab4f8}} table{{border-collapse:collapse;width:100%}}
-th,td{{border:1px solid #303642;padding:8px;text-align:left}}
-th{{background:#161a22}}
-.sr-only{{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}}
-/* Icon-only artifact links are small glyphs; pad them to a 24x24 target
-   (WCAG 2.5.8 Target Size Minimum). */
-td a.artifact{{display:inline-block;min-width:24px;min-height:24px;line-height:24px;text-align:center;text-decoration:none;font-size:16px}}
-td a.artifact:focus-visible{{outline:2px solid #8ab4f8;outline-offset:1px}}
-</style></head><body>
+<style>{base_css(INDEX_CSS)}</style></head><body>
 <main>
 <h1>APM session index</h1>
-<p>{len(rows)} sessions</p>
-<table>
+<p class="muted">{len(rows)} sessions</p>
+<div class="scroll"><table>
 <caption class="sr-only">APM sessions</caption>
-<tr><th scope="col">session</th><th scope="col">utc</th><th scope="col">pid</th><th scope="col">entities/players</th><th scope="col">health</th><th scope="col">grade</th><th scope="col">lag diagnosis</th><th scope="col">profile</th><th scope="col">gross alloc / STW</th><th scope="col">artifacts</th></tr>
+<tr><th scope="col">session</th><th scope="col">utc</th><th scope="col" class="num">pid</th><th scope="col" class="num">entities/players</th><th scope="col">health</th><th scope="col">grade</th><th scope="col">lag diagnosis</th><th scope="col">profile</th><th scope="col" class="num">gross alloc / STW</th><th scope="col">artifacts</th></tr>
 {"".join(body)}
-</table>
+</table></div>
 </main>
 </body></html>
 """

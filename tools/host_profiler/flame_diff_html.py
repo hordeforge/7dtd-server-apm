@@ -15,6 +15,17 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.analysis.flame_delta import delta, folded_stack_path, load_weights
 from apm_suite.io import force_utf8_stdio
+from apm_suite.web_tokens import base_css
+
+FLAME_CSS = """
+main{max-width:1400px;margin:0 auto}
+main>p{margin:.4rem 0}
+.delta-bad{color:var(--apm-bad)}
+.delta-ok{color:var(--apm-ok)}
+.mag{height:6px;min-width:1px}
+.mag.bad{background:var(--apm-bad)}
+.mag.ok{background:var(--apm-ok)}
+"""
 
 
 def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
@@ -22,36 +33,28 @@ def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
     max_abs = max((abs(r["delta"]) for r in rows), default=1) or 1
     for r in rows:
         w = 100 * abs(r["delta"]) / max_abs
-        color = "#ff7070" if r["delta"] > 0 else "#57d977"
+        # A frame that got heavier is the regression this page exists to find,
+        # so it carries the same bad/good token the rest of the product uses.
+        tone = "bad" if r["delta"] > 0 else "ok"
         tr.append(
             f"<tr><td><code>{_esc(r['frame'][:90])}</code></td>"
-            f"<td>{r['a']}</td><td>{r['b']}</td>"
-            f"<td style='color:{color}'>{r['delta']:+}</td>"
-            f"<td><div aria-hidden='true' style='background:{color};height:12px;width:{w:.1f}%'></div></td></tr>"
+            f'<td class="num">{r["a"]}</td><td class="num">{r["b"]}</td>'
+            f'<td class="num delta-{tone}">{r["delta"]:+}</td>'
+            f'<td><div aria-hidden="true" class="mag {tone}" style="width:{w:.1f}%"></div></td></tr>'
         )
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Flame delta</title>
-<style>
-/* Shared APM web tokens (report + dashboard + session index + flame pages):
-   bg #0f1115 · surface #161a22 · outline #2a2f3a · rule #303642 ·
-   text #e8eaed · muted #9aa0a6 · link #8ab4f8 · accent #e6bd3a */
-body{{font-family:system-ui;background:#0f1115;color:#e8eaed;margin:24px}}
-a{{color:#8ab4f8}}
-code{{font-size:12px}} table{{border-collapse:collapse;width:100%}}
-th,td{{border:1px solid #303642;padding:6px;text-align:left}} th{{background:#161a22}}
-.muted{{color:#9aa0a6}}
-.sr-only{{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}}
-</style></head><body>
+<style>{base_css(FLAME_CSS)}</style></head><body>
 <main>
 <h1>Speedscope / folded frame delta</h1>
 <p class="muted">A={_esc(str(a))}<br/>B={_esc(str(b))}<br/>
 Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
 <p><a href="dashboard.html">Dashboard</a> · <a href="../index.html">All sessions</a></p>
-<table>
+<div class="scroll"><table>
 <caption class="sr-only">Frame weight delta between sessions A and B</caption>
-<tr><th scope="col">Frame</th><th scope="col">A</th><th scope="col">B</th><th scope="col">Δ</th><th scope="col">Relative Δ magnitude</th></tr>
+<tr><th scope="col">Frame</th><th scope="col" class="num">A</th><th scope="col" class="num">B</th><th scope="col" class="num">Δ</th><th scope="col">Relative Δ magnitude</th></tr>
 {"".join(tr)}
-</table>
+</table></div>
 </main>
 </body></html>
 """

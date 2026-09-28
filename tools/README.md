@@ -32,3 +32,8 @@ A survivor that is not encodable is replaced with U+FFFD at the boundary, never
 carried inward. Text that becomes identity (a session or bundle name) is
 normalized to NFC once, at ingestion.
 
+Generated pages (session report, dashboard, store index, flame delta) share one
+palette and type scale from `apm_suite/web_tokens.py`; the bridge WebMod panel
+reuses the same literal colors. Add a page rule against a token, never a hex,
+and a test (`test_every_generated_page_carries_the_shared_tokens`) fails if one
+drifts.

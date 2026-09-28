@@ -110,6 +110,19 @@ to 2.3.0 and 2.2.4 stays skipped.
   running server resolves to it, instead of falling through to the truncated
   process-name match and handing back another install's PID. The lenient
   fallback (with a warning) stays for the derived default.
+- Generated pages (report, dashboard, session index, flame delta) now share
+  one token set and one type scale from `tools/apm_suite/web_tokens.py`
+  instead of four inlined copies of the palette that had drifted: the
+  dashboard alone carried a card radius and a 14px body while the other three
+  fell back to the 16px browser default. The dashboard's rounded cards become
+  a 2-up tile row for summaries and rule-separated full-width blocks for
+  tables, numeric cells are right-aligned with tabular figures, and the
+  session index's artifact emoji are now words.
+- Budget gate: a `max_layer_scores` or `max_sum_layer_score` limit that is not
+  a number reports UNKNOWN instead of raising `ValueError` out of the whole
+  gate. Both paths converted the limit with `float()` before `gate()` could
+  read it, so one hand-edited budget field took the pass/fail verdict down
+  with it.
 
 - `verify-store [STORE]`: read-only integrity audit of every session in a
   session store, so a whole-store copy-back can be proven instead of assumed.

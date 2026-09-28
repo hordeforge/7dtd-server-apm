@@ -3040,6 +3040,46 @@ def test_golden_report_render(tmp_path: Path) -> None:
     assert (session / "report.html").read_text() == golden
 
 
+def test_every_generated_page_carries_the_shared_tokens(tmp_path: Path) -> None:
+    """Report, dashboard, session index, and flame delta are four views of one
+    product. Each used to inline its own copy of the palette and they drifted
+    (a card radius and a 14px body on the dashboard, the 16px UA default on the
+    others). The one source is apm_suite.web_tokens, so a page's stylesheet must
+    declare the tokens and must not name a raw color of its own."""
+    from apm_suite.analysis.index import html_index
+    from apm_suite.web_tokens import TOKENS
+
+    session = tmp_path / "session_tokens"
+    session.mkdir()
+    atomic_json(session / "summary.json", _summary("session_tokens", []))
+    render_session(session)
+
+    # host_profiler holds standalone scripts, not a package, so it is loaded by
+    # path the same way the other script tests do.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "flame_diff_html", REPO / "tools/host_profiler/flame_diff_html.py"
+    )
+    assert spec and spec.loader
+    flame = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(flame)
+
+    pages = {
+        "report": (session / "report.html").read_text(),
+        "dashboard": (session / "dashboard.html").read_text(),
+        "index": html_index([]),
+        "flame": flame.build_html(Path("a"), Path("b"), []),
+    }
+    stray = re.compile(r"#[0-9a-fA-F]{3,8}")
+    for name, page in pages.items():
+        assert f"--apm-bg:{TOKENS['bg']};" in page, f"{name}: token block missing"
+        rules = page.split("}", 1)[1] if ":root{" in page else ""
+        # The :root block is the only place a literal is allowed; every other
+        # rule has to read a token, or the page can drift from the others again.
+        assert not stray.search(rules), f"{name}: raw color literal outside :root"
+
+
 def test_dashboard_session_metadata_never_comes_from_the_analysis_block(
     tmp_path: Path,
 ) -> None:
@@ -3117,7 +3157,10 @@ def test_dashboard_render_survives_non_numeric_frame_and_share(tmp_path: Path) -
     )
     render_session(session)
     html = (session / "dashboard.html").read_text()
-    assert "? ms" in html  # frame numbers degraded to placeholders, not a crash
+    # Frame numbers degraded to placeholders, not a crash. The value sits in a
+    # .mono span so the figures line up column-wise, so match the markup.
+    assert '<span class="mono">?</span> ms' in html
+    assert "junk" not in html
 
 
 # --- integration: finalize pipeline on a synthetic session ---------------------

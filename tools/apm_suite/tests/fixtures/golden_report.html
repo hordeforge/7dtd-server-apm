@@ -1,9 +1,36 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>7dtd APM report: session_golden</title>
-<style>/* Shared APM web tokens (report + dashboard + session index): bg #0f1115 · surface #161a22 · outline #2a2f3a · rule #303642 · text #e8eaed · muted #9aa0a6 · link #8ab4f8 · accent #e6bd3a */:root{color-scheme:dark}body{font:14px system-ui;max-width:1200px;margin:24px auto;background:#0f1115;color:#e8eaed}header{margin-bottom:16px}header h1{margin:0 0 4px}header p{margin:0 0 8px}table{width:100%;border-collapse:collapse}th,td{padding:8px;border:1px solid #303642;text-align:left;vertical-align:top}a{color:#8ab4f8}pre{white-space:pre-wrap;margin:0}.muted{color:#9aa0a6}.scroll{overflow-x:auto}td.empty{text-align:center;color:#9aa0a6}.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}</style></head><body><main>
+<style>:root{color-scheme:dark;--apm-bg:#0f1115;--apm-surface:#161a22;--apm-outline:#2a2f3a;--apm-rule:#303642;--apm-text:#e8eaed;--apm-muted:#9aa0a6;--apm-link:#8ab4f8;--apm-accent:#e6bd3a;--apm-ok:#57d977;--apm-bad:#ff7070;}
+*,*::before,*::after{box-sizing:border-box}
+body{font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;margin:0;
+  padding:24px;background:var(--apm-bg);color:var(--apm-text);-webkit-font-smoothing:antialiased}
+h1{font-size:20px;font-weight:600;letter-spacing:-.01em;margin:0 0 2px}
+h2{font-size:15px;font-weight:600;margin:0 0 .5rem}
+a{color:var(--apm-link)}
+a:focus-visible{outline:2px solid var(--apm-link);outline-offset:1px}
+code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+pre{white-space:pre-wrap;margin:0}
+table{width:100%;border-collapse:collapse}
+th,td{padding:7px 8px;border-bottom:1px solid var(--apm-rule);text-align:left;vertical-align:top}
+th{background:var(--apm-surface);font-weight:600;color:var(--apm-muted);font-size:12.5px;
+  letter-spacing:.04em;text-transform:uppercase}
+/* Measurements are read column-wise against each other, so every numeric cell
+   gets tabular figures and right alignment. */
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+.muted{color:var(--apm-muted)}
+.empty{text-align:center;color:var(--apm-muted)}
+.scroll{overflow-x:auto}
+.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;
+  clip-path:inset(50%);overflow:hidden;white-space:nowrap}
+.page{max-width:1200px;margin:0 auto}
+header{margin-bottom:16px}
+header p{margin:0 0 8px}
+nav{font-size:13px}
+td ul{margin:0;padding-left:1.1rem}
+</style></head><body><main class="page">
 <header><h1>7dtd APM report</h1><p class="muted">session_golden · 2026-01-01T00:00:00Z</p><nav><a href="dashboard.html">Open dashboard</a> · <a href="../index.html">All sessions</a> · <a href="manifest.json">Manifest</a></nav></header>
 <p>Focus on cpu</p>
-<div class="scroll"><table><caption class="sr-only">Layer scores</caption><tr><th scope="col">Layer</th><th scope="col">Score</th><th scope="col">Signals</th><th scope="col">Actions</th></tr><tr><td>cpu</td><td>42</td><td><pre>{
+<div class="scroll"><table><caption class="sr-only">Layer scores</caption><tr><th scope="col">Layer</th><th scope="col">Score</th><th scope="col">Signals</th><th scope="col">Actions</th></tr><tr><td>cpu</td><td class="num">42</td><td><pre>{
   "ipc": 0.8
 }</pre></td><td><ul><li>Reduce work on main sim thread</li></ul></td></tr></table></div>
 </main></body></html>
