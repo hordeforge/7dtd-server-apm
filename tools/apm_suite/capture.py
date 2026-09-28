@@ -39,6 +39,7 @@ from .models import (
     SERVER_COMM,
     BridgeSnapshotV3,
     CollectorResult,
+    CollectorStatus,
     MetaV2,
     schema_dict,
 )
@@ -374,7 +375,7 @@ def _warn(session: Path, message: str) -> None:
 def _result(
     ctx: CaptureContext,
     spec: CollectorSpec,
-    status: str,
+    status: CollectorStatus,
     *,
     exit_code: int | None = None,
     duration: float = 0.0,
@@ -385,7 +386,7 @@ def _result(
     result = CollectorResult(
         name=spec.name,
         layer=spec.layer,
-        status=status,  # type: ignore[arg-type]
+        status=status,
         exit_code=exit_code,
         duration_seconds=max(0.0, duration),
         tool=spec.tool,
@@ -405,6 +406,41 @@ class _Running:
     started: float
     streams: list[BinaryIO] = field(default_factory=list)
     finished: float | None = None
+
+
+# A collector wrapping its own `timeout` exits 124, and SIGINT-killed children
+# exit 130; both mean "ran until told to stop", not "broke".
+CLEAN_RC = (0, 124, 130)
+# sudo's "command not found" and "command not executable".
+MISSING_RC = (126, 127)
+
+
+def _produced_bytes(session: Path, item: _Running) -> bool:
+    """Whether the collector left a non-empty primary artifact behind."""
+    artifact = session / item.spec.artifact
+    return bool(artifact.is_file() and artifact.stat().st_size)
+
+
+def _classify(rc: int | None, produced: bool, interrupted: bool) -> tuple[CollectorStatus, str]:
+    """Turn a collector's exit code and output into its recorded status.
+
+    rc is None while the process is still alive past the grace window, which
+    is only distinguishable from a real failure when the capture itself was
+    interrupted.
+    """
+    if rc is None:
+        if interrupted:
+            return "interrupted", "capture interrupted; collector still draining"
+        return "failed", "collector did not exit within the grace window"
+    if interrupted and rc not in CLEAN_RC:
+        return "interrupted", "capture interrupted before completion"
+    if rc in MISSING_RC:
+        return "unavailable", "collector tool missing or not permitted"
+    if rc not in CLEAN_RC:
+        return "failed", f"collector exited unexpectedly (rc={rc})"
+    if not produced:
+        return "failed", "collector exited cleanly but produced no output"
+    return "ok", "expected timeout" if rc else ""
 
 
 def _terminate(running: list[_Running]) -> None:
@@ -748,26 +784,7 @@ def run_capture(
     for item in running:
         rc = item.process.poll()
         duration = (item.finished or time.monotonic()) - item.started
-        if rc is None:
-            status, message = (
-                ("interrupted", "capture interrupted; collector still draining")
-                if outcome.interrupted
-                else ("failed", "collector did not exit within the grace window")
-            )
-        elif outcome.interrupted and rc not in (0, 124, 130):
-            status, message = "interrupted", "capture interrupted before completion"
-        elif rc in (126, 127):
-            status, message = "unavailable", "collector tool missing or not permitted"
-        elif (
-            (session / item.spec.artifact).is_file()
-            and (session / item.spec.artifact).stat().st_size
-            and rc in (0, 124, 130)
-        ):
-            status, message = "ok", "expected timeout" if rc else ""
-        elif rc in (0, 124, 130):
-            status, message = "failed", "collector exited cleanly but produced no output"
-        else:
-            status, message = "failed", f"collector exited unexpectedly (rc={rc})"
+        status, message = _classify(rc, _produced_bytes(session, item), outcome.interrupted)
         result = _result(ctx, item.spec, status, exit_code=rc, duration=duration, message=message)
         print(f"   {item.spec.name}: {status} exit={rc} samples={result.sample_count}")
 

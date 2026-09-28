@@ -88,17 +88,17 @@ def check(
             ok = False
             lines.append(f"UNKNOWN layer {name}: no usable evidence")
             continue
-        gate(f"layer {name}", layers[name], limit)
+        gate(f"layer {name}", layers[name], float(limit))
 
     max_sum = budget.get("max_sum_layer_score")
     if max_sum is not None:
-        gate("sum_layers", sum(layers.values()), max_sum)
+        gate("sum_layers", sum(layers.values()), float(max_sum))
 
     for name, limit in as_mapping(budget.get("max_section_heat")).items():
         if name not in sections:
             lines.append(f"skip section {name} (no heat data)")
             continue
-        gate(f"section {name}", sections[name], limit)
+        gate(f"section {name}", sections[name], float(limit))
 
     if baseline is not None:
         base_layers = load_layers(baseline)
@@ -130,11 +130,6 @@ def check(
         limit = budget.get(key)
         if limit is None:
             continue
-        bound = as_number(limit)
-        if bound is None:
-            ok = False
-            lines.append(f"UNKNOWN {key}: unparseable budget limit {limit!r}")
-            continue
         rate_value = as_mapping(metadata.get(block_name)).get(field)
         if rate_value is None:
             lines.append(f"skip {key} (no data)")
@@ -145,11 +140,7 @@ def check(
             ok = False
             lines.append(f"UNKNOWN {key}: unparseable summary value {rate_value!r}")
             continue
-        if number > bound:
-            ok = False
-            lines.append(f"FAIL {key}={rate_value} > budget {limit}")
-        else:
-            lines.append(f"ok   {key}={rate_value} <= {limit}")
+        gate(key, number, limit)
 
     max_late = budget.get("max_late_tick_share")
     if max_late is not None:

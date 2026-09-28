@@ -60,6 +60,12 @@ def first_present(*values: Any) -> float:
 # (capture --pid resolution, doctor's candidate report).
 SERVER_COMM = "7DaysToDieServe"
 
+# Status of one collector for one session. Exported so the writers in capture
+# (_result) and the session audit (which rewrites unavailable -> skipped) pass
+# a checked value instead of a bare str the model layer has to re-narrow.
+CollectorStatus = Literal["ok", "skipped", "failed", "unavailable", "interrupted"]
+HealthGrade = Literal["A", "B", "C", "D", "F"]
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -78,7 +84,7 @@ class CollectorResult(StrictModel):
     )
     name: str
     layer: str
-    status: Literal["ok", "skipped", "failed", "unavailable", "interrupted"]
+    status: CollectorStatus
     exit_code: int | None = None
     duration_seconds: float = Field(default=0, ge=0)
     tool: str = ""
@@ -189,7 +195,7 @@ class HealthV2(StrictModel):
     session: str = ""
     health: float | None = Field(default=None, ge=0, le=100)
     pressure: float | None = Field(default=None, ge=0, le=100)
-    grade: Literal["A", "B", "C", "D", "F"] | None = None
+    grade: HealthGrade | None = None
     coverage: float | None = Field(default=None, ge=0, le=1)
     confidence: Literal["insufficient", "medium"] = "insufficient"
     reason: str = ""

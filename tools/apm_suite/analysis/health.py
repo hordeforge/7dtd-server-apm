@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..io import atomic_json, load_json
-from ..models import HealthV2, collected_layer_scores, schema_dict
+from ..models import HealthGrade, HealthV2, collected_layer_scores, schema_dict
 
 # Weights sum ~1.0 for known layers
 WEIGHTS = {
@@ -23,6 +23,20 @@ WEIGHTS = {
 }
 DEFAULT_WEIGHT = 0.08
 COVERAGE_MIN = 0.8
+# Lower bound of each grade band, best first; anything below the last is F.
+GRADE_BANDS: tuple[tuple[float, HealthGrade], ...] = (
+    (85.0, "A"),
+    (70.0, "B"),
+    (55.0, "C"),
+    (40.0, "D"),
+)
+
+
+def grade_for(health: float) -> HealthGrade:
+    for minimum, grade in GRADE_BANDS:
+        if health >= minimum:
+            return grade
+    return "F"
 
 
 def compute_health(layers: dict[str, float]) -> HealthV2:
@@ -46,21 +60,10 @@ def compute_health(layers: dict[str, float]) -> HealthV2:
         )
     pressure = weighted / weight_sum if weight_sum else 0.0
     health = max(0.0, min(100.0, 100.0 - pressure))
-    grade = (
-        "A"
-        if health >= 85
-        else "B"
-        if health >= 70
-        else "C"
-        if health >= 55
-        else "D"
-        if health >= 40
-        else "F"
-    )
     return HealthV2(
         health=round(health, 2),
         pressure=round(pressure, 2),
-        grade=grade,  # type: ignore[arg-type]
+        grade=grade_for(health),
         coverage=min(coverage, 1.0),
         confidence="medium",
         detail=detail,

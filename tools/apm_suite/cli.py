@@ -1355,35 +1355,45 @@ def scenario_run(
     # the loadgen actually wrote it: a torn or non-object write (loadgen killed
     # mid-flush) must not crash the attach after the capture already succeeded.
     if session is not None:
-        attached = False
-        if workload.stat().st_size > 0:
-            try:
-                doc = json.loads(workload.read_text(encoding="utf-8"))
-            except ValueError as error:
-                err_console.print(
-                    f"[red]loadgen manifest unreadable, not attached: "
-                    f"{escape(str(workload))}: {escape(str(error))}[/red]"
-                )
-            else:
-                if isinstance(doc, dict):
-                    if label:
-                        doc["label"] = label
-                    doc.setdefault("workload", {})["botMode"] = bot_mode or doc.get(
-                        "workload", {}
-                    ).get("botMode", "auto")
-                    atomic_json(session / "workload.json", doc)
-                    attached = True
-                else:
-                    err_console.print(
-                        f"[red]loadgen manifest is not a JSON object, not attached: "
-                        f"{escape(str(workload))}[/red]"
-                    )
+        attached = _attach_workload_manifest(session, workload, label, bot_mode)
         if attached and stats.is_file():
             shutil.copy2(stats, session / "loadgen_stats.json")
         audit_session(session)
         if attached:
             console.print(f"workload manifest attached: {session / 'workload.json'}")
     _exit(capture_rc or load_rc)
+
+
+def _attach_workload_manifest(session: Path, workload: Path, label: str, bot_mode: str) -> bool:
+    """Copy the loadgen manifest into the session; True when it was attached.
+
+    The claim pre-creates the manifest path, so only parseable content proves
+    the loadgen actually wrote it: a torn, non-object, or empty write (loadgen
+    killed mid-flush) must not crash the attach after the capture succeeded.
+    """
+    if workload.stat().st_size == 0:
+        return False
+    try:
+        doc = json.loads(workload.read_text(encoding="utf-8"))
+    except ValueError as error:
+        err_console.print(
+            f"[red]loadgen manifest unreadable, not attached: "
+            f"{escape(str(workload))}: {escape(str(error))}[/red]"
+        )
+        return False
+    if not isinstance(doc, dict):
+        err_console.print(
+            f"[red]loadgen manifest is not a JSON object, not attached: "
+            f"{escape(str(workload))}[/red]"
+        )
+        return False
+    if label:
+        doc["label"] = label
+    doc.setdefault("workload", {})["botMode"] = bot_mode or doc.get("workload", {}).get(
+        "botMode", "auto"
+    )
+    atomic_json(session / "workload.json", doc)
+    return True
 
 
 # Plan entries reach scenario_run as a direct Python call, bypassing Typer's

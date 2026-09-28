@@ -1037,8 +1037,8 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
     # managed section can see. It is where headless-waste findings like the
     # zombie-animator path live; a healthy idle server shows ~frame-target
     # minus ~1-2 ms.
-    frame_now = world.get("unityDeltaMs") or 0
-    gm_avg = update.get("gmUpdateDurationAvgMs") or 0
+    frame_now = _num0(world.get("unityDeltaMs"))
+    gm_avg = _num0(update.get("gmUpdateDurationAvgMs"))
     metadata["frame"] = {
         "gmUpdateAvgMs": update.get("gmUpdateDurationAvgMs"),
         "tickIntervalAvgMs": update.get("serverTickIntervalAvgMs"),
@@ -1052,17 +1052,20 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
     # as_number (not bare float()): JSON "1e999" parses to inf, which passes
     # every truthiness/>0 check below, divides rates into misleading zeros,
     # and would persist into summary.json as a bare `Infinity` that strict
-    # JSON consumers reject. Non-finite evidence is absent evidence.
+    # JSON consumers reject. Non-finite evidence is absent evidence. A string
+    # or container field would raise from the arithmetic further down, taking
+    # the whole snapshot block with it; the _num0/_int0 coercion degrades one
+    # junk field to absent evidence instead of the whole block.
     window_s = as_number((snapshot.get("gc") or {}).get("windowSeconds")) or 0.0
     transfers = snapshot.get("mapTransfers") or []
     if transfers and window_s > 0:
-        total_bytes = sum(int(x.get("bytes") or 0) for x in transfers)
-        total_pkgs = sum(int(x.get("packages") or 0) for x in transfers)
+        total_bytes = sum(_int0(x.get("bytes")) for x in transfers)
+        total_pkgs = sum(_int0(x.get("packages")) for x in transfers)
         metadata["transfers"] = {
             "mb_per_second": round(total_bytes / 1048576 / window_s, 2),
             "packages_per_second": round(total_pkgs / window_s, 1),
             "by_type": {
-                str(x.get("name")): round(int(x.get("bytes") or 0) / 1048576, 1) for x in transfers
+                str(x.get("name")): round(_int0(x.get("bytes")) / 1048576, 1) for x in transfers
             },
         }
     gc_window = snapshot.get("gc") or {}
@@ -1099,7 +1102,7 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
             gc_meta["grossAllocMBPerSecond"] = gross_mb_s  # true churn
             # Allocation per tick (KB): the garbage each tick creates that
             # Boehm must eventually scan. Ties churn to the tick budget.
-            ticks = int(update.get("windowUpdates") or 0)
+            ticks = _int0(update.get("windowUpdates"))
             if ticks and window_s > 0:
                 alloc_kb_tick = gross_mb_s * 1024 * window_s / ticks
                 gc_meta["grossAllocKBPerTick"] = round(alloc_kb_tick, 1)
@@ -1128,8 +1131,8 @@ def _apply_gc_pressure(layers: list[LayerScore], gc_meta: dict[str, Any]) -> Non
 
 def _apply_late_tick_pressure(layers: list[LayerScore], update: dict[str, Any]) -> None:
     """Raise app_sim when the server missed its tick deadline this window."""
-    late = int(update.get("lateTicks") or 0)
-    window = int(update.get("windowUpdates") or 0)
+    late = _int0(update.get("lateTicks"))
+    window = _int0(update.get("windowUpdates"))
     if not window:
         return
     late_share = late / window
@@ -1205,14 +1208,13 @@ def build_summary(session: Path) -> SummaryV2:
                 _apply_gc_pressure(layers, metadata["gc"])
             _apply_late_tick_pressure(layers, (snapshot or {}).get("update") or {})
         except (json.JSONDecodeError, AttributeError, TypeError, ValueError, OverflowError):
-            # TypeError: a snapshot block whose numeric fields parsed as strings
-            # or containers (hand-edited / imported) raises from the arithmetic
-            # above (e.g. "16.6" - 3.2); drop just the snapshot-derived blocks,
-            # exactly like a JSON decode failure. OverflowError: JSON "1e999"
-            # parses to float('inf'), and int()/round() on it raises that, not
-            # ValueError (models.as_number rejects inf for the same reason).
             # AttributeError: a block itself parsed as a non-object ("gc": [16.6])
-            # has no .get - the same hazard attribute_snapshot documents.
+            # has no .get - the same hazard attribute_snapshot documents. TypeError
+            # and ValueError: a field the coercion helpers do not cover (a nested
+            # list, an unhashable "name") still reaches arithmetic or int().
+            # OverflowError: JSON "1e999" parses to float('inf'), and int()/round()
+            # on it raises that, not ValueError (models.as_number rejects inf for
+            # the same reason).
             pass
 
     net_window = max(1.0, float(meta.get("seconds") or 1))

@@ -2032,6 +2032,28 @@ def test_build_summary_keeps_measured_zero_gross_alloc(tmp_path: Path) -> None:
     assert "grossAllocMBPerSecond" not in unmeasured["gc"]
 
 
+def test_snapshot_metadata_degrades_one_junk_field_not_the_block() -> None:
+    """A string or container scalar in a hand-edited / imported snapshot must
+    degrade that one field to absent evidence. Before, "16.6" - 3.2 raised
+    TypeError and build_summary dropped the whole snapshot block; the sibling
+    windowSeconds field is coerced for the same reason."""
+    from apm_suite.analysis.report import _snapshot_metadata
+
+    meta = _snapshot_metadata(
+        {
+            "world": {"unityDeltaMs": "16.6"},
+            "update": {"gmUpdateDurationAvgMs": 3.2, "windowUpdates": "many"},
+            "gc": {"windowSeconds": 30, "heapDeltaBytes": 1024},
+            "mapTransfers": [{"name": "chunk", "bytes": 1048576, "packages": "lots"}],
+        },
+        "",
+    )
+    assert meta["frame"]["engineGapMs"] == 13.4
+    assert meta["gc"]["windowSeconds"] == 30.0  # block survives the junk scalar
+    assert meta["transfers"]["mb_per_second"] == 0.03
+    assert meta["transfers"]["packages_per_second"] == 0.0
+
+
 def test_parse_managed_sections_reads_each_named_file_once(tmp_path: Path) -> None:
     from apm_suite.analysis.bridge import parse_managed_sections
 
