@@ -100,8 +100,7 @@ namespace DtdApmBridge
         // allocation pressure is measured over the capture window, not uptime.
         static int _gc0Base, _gc1Base, _gc2Base;
         static long _heapBase, _allocBase;
-        static double _windowStartRealtime;
-        static double _lastRealtime;  // last main-thread Time.realtimeSinceStartup, read by off-thread GcWindow
+        static long _windowStartTicks;
         // Monotonic GROSS allocation counter. Net heap delta reads ~0 at steady
         // state even under heavy churn; gross is the real pressure driving full
         // GCs. Boehm exports GC_get_total_bytes natively (cheap, one call per
@@ -124,7 +123,8 @@ namespace DtdApmBridge
                 ? -1L
                 : (long)_totalAllocated.Invoke(null, new object[] { false });
         }
-        static double _updateTotal, _updateMax, _lastUpdate, _tickTotal, _tickMax, _lastTick, _nextExport;
+        static double _updateTotal, _updateMax, _lastUpdate, _tickTotal, _tickMax, _lastTick;
+        static long _nextExport, _nextSpikeSample;  // Stopwatch-tick deadlines, 0 = not yet scheduled
         // Lifetime averages; both guard the divide so a fresh `apm reset` (or a
         // single-update window) reads as 0 rather than dividing by zero.
         static double GmUpdateAvgMs() { return _updates == 0 ? 0 : _updateTotal / _updates; }
@@ -132,7 +132,6 @@ namespace DtdApmBridge
         // Spike side-effect rate limit (see EndFrame): counters count every spike,
         // but sampling/logging happens at most once per this many seconds.
         const double SpikeSampleMinSeconds = 5.0;
-        static double _nextSpikeSample;
         // utc stays null until the first SampleWorld lands: every utc field in
         // this payload is an ISO-8601 instant or absent, never a sentinel
         // string, so a client parsing a timestamp never has to special-case
@@ -165,6 +164,14 @@ namespace DtdApmBridge
             int sequence = Interlocked.Increment(ref _sampleSequence);
             return sequence % BridgeMod.Config.DeepSampleRate == 0;
         }
+        // Seconds to Stopwatch ticks, for every scheduled deadline below.
+        // UnityEngine.Time.realtimeSinceStartup is a float, so its resolution
+        // degrades to 2s once the process has been up ~194 days and to 4s past
+        // ~388 days: a 30s export window then quantizes to 28/32s, and
+        // windowSeconds (the denominator of every reported rate) drifts with
+        // it. Stopwatch ticks are integer, monotonic, and readable off the
+        // main thread, so no main-thread timestamp has to be cached.
+        static long Seconds(double seconds) => (long)(seconds * Stopwatch.Frequency);
         public static long Start() => Stopwatch.GetTimestamp();
         public static void Record(int id, long start)
         {
@@ -214,15 +221,14 @@ namespace DtdApmBridge
             if (updateStart == 0) return;
             double ms = (Stopwatch.GetTimestamp() - updateStart) * 1000.0 / Stopwatch.Frequency;
             bool spike = ms >= BridgeMod.Config.SpikeThresholdMs;
-            double now = UnityEngine.Time.realtimeSinceStartup;
+            long now = Stopwatch.GetTimestamp();
             bool export; double lastTick;
             lock (Gate)
             {
-                _lastRealtime = now;  // main-thread timestamp for GcWindow (export runs off-thread)
                 _updateStart = 0; _lastUpdate = ms; _updates++; _updateTotal += ms; if (ms > _updateMax) _updateMax = ms;
                 if (spike) _updateSpikes++;
                 export = BridgeMod.Config.PeriodicExportSeconds > 0 && (_nextExport == 0 || now >= _nextExport);
-                if (export) _nextExport = now + BridgeMod.Config.PeriodicExportSeconds;
+                if (export) _nextExport = now + Seconds(BridgeMod.Config.PeriodicExportSeconds);
                 lastTick = _lastTick;
             }
             if (!spike && !export) return;
@@ -233,7 +239,7 @@ namespace DtdApmBridge
             // degrade exactly the overloaded server being observed. The _updateSpikes
             // COUNTER above still counts every spike, so rates stay accurate.
             bool sampleSpike = spike && now >= _nextSpikeSample;
-            if (sampleSpike) _nextSpikeSample = now + SpikeSampleMinSeconds;
+            if (sampleSpike) _nextSpikeSample = now + Seconds(SpikeSampleMinSeconds);
             if (!sampleSpike && !export) return;
             // SampleWorld touches game state and Process handles; keep it
             // outside Gate so Snapshot() is never blocked behind it.
@@ -333,10 +339,10 @@ namespace DtdApmBridge
         {
             // Window-relative GC churn: gen0 collections/sec is the allocation
             // pressure that produces the stop-the-world pauses seen as frame
-            // spikes. Baseline captured at Reset (window start). Use the cached
-            // main-thread timestamp: Snapshot()/GcWindow() run on the export
-            // ThreadPool thread and UnityEngine.Time is main-thread-only.
-            double elapsed = _lastRealtime - _windowStartRealtime;
+            // spikes. Baseline captured at Reset (window start). The Stopwatch
+            // read is thread-safe, so this runs unchanged on the export
+            // ThreadPool thread.
+            double elapsed = (Stopwatch.GetTimestamp() - _windowStartTicks) / (double)Stopwatch.Frequency;
             int g0 = GC.CollectionCount(0) - _gc0Base;
             int g1 = GC.CollectionCount(1) - _gc1Base;
             int g2 = GC.CollectionCount(2) - _gc2Base;
@@ -508,12 +514,13 @@ namespace DtdApmBridge
             {
                 for (int i = 0; i < _metricCount; i++) Metrics[i].Reset(); Array.Clear(_spikes, 0, _spikes.Length);
                 _spikeWrite = _spikeCount = 0; _updateStart = _previousUpdateStart = _updates = _updateSpikes = _droppedExports = 0;
-                _updateTotal = _updateMax = _lastUpdate = _tickTotal = _tickMax = _lastTick = _nextExport = 0;
+                _updateTotal = _updateMax = _lastUpdate = _tickTotal = _tickMax = _lastTick = 0;
+                _nextExport = 0;
                 _lateTicks = 0; _tickStallMs = 0; _lastExportError = "";
                 _gc0Base = GC.CollectionCount(0); _gc1Base = GC.CollectionCount(1);
                 _gc2Base = GC.CollectionCount(2); _heapBase = GC.GetTotalMemory(false);
                 _allocBase = TotalAllocatedBytes();
-                _windowStartRealtime = UnityEngine.Time.realtimeSinceStartup;
+                _windowStartTicks = Stopwatch.GetTimestamp();
                 Transfers.Clear();
             }
         }

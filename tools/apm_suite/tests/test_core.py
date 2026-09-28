@@ -4741,13 +4741,15 @@ def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
 ) -> None:
     """A session deleted by another process between glob and the sort-key stat
     must not crash every list_sessions caller (post-capture auto-prune, CLI
-    prune); it sorts oldest and is simply gone on the next pass.
+    prune); its mtime reads 0.0, so it sorts last and is simply gone on the
+    next pass.
 
-    The injected removal only fires where the listing stats the path twice.
-    Python 3.13+ routes is_dir() through os.path.isdir, so on those versions
-    the sort-key stat is the only Path.stat call and the race never fires; the
-    explicit mtimes below keep the expected order identical either way, and the
-    _mtime assertion above covers the tolerance itself.
+    The injected removal only fires where the listing stats the path. Path
+    .is_dir() does not go through Path.stat (it uses os.stat), so the sort-key
+    stat is the only Path.stat call on a listed session and that is where the
+    race has to be provoked; the explicit mtimes below keep the expected order
+    identical either way, and the _mtime assertion above covers the tolerance
+    itself.
     """
     from apm_suite.session import _mtime, list_sessions
 
@@ -4755,13 +4757,17 @@ def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
 
     (tmp_path / "session_a").mkdir()
     real_stat = Path.stat
+    seen_b: dict[str, int] = {"n": 0}
 
     def flaky_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
         # The race window is the sort-key stat: Path.is_dir() goes through
         # os.stat, not Path.stat, so the first Path.stat call on a listed
         # session is the one _mtime makes. Failing on the second (as this did)
-        # never fired, and the test silently asserted plain mtime ordering.
+        # never fired, and the test silently asserted plain mtime ordering;
+        # without the count assertion below a hook that stopped firing would
+        # leave this test passing for the wrong reason.
         if self == tmp_path / "session_b":
+            seen_b["n"] += 1
             raise FileNotFoundError(2, "No such file or directory", str(self))
         return real_stat(self, *args, **kwargs)
 
@@ -4775,6 +4781,7 @@ def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
     monkeypatch.setattr("apm_suite.session.Path.stat", flaky_stat)
     names = [p.name for p in list_sessions(tmp_path)]
 
+    assert seen_b["n"] == 1
     assert names == ["session_a", "session_b"]
 
 
