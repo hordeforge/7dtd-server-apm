@@ -4,14 +4,17 @@ User-facing changes for the two shipped artifacts. They version independently:
 
 | Artifact | Version source | Distributed via |
 |---|---|---|
-| `seven-dtd-apm` host CLI | `pyproject.toml` = `tools/apm_suite/__init__.py` (gated by `scripts/check_version.py`) | local `uv sync`; printed by `uv run 7dtd-server-apm --version` |
-| `7dtd-server-apm-bridge` server mod | `ModInfo.xml` = `BridgeMod.cs` const = `bridge/README.md` claim (same gate) | zip from `make package`, named after the newest git tag |
+| `seven-dtd-apm` host CLI | `pyproject.toml` = `tools/apm_suite/__init__.py` = `uv.lock` (gated by `scripts/check_version.py`) | local `uv sync`; printed by `uv run 7dtd-server-apm --version` |
+| `7dtd-server-apm-bridge` server mod | `ModInfo.xml` = `BridgeMod.cs` const = `bridge/README.md` claim (same gate) | zip from `make package`, named `vX.Y.Z` on a clean-tag build and `<commit>` otherwise |
 
 Git tags `vX.Y.Z` mirror the **bridge** version and carry annotated release
 notes (`git show v2.3.0`); `.github/workflows/release.yml` rejects a tag that
-disagrees with `ModInfo.xml`. Only the bridge is tagged, so a CLI-only release
-ships without one. Breaking telemetry-schema or config changes to the bridge
-are expected to bump its major version.
+disagrees with `ModInfo.xml`. A released bridge section with no
+`(tag vX.Y.Z)` suffix is not released yet: the tag is what publishes it, and
+an untagged tree packages under its commit id, so a consumer following the
+changelog alone can be ahead of what exists. Only the bridge is tagged, so a
+CLI-only release ships without one. Breaking telemetry-schema or config
+changes to the bridge are expected to bump its major version.
 
 The **host CLI** has no tag and no external SemVer policy was ever written
 down, so the rules below are inferred from the released sections here, not
@@ -26,13 +29,15 @@ command surface and the on-disk session, manifest, and budget schemas
   a session/budget/manifest field that a current reader cannot parse.
 
 A reader that has to special-case a new field to keep working is a major, not
-a minor. Bump `pyproject.toml` and `tools/apm_suite/__init__.py` together and
-add the released section here; `scripts/check_version.py` fails the build
-when either the two files or this changelog disagree with the shipped version.
+a minor. Bump `pyproject.toml` and `tools/apm_suite/__init__.py` together, run
+`uv lock` (the lock records the project version, and every `make` target runs
+`uv run --locked`), and add the released section here;
+`scripts/check_version.py` fails the build when any of the three files or this
+changelog disagree with the shipped version.
 
 `v2.2.4` is tagged at a commit whose `ModInfo.xml` still read 2.2.3; it
-predates the tag gate and no 2.2.4 mod was ever built. The bridge goes 2.2.3
-to 2.3.0 and 2.2.4 stays skipped.
+predates the tag gate and no 2.2.4 mod was ever built, so 2.2.4 stays skipped
+and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
@@ -48,11 +53,45 @@ to 2.3.0 and 2.2.4 stays skipped.
 - Tooling: mypy gained `mutable-override`, `narrowed-type-not-subtype`, and
   `unused-awaitable`, all clean across `tools/`, `scripts/`, and `plans/`.
 
+## 2.3.0 - host CLI - 2026-09-28
+
+Minor for the new `verify-store` command and the `index --store` option every
+other store-taking command spells that way. No command or flag was removed and
+no schema field was retyped, so per the rules above nothing here forces a
+major.
+
+- CLI: an unusable output path is a clean operator error, not a traceback.
+  `doctor --json`, `export --output`, and `index` now exit 2 on a bad
+  invocation (the path is a directory or unwritable) and 1 when the command
+  ran and could not finish, through one `_fail` path that escapes the message.
+  `index` also takes `--store`; `--root` stays as an alias, so a script
+  written against either name keeps working.
+- CLI: `--help` renders plain when stdout is not a terminal, so
+  `7dtd-server-apm capture --help | grep -- --seconds` returns the option
+  instead of box drawing and 100 columns of padding, and help pasted into an
+  issue keeps its line breaks. Rich markup is still used on a terminal, where
+  the decision is made once at import time.
+- Security: a telnet reply line carrying server log text is cut at the first
+  console-log timestamp instead of being kept whole when the timestamp was
+  not at the start of the line. A stream write with no trailing newline lands
+  the log line glued to the tail of the `apm` command reply, and the anchored
+  match kept that line whole, player names and client addresses included. The
+  reply text ahead of the first timestamp is what is kept.
+- Security: `index` chmods the session store root to 0700 when it creates it.
+  `index.json` carries every session's absolute path plus health and grade
+  data, and `index` can be the first command a host runs, so this can be the
+  call that creates the store. Same contract as `capture` and `import`.
+- Security: capture refuses to replace a `/tmp/perf-<pid>.map` entry that is
+  not a symlink owned by this uid, instead of unlinking whatever another local
+  user planted there. perf would also have read a planted regular file as this
+  capture's symbol table. The refusal is recorded as a session warning.
 - Export: `app/efficientserver_log_excerpt.txt` now stays out of a support
   bundle. The exclusion list named it in `docs/APM.md` but the code excluded
   `FINALIZE.txt`, which nothing in the repository has ever produced, so an
   operator-attached slice of the same server log as `app/bridge.jsonl` was
-  scrubbed and shipped. Its section timings survive in `csharp_bridge.json`.
+  scrubbed and shipped. Exclusion is by what a file holds, not by extension, so
+  any other `efficientserver*` file in the session is dropped for the same
+  reason. Its section timings survive in `csharp_bridge.json`.
 - Export: a `meta.json` `utc` the session cannot spell no longer aborts the
   export with a bare `ValueError` traceback after the evidence has already
   been written into the bundle. The bundle manifest falls back the same way
@@ -107,14 +146,6 @@ to 2.3.0 and 2.2.4 stays skipped.
 - Audit: an unreadable or vanished session document (`meta.json`,
   `summary.json`, `health.json`, events, collector results, recorded manifest)
   is reported as an audit error instead of raising out of the audit.
-- `export`: a hand-mangled `meta.json` timestamp no longer aborts the bundle
-  with a bare `ValueError`; the exported manifest falls back to the session's
-  own tolerant UTC parsing.
-- `export`: an operator-attached slice of the server log stays out of the
-  bundle. Exclusion is by what a file holds, not by extension, so
-  `app/efficientserver_log_excerpt.txt` (and any other `efficientserver*` file
-  in the session) is dropped for the same reason `app/bridge.jsonl` is. Its
-  section timings survive in `csharp_bridge.json`.
 - `scenario run`: an unattributable loadgen stats file is reported and the
   session is still audited, instead of raising after a successful capture.
 - Text encoding: stdout and stderr are now pinned to UTF-8 for every command
@@ -147,6 +178,10 @@ to 2.3.0 and 2.2.4 stays skipped.
   directories) before archiving, so a package built under a restrictive umask
   is byte-identical to one built under 022, and a missing `zip` fails with a
   named tool instead of a mid-rule error.
+- Release: `scripts/check_version.py` now reads the version `uv.lock` records
+  for the root package and fails when it disagrees with `pyproject.toml`. A
+  host CLI bump without `uv lock` used to fail every `Makefile` target with a
+  message naming the lockfile, not the version that had to change.
 - Release: `make package` now writes `dist/sbom-python.txt` and
   `dist/sbom-python.cdx.json` next to the zip, so every release carries the
   production dependency inventory (name, version, artifact hashes, CycloneDX

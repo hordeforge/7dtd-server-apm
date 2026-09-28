@@ -65,6 +65,10 @@ the `Version` const in `bridge/ApmBridge/BridgeMod.cs`, and the mod version
 claim in `bridge/README.md` for the bridge. Git tags mirror the bridge version
 only.
 
+A host CLI bump also needs `uv lock`: the lock records the project version, and
+the `Makefile` targets run `uv run --locked`, so a bump without it fails the
+gate on the lockfile rather than on the version. The gate checks the lock too.
+
 A `.ts` edit under `bridge/ApmBridge/WebMod/` must be recompiled, or the
 `lint-webui` freshness step fails: run `make bridge-build` and commit
 `bundle.js` with the source change.

@@ -78,6 +78,14 @@ uv run 7dtd-server-apm scenario run --seconds 60 --clients 6 --actions 500 --pre
 Passwords should be supplied through `SEVENDTD_TELNET_PASSWORD`; they are never
 placed in child-process arguments. EAC must be disabled when using server mods.
 
+Upgrading the bridge to 3.0.0: `make bridge-install` leaves
+`Config/apmbridge.json` alone, and that mod now rejects a config file carrying
+an unknown key, logging the reason and the file it read. A file written for an
+older or a newer mod therefore stops applying in full: the log names the
+rejected key, the server runs built-in defaults, and the file must be corrected
+against the key table in [`bridge/README.md`](bridge/README.md#mod-config).
+Delete it to re-seed the shipped `.example`.
+
 ## Harness integration (7dtd-loadgen comparison runs)
 
 `7dtd-loadgen`'s stock-vs-zdtd harness (scripts/compare_sut.sh) drives this

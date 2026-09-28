@@ -7,7 +7,11 @@ bridge/README.md must carry the same version. Same convention as
 ../7dtd-server-optimizer/scripts/check_version.py.
 
 Host CLI: pyproject.toml and tools/apm_suite/__init__.py must carry the
-same package version (the analyzer/session version derives from it).
+same package version (the analyzer/session version derives from it), and
+uv.lock must record that version for the root package. The lock carries the
+project version too, and `uv run --locked` (every Makefile gate) fails on a
+stale one, so a bump without `uv lock` breaks the build with a message that
+names the lockfile, not the version.
 
 CHANGELOG.md: the newest released section of each artifact must carry the
 version that artifact actually ships, so a release cannot ship with a missing,
@@ -44,6 +48,7 @@ BRIDGEMOD = ROOT / "bridge" / "ApmBridge" / "BridgeMod.cs"
 BRIDGE_README = ROOT / "bridge" / "README.md"
 PYPROJECT = ROOT / "pyproject.toml"
 APM_INIT = ROOT / "tools" / "apm_suite" / "__init__.py"
+LOCK = ROOT / "uv.lock"
 CHANGELOG = ROOT / "CHANGELOG.md"
 
 # "## <version> - host CLI - <date>" and "## <version> (tag v<version>) - bridge mod - <date>".
@@ -56,6 +61,19 @@ SECTION_RE = re.compile(
 )
 UNRELEASED_RE = re.compile(r"^## Unreleased - (?P<artifact>host CLI|bridge mod)\s*$", re.M)
 ARTIFACTS = ("host CLI", "bridge mod")
+
+# The root package's own [[package]] block: the name line is followed by the
+# version, and the block ends at the next one. A dependency that happens to
+# pin the same version does not match, because only the root is named exactly.
+LOCK_ROOT_PACKAGE = re.compile(
+    r'^\[\[package\]\]\nname = "seven-dtd-apm"\nversion = "([0-9.]+)"', re.M
+)
+
+
+def locked_root_version() -> str | None:
+    """The version uv.lock records for this project, or None if it has none."""
+    match = LOCK_ROOT_PACKAGE.search(LOCK.read_text(encoding="utf-8"))
+    return match.group(1) if match else None
 
 
 def check_changelog(bridge_version: str | None, cli_version: str | None) -> list[str]:
@@ -138,6 +156,12 @@ def main() -> int:
 
     if pp and ai and pp.group(1) != ai.group(1):
         fails.append(f"pyproject {pp.group(1)} != apm_suite __version__ {ai.group(1)}")
+
+    lock = locked_root_version()
+    if lock is None:
+        fails.append("uv.lock: no seven-dtd-apm package version")
+    elif pp and lock != pp.group(1):
+        fails.append(f"pyproject {pp.group(1)} != uv.lock {lock}; run `uv lock` after the bump")
 
     fails.extend(check_changelog(mi.group(1) if mi else None, pp.group(1) if pp else None))
 
