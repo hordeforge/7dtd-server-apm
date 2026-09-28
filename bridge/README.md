@@ -44,12 +44,46 @@ force, so the active config is readable from the server log.
 | `MaxSpikeRecords` | int | `128` | `1` to `1024`; ring size kept in the snapshot |
 | `DeepSampleRate` | int | `16` | `1` to `10000`; every Nth call in a deep section is recorded |
 
+### Console command
+
+`apm` (also spelled `apmbridge`) is the bridge's console verb set, available
+wherever the game accepts console commands: the server console, a telnet
+session, or a script. The verb list, the argument each verb takes, and the
+help line are one table in `ConsoleCmdApm`, so the usage a caller reads and the
+arguments the dispatcher accepts cannot disagree.
+
+| Verb | Argument | Reply |
+|---|---|---|
+| `status` (default) | none | one-line window summary: `updates`, `gmUpdateAvg`, `tickAvg`, `spikes`, `sections`, `api`, `apiErrors` |
+| `dump` | none | the path of a freshly written timestamped snapshot |
+| `reset` | none | `APM reset` |
+| `reload` | none | `APM config reloaded`, or the parse error when the config file was rejected |
+| `capabilities` | none | indented JSON: per-hook status and the game assembly identity |
+| `jitmap` | `full` (optional, case-insensitive) | the jitmap path with `symbols=` and `skipped=` counts |
+| `benchmark` | iterations, `1000` to `1000000`, default `100000` | `iterations=`, `nsPerRecord=`, `budgetNs=`, `pass=` |
+
+A call the table does not accept is refused, never quietly run as a different
+one: an unknown verb, a stray argument to a verb that takes none, an option
+outside `jitmap`'s single `full`, and a non-integer or out-of-range benchmark
+count each answer with the offending value and the usage line. `apm jitmap
+FULLL` used to produce the short map, and `apm benchmark 10` used to be clamped
+up to the 1000-iteration floor, so a mistyped call answered like a successful
+one that measured something else. A failure inside a verb answers `APM error:
+<message>`. The console has no exit status, so a scraper reads the reply text
+and treats those lines as the failure signal.
+
+`dump`, `reset`, and `reload` change server state, and the bridge authorizes no
+console verb itself: any account with console access reaches them
+(`docs/THREAT_MODEL.md` R7). All three are safe to repeat. `dump` never
+overwrites an existing dump (it suffixes on collision), and `reset` and
+`reload` re-apply the same state. The other verbs only read.
+
 ### Web authorization matrix
 
 | Endpoint | Verbs | Required level | Notes |
 |---|---|---|---|
 | `/api/apm` | GET | 0 (admin) | read-only telemetry snapshot; newest 12 spike records, the panel's row count |
-| `/api/apm` | POST/PUT/DELETE | 0 + not implemented | base handler answers 405 |
+| Any verb other than GET | 0 + not implemented | the base handler answers 405 |
 
 Enforcement is not per-handler code: every `AbsRestApi` subclass registers its
 per-method required levels in `AdminWebModules` at construction, and the

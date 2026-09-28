@@ -450,6 +450,87 @@ def test_repeated_dumps_never_resolve_to_one_file() -> None:
     assert prune and '"apm_app_2*.json"' in prune.group(1)
 
 
+def _console_cmd_body() -> str:
+    """Source of the `apm` console command class."""
+    source = BRIDGE_MOD_CS.read_text(encoding="utf-8")
+    return source[source.index("class ConsoleCmdApm") :]
+
+
+def test_console_verb_table_is_the_only_source_of_the_usage_line() -> None:
+    # The help line a caller reads and the verbs the dispatcher accepts were two
+    # copies of the same list: a verb added to one and not the other was
+    # documented as unavailable (or silently undocumented). Both read the table.
+    body = _console_cmd_body()
+    table = re.search(r"static readonly Verb\[\] Verbs = \{(.*?)\};", body, re.DOTALL)
+    assert table, "the verb list must be a table the usage line and dispatch read"
+    verbs = set(re.findall(r'(?:new Verb|Verb\.WithCount)\("(\w+)"', table.group(1)))
+    assert verbs == {
+        "status",
+        "dump",
+        "reset",
+        "reload",
+        "capabilities",
+        "jitmap",
+        "benchmark",
+    }, f"the verb table lists {sorted(verbs)}"
+    assert "getHelp() => UsageLine()" in body, (
+        "getHelp must be built from the verb table, not a second literal"
+    )
+    usage = re.search(r"static string UsageLine\(\)(.*?)\n        \}", body, re.DOTALL)
+    assert usage and "Verbs.Select(v => v.Usage)" in usage.group(1)
+    unknown = re.search(r"if \(verb == null\)(.*?)\n            \}", body, re.DOTALL)
+    assert unknown and "Verbs.Select(v => v.Name)" in unknown.group(1), (
+        "the unknown-verb answer must name the verbs from the same table"
+    )
+
+
+def test_console_rejects_arguments_the_verb_table_does_not_define() -> None:
+    # A mistyped call used to be answered by a default that looked like the
+    # call the caller meant: `apm jitmap FULLL` wrote the short map, and
+    # `apm benchmark 10` was silently clamped up to the 1000-iteration floor.
+    # Every verb now declares what it accepts and the check runs before the
+    # dispatch, so a refused call never reaches a side effect.
+    body = _console_cmd_body()
+    validate = re.search(r"static bool Validate\(.*?\n        \}", body, re.DOTALL)
+    assert validate, "the argument check must be a helper ahead of the dispatch"
+    checks = validate.group(0)
+    assert "int.TryParse" in checks, "a numeric argument must be parsed, not defaulted"
+    assert "BenchmarkMinIterations" in checks and "BenchmarkMaxIterations" in checks, (
+        "a count outside the range Telemetry.Benchmark clamps to must be refused"
+    )
+    assert "OrdinalIgnoreCase" in checks, (
+        "an option word must match case-insensitively, like the verb itself"
+    )
+    assert "takes no arguments" in checks, "a verb that takes nothing must say so"
+    execute = body[body.index("public override void Execute(") :]
+    assert execute.index("Validate(") < execute.index("Telemetry.Dump()"), (
+        "the check must run before any verb does work"
+    )
+    # jitmap writes a file, so its option set is what stands between a typo and
+    # a map the caller did not ask for.
+    assert 'new Verb("jitmap", new[] { "full" })' in body
+
+
+def test_console_verb_documentation_matches_the_dispatch() -> None:
+    # bridge/README.md documents the console verbs like it documents the REST
+    # endpoint: the table is the contract for anyone scripting `apm` over
+    # telnet, and a verb the docs do not list is a verb nobody knows exists.
+    readme = (REPO / "bridge" / "README.md").read_text(encoding="utf-8")
+    assert "### Console command" in readme
+    body = _console_cmd_body()
+    table = re.search(r"static readonly Verb\[\] Verbs = \{(.*?)\};", body, re.DOTALL)
+    assert table
+    for verb in re.findall(r'(?:new Verb|Verb\.WithCount)\("(\w+)"', table.group(1)):
+        assert f"| `{verb}`" in readme, f"the console docs do not list the {verb} verb"
+    for needle in ("BenchmarkMinIterations", "BenchmarkMaxIterations"):
+        declared = re.search(rf"const int {needle} = (\d+);", body)
+        assert declared, f"{needle} must be a named bound, not a literal in the check"
+        bound = declared.group(1)
+        assert bound in readme, (
+            f"the documented benchmark range must state the {needle} bound ({bound})"
+        )
+
+
 def test_config_loader_rejects_unknown_keys_instead_of_defaulting() -> None:
     # A hand-edited config with a misspelled key used to load as defaults: the
     # mod then reported the setting it was asked to change as off, with nothing

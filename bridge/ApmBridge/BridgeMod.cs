@@ -293,13 +293,93 @@ namespace DtdApmBridge
 
     public sealed class ConsoleCmdApm : ConsoleCmdAbstract
     {
-        // Single source for the verb list: getHelp, the unknown-verb answer,
-        // and the dispatch chain below cannot disagree about what exists.
-        static readonly string[] Verbs =
-            { "status", "dump", "reset", "reload", "capabilities", "jitmap", "benchmark" };
+        // One row per verb. The usage line, the unknown-verb answer, the
+        // argument check, and the dispatch all read this table, so a verb or an
+        // argument cannot be advertised in the help and rejected by the
+        // dispatcher (the previous hand-written help string was a second copy
+        // that nothing kept in step).
+        sealed class Verb
+        {
+            public readonly string Name;
+            // Literal words the verb accepts after its name, case-insensitively;
+            // empty means the verb takes no argument. A verb that takes an
+            // integer count declares it through WithCount instead.
+            public readonly string[] Options;
+            public readonly bool TakesCount;
+            public readonly string Usage;
+            public Verb(string name, string[] options = null, bool takesCount = false, string usage = null)
+            {
+                Name = name;
+                Options = options ?? new string[0];
+                TakesCount = takesCount;
+                Usage = usage ?? (Options.Length == 0
+                    ? name : name + " [" + string.Join("|", Options) + "]");
+            }
+            public static Verb WithCount(string name) =>
+                new Verb(name, null, true, name + " [iterations]");
+        }
+        // The bounds Telemetry.Benchmark clamps to. A count outside them is
+        // refused here instead of silently clamped: `apm benchmark 10` would
+        // otherwise measure 1000 iterations and report only the substituted
+        // count, so the caller could not tell what had run.
+        const int BenchmarkMinIterations = 1000;
+        const int BenchmarkMaxIterations = 1000000;
+        const int BenchmarkDefaultIterations = 100000;
+        static readonly Verb[] Verbs = {
+            new Verb("status"), new Verb("dump"), new Verb("reset"), new Verb("reload"),
+            new Verb("capabilities"), new Verb("jitmap", new[] { "full" }),
+            Verb.WithCount("benchmark") };
         public override string[] getCommands() => new[] { "apm", "apmbridge" };
         public override string getDescription() => "7dtd-server-apm instrumentation bridge";
-        public override string getHelp() => "apm [status|dump|reset|reload|capabilities|jitmap [full]|benchmark [iterations]]";
+        public override string getHelp() => UsageLine();
+
+        static string UsageLine() => "apm [" + string.Join("|", Verbs.Select(v => v.Usage)) + "]";
+
+        static Verb Find(string command)
+        {
+            foreach (Verb verb in Verbs) if (verb.Name == command) return verb;
+            return null;
+        }
+
+        // Argument check ahead of the dispatch, so a mistyped call cannot be
+        // answered by a default that looks like the call the caller meant.
+        // count carries a TakesCount verb's parsed argument and is meaningless
+        // for every other verb.
+        static bool Validate(Verb verb, List<string> args, out string problem, out int count)
+        {
+            problem = null; count = 0;
+            if (args.Count < 2) return true;
+            string given = args[1];
+            if (verb.TakesCount)
+            {
+                if (!int.TryParse(given, out count))
+                {
+                    problem = "APM benchmark iterations must be an integer; got '"
+                        + given + "'. " + UsageLine();
+                    return false;
+                }
+                if (count < BenchmarkMinIterations || count > BenchmarkMaxIterations)
+                {
+                    problem = "APM benchmark iterations must be between " + BenchmarkMinIterations
+                        + " and " + BenchmarkMaxIterations + "; got " + count + ".";
+                    return false;
+                }
+                return true;
+            }
+            if (verb.Options.Length == 0)
+            {
+                problem = "APM " + verb.Name + " takes no arguments; got '" + given + "'. " + UsageLine();
+                return false;
+            }
+            foreach (string option in verb.Options)
+                if (string.Equals(option, given, StringComparison.OrdinalIgnoreCase)) return true;
+            // `apm jitmap FULLL` used to answer the short map, so a typo looked
+            // like a successful call that measured something else.
+            problem = "APM " + verb.Name + " takes no argument or " + string.Join("/", verb.Options)
+                + "; got '" + given + "'. " + UsageLine();
+            return false;
+        }
+
         public override void Execute(List<string> args, CommandSenderInfo sender)
         {
             string command = args.Count == 0 ? "status" : args[0].ToLowerInvariant();
@@ -307,10 +387,17 @@ namespace DtdApmBridge
             // to the status summary made every typo (`apm stat`, `apm --help`)
             // look like a successful call, so a client could not tell a working
             // command from a misspelled one.
-            if (Array.IndexOf(Verbs, command) < 0)
+            Verb verb = Find(command);
+            if (verb == null)
             {
                 SdtdConsole.Instance.Output("APM unknown command '" + command
-                    + "'; expected one of: " + string.Join(", ", Verbs) + ". " + getHelp());
+                    + "'; expected one of: " + string.Join(", ", Verbs.Select(v => v.Name)) + ". " + UsageLine());
+                return;
+            }
+            string problem; int iterations;
+            if (!Validate(verb, args, out problem, out iterations))
+            {
+                SdtdConsole.Instance.Output(problem);
                 return;
             }
             try
@@ -319,24 +406,13 @@ namespace DtdApmBridge
                 else if (command == "reset") { Telemetry.Reset(); SdtdConsole.Instance.Output("APM reset"); }
                 else if (command == "reload") { BridgeMod.Reload(); SdtdConsole.Instance.Output("APM config reloaded"); }
                 else if (command == "capabilities") SdtdConsole.Instance.Output(Newtonsoft.Json.JsonConvert.SerializeObject(BridgeMod.Capabilities(), Newtonsoft.Json.Formatting.Indented));
-                else if (command == "jitmap")
-                    // Case-insensitive like the verb itself: `apm jitmap FULL`
-                    // used to answer the short map for a clearly intended full one.
-                    SdtdConsole.Instance.Output(JitMap.Write(args.Count > 1 && args[1].ToLowerInvariant() == "full"));
+                // Case-insensitive like the verb itself: `apm jitmap FULL`
+                // must answer the full map for a clearly intended one. Validate
+                // has already rejected every other argument, so an argument
+                // here is the one this verb accepts.
+                else if (command == "jitmap") SdtdConsole.Instance.Output(JitMap.Write(args.Count > 1));
                 else if (command == "benchmark")
-                {
-                    int n = 100000;
-                    // A non-numeric count used to fall through to the default
-                    // silently, so a typo'd argument measured a different run
-                    // than the one asked for.
-                    if (args.Count > 1 && !int.TryParse(args[1], out n))
-                    {
-                        SdtdConsole.Instance.Output("APM benchmark iterations must be an integer; got '"
-                            + args[1] + "'. " + getHelp());
-                        return;
-                    }
-                    SdtdConsole.Instance.Output(Telemetry.Benchmark(n));
-                }
+                    SdtdConsole.Instance.Output(Telemetry.Benchmark(args.Count > 1 ? iterations : BenchmarkDefaultIterations));
                 else SdtdConsole.Instance.Output(Telemetry.Summary());
             }
             catch (Exception ex) { SdtdConsole.Instance.Output("APM error: " + ex.Message); }

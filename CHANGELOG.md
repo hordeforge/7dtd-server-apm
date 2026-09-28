@@ -409,6 +409,21 @@ major.
 
 ## Unreleased - bridge mod
 
+- Console: a mistyped `apm` argument is refused instead of answered by a
+  default. `apm jitmap FULLL` wrote the short map, `apm benchmark 10` was
+  clamped up to the 1000-iteration floor, and a stray argument to a verb that
+  takes none was dropped, so each answered like a successful call that measured
+  something else. Every verb now declares the argument it accepts and the check
+  runs before the dispatch; the verb list, the argument rules, and the help line
+  are one table, so the usage a caller reads and the verbs the dispatcher
+  accepts cannot drift apart. Valid calls are unaffected, and the rendered help
+  line is unchanged.
+- Console: `bridge/README.md` documents the verb set, its arguments, its
+  replies, its refusal messages, and which verbs change server state, the way
+  the REST response contract documents the endpoint. The verbs were listed only
+  in prose scattered across the docs, so a caller scripting `apm` over telnet
+  had no one place to read what exists.
+
 - WebMod: the panel bundle is emitted with comments stripped, and
   `tests/test_bridge_build_surface.py` budgets the shipped `bundle.js` (36 KB)
   and `styling.css` (12 KB). The stock dashboard loads both on every page, so
