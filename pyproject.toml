@@ -16,6 +16,8 @@ classifiers = [
 #             hand-rolled escaping in capture output is a security surface).
 #   psutil  - per-process CPU/thread/memory accounting for the collectors;
 #             /proc parsing is Linux-version specific and easy to get wrong.
+#             The floor matches types-psutil: stubs and runtime on different
+#             majors would gate mypy against an API the install does not have.
 #   pydantic - the capture summary schema, validated at load so a bad field
 #             reads as unavailable instead of a downstream AttributeError.
 #   rich    - console output, markup escaping for untrusted collector text.
@@ -24,10 +26,14 @@ classifiers = [
 # tooling lives in [dependency-groups] and never reaches a release install.
 dependencies = [
   "jinja2>=3.1,<4",
-  "psutil>=6,<8",
+  "psutil>=7,<8",
   "pydantic>=2.9,<3",
   "rich>=13.9,<16",
-  "typer>=0.15,<1",
+  # typer is pre-1.0 and its minor releases carry breaking changes, so the
+  # upper bound is the verified minor rather than 1.0: a new typer minor has to
+  # be resolved here and gated by the suite, not arrive with the next
+  # `uv lock`.
+  "typer>=0.15,<0.28",
 ]
 
 [project.urls]
@@ -40,7 +46,7 @@ Changelog = "https://github.com/hordeforge/7dtd-server-apm/blob/main/CHANGELOG.m
 7dtd-server-apm = "apm_suite.cli:app"
 
 [dependency-groups]
-dev = ["mypy>=1.14,<3", "pytest>=8.3,<10", "pytest-cov>=6,<8", "ruff>=0.9,<1", "types-psutil>=6,<8"]
+dev = ["mypy>=1.14,<3", "pytest>=8.3,<10", "pytest-cov>=6,<8", "ruff>=0.9,<1", "types-psutil>=7,<8"]
 
 [build-system]
 # The build backend is resolved in PEP 517 build isolation, so it is the one

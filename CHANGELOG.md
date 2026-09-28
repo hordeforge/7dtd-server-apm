@@ -113,6 +113,12 @@ major.
   bytes. A `meta.json` with no usable `utc` records `started_at: null` plus a
   warning; it no longer stamps the auditing host's wall clock as the capture
   start.
+- Dependencies: the runtime and dev ranges no longer admit a version pair
+  nobody gated. `psutil` and `types-psutil` both floor at 7, so mypy cannot
+  type-check against stubs for a major the installed runtime is not, and
+  `typer` is bounded at `<0.28` rather than `<1`: typer is pre-1.0, so a new
+  minor now needs a `uv lock` and a suite run here instead of arriving with
+  the next resolution. Resolved versions are unchanged.
 - Packaging: the sdist now has an explicit include list. Hatchling's default
   shipped the whole checkout (docs, plans, bridge sources, shell collectors);
   the sdist exists to build the wheel, which carries `apm_suite` alone.
