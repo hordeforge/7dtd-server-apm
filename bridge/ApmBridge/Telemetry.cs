@@ -133,7 +133,11 @@ namespace DtdApmBridge
         // but sampling/logging happens at most once per this many seconds.
         const double SpikeSampleMinSeconds = 5.0;
         static double _nextSpikeSample;
-        static WorldSample _lastWorld = new WorldSample { utc = "unavailable" };
+        // utc stays null until the first SampleWorld lands: every utc field in
+        // this payload is an ISO-8601 instant or absent, never a sentinel
+        // string, so a client parsing a timestamp never has to special-case
+        // "unavailable" as if it were a date.
+        static WorldSample _lastWorld = new WorldSample();
         static int _exportQueued;
         // Written on the main thread (SampleWorld, outside Gate) and the export
         // ThreadPool thread (Write/catch), read under Gate in Snapshot. Locking

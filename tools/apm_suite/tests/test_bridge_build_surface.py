@@ -5,6 +5,7 @@ import re
 from apm_suite.paths import REPO
 
 WEB_API_CS = REPO / "bridge" / "ApmBridge" / "WebApi.cs"
+TELEMETRY_CS = REPO / "bridge" / "ApmBridge" / "Telemetry.cs"
 
 
 def _rest_api_class_bodies(source: str) -> dict[str, str]:
@@ -92,3 +93,72 @@ def test_apm_get_answers_coded_error_on_snapshot_failure() -> None:
     # SendEmptyResponse) instead of an unhandled exception.
     body = _rest_api_class_bodies(WEB_API_CS.read_text(encoding="utf-8"))["Apm"]
     assert '"SNAPSHOT_FAILED"' in body
+
+
+def test_apm_get_sends_the_snapshot_before_the_error_envelope() -> None:
+    # Ordering: a failed build must answer the coded error, a successful one the
+    # document itself. A handler that wrote the snapshot before guarding the
+    # build would return a 200 carrying partial evidence on the error path.
+    body = _rest_api_class_bodies(WEB_API_CS.read_text(encoding="utf-8"))["Apm"]
+    assert body.index("SnapshotJson()") < body.index("SendEmptyResponse")
+    assert body.index("SendEmptyResponse") < body.index("SendEnvelopedResult")
+
+
+def _emitted_section_fields() -> set[str]:
+    """Field names of the anonymous object Telemetry.Metric.Build returns."""
+    source = TELEMETRY_CS.read_text(encoding="utf-8")
+    body = source[source.index("public static object Build(Copied c)") :]
+    literal = re.search(r"return new \{(.*?)\};", body, re.DOTALL)
+    assert literal, "Metric.Build no longer returns an anonymous object"
+    text = re.sub(r"//[^\n]*", "", literal.group(1))
+    return set(re.findall(r"(\w+)\s*=", text))
+
+
+def test_managed_section_model_does_not_require_unemitted_fields() -> None:
+    # Consumer side of the bridge contract: a snapshot section is validated by
+    # ManagedSectionV3, whose non-defaulted fields are mandatory. A field the
+    # model requires but the bridge never emits rejects every real snapshot at
+    # ingestion ("bridge snapshot rejected by schema validation"), so the two
+    # sides must be changed together.
+    from apm_suite.models import ManagedSectionV3
+
+    emitted = _emitted_section_fields()
+    required = {
+        name for name, field in ManagedSectionV3.model_fields.items() if field.is_required()
+    }
+    assert required <= emitted, (
+        f"ManagedSectionV3 requires {sorted(required - emitted)}; the bridge "
+        "snapshot does not emit them"
+    )
+
+
+def test_snapshot_utc_fields_carry_no_placeholder_string() -> None:
+    # Documented response contract: every utc field is an ISO-8601 instant or
+    # null. A sentinel string in a date slot makes a client parse "unavailable"
+    # as a timestamp; absence is the only honest marker before the first sample.
+    source = TELEMETRY_CS.read_text(encoding="utf-8")
+    assert not re.search(r"utc\s*=\s*\"(?!\{)", source), (
+        "a utc field is initialized from a string literal; use null instead"
+    )
+
+
+def test_bridge_readme_documents_the_response_contract() -> None:
+    # The endpoint's payload, status codes, and error code are the API contract
+    # for both the dashboard panel and any external scraper; the docs must
+    # state them, not just the authorization matrix.
+    readme = (REPO / "bridge" / "README.md").read_text(encoding="utf-8")
+    assert "### Response contract" in readme
+    assert "SNAPSHOT_FAILED" in readme
+    for key in (
+        "capabilities",
+        "measurement",
+        "update",
+        "health",
+        "host",
+        "gc",
+        "world",
+        "mapTransfers",
+        "sections",
+        "spikes",
+    ):
+        assert f"| `{key}`" in readme, f"response contract does not document {key}"

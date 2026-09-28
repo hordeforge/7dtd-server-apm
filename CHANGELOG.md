@@ -17,6 +17,23 @@ are expected to bump its major version.
 predates the tag gate and no 2.2.4 mod was ever built. The bridge goes 2.2.3
 to 2.3.0 and 2.2.4 stays skipped.
 
+## Unreleased - bridge mod
+
+- API contract: `bridge/README.md` now documents the `GET /api/apm` response
+  itself (status codes, the `SNAPSHOT_FAILED` error envelope, every top-level
+  key, and which fields are nullable), not just the authorization matrix.
+- API contract: `world.utc` no longer carries the string `"unavailable"`
+  before the first world sample; it is `null`, like every other unmeasured
+  value in the payload. No documented consumer read the old literal, and a
+  client parsing `utc` fields as timestamps no longer has to special-case a
+  date slot holding a placeholder. Every `utc` field in the snapshot is an
+  ISO-8601 instant or absent.
+- Correctness: an unrecognized `apm` console verb now answers with the
+  verb list instead of silently returning the `status` summary, so a typo no
+  longer looks like a successful call. `apm benchmark <non-number>` reports
+  the bad argument instead of quietly benchmarking the default iteration
+  count, and `apm jitmap FULL` matches its case-insensitive verb.
+
 ## 2.2.0 - host CLI - 2026-08-26
 
 First CLI version bump since the initial drop. Everything below accumulated
