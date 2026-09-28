@@ -51,6 +51,16 @@ namespace DtdApmBridge
         {
             MaxSpikeRecords = Math.Max(MinMaxSpikeRecords, Math.Min(MaxMaxSpikeRecords, MaxSpikeRecords));
             DeepSampleRate = Math.Max(MinDeepSampleRate, Math.Min(MaxDeepSampleRate, DeepSampleRate));
+            // Math.Min/Math.Max propagate NaN, and the JSON reader accepts the
+            // NaN and Infinity literals, so "SpikeThresholdMs": NaN used to
+            // clamp to NaN: every `ms >= SpikeThresholdMs` and
+            // `PeriodicExportSeconds > 0` then reads false, and the bridge
+            // records no spikes and never arms an export with nothing in the
+            // log. A non-finite setting is a typo, not a value: take the default.
+            if (double.IsNaN(SpikeThresholdMs) || double.IsInfinity(SpikeThresholdMs))
+                SpikeThresholdMs = DefaultSpikeThresholdMs;
+            if (double.IsNaN(PeriodicExportSeconds) || double.IsInfinity(PeriodicExportSeconds))
+                PeriodicExportSeconds = DefaultPeriodicExportSeconds;
             PeriodicExportSeconds = Math.Max(
                 MinPeriodicExportSeconds, Math.Min(MaxPeriodicExportSeconds, PeriodicExportSeconds));
             SpikeThresholdMs = Math.Max(

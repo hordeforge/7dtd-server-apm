@@ -917,13 +917,25 @@ def diagnose_lag(
 
     mem = as_mapping(metadata.get("memory"))
     rss_slope = _num0(mem.get("rss_growth_mb_per_s"))
-    fd_growth = _int0(mem.get("fd_end")) - _int0(mem.get("fd_start"))
-    if rss_slope >= 5 or fd_growth >= 100:
+    # Both fd endpoints or neither (memory_trend omits them when no sample could
+    # list /proc/<pid>/fd): a defaulted 0 would read as a measured leak channel
+    # and print "fd +0" as evidence.
+    fd_growth = (
+        _int0(mem["fd_end"]) - _int0(mem["fd_start"])
+        if mem.get("fd_start") is not None and mem.get("fd_end") is not None
+        else None
+    )
+    if rss_slope >= 5 or (fd_growth is not None and fd_growth >= 100):
         causes.append(
             {
                 "cause": "memory_growth",
-                "severity": round(min(1.0, rss_slope / 20 + fd_growth / 500), 2),
-                "detail": f"RSS +{rss_slope} MB/s, fd {fd_growth:+d} over the window",
+                "severity": round(min(1.0, rss_slope / 20 + (fd_growth or 0) / 500), 2),
+                "detail": f"RSS +{rss_slope} MB/s, "
+                + (
+                    f"fd {fd_growth:+d} over the window"
+                    if fd_growth is not None
+                    else "fd count unmeasured"
+                ),
                 "fix": "unbounded buffer or leak (not GC churn: RSS climbs steadily); "
                 "check send queues / caches / event subscriptions",
             }
@@ -1255,13 +1267,22 @@ def _net_rates(io_net_text: str, seconds: float) -> dict[str, float]:
 def _apply_memory_trend(layers: list[LayerScore], mem: dict[str, Any]) -> None:
     """Sustained RSS climb (not GC oscillation) = leak / unbounded buffer."""
     slope = float(mem.get("rss_growth_mb_per_s") or 0)
-    fd_growth = int(mem.get("fd_end") or 0) - int(mem.get("fd_start") or 0)
+    # memory_trend omits BOTH endpoints when no sample could list
+    # /proc/<pid>/fd. Defaulting the missing pair to 0 published a measured
+    # "fd_growth": 0 for a channel nobody measured; absent evidence is None,
+    # so the signal and the score term are both dropped.
+    fd_growth = (
+        int(mem["fd_end"]) - int(mem["fd_start"])
+        if mem.get("fd_start") is not None and mem.get("fd_end") is not None
+        else None
+    )
     for layer in layers:
         if layer.layer != "memory_cache" or layer.state != "collected":
             continue
         layer.signals["rss_growth_mb_per_s"] = slope
-        layer.signals["fd_growth"] = fd_growth
-        if slope >= 5 or fd_growth >= 100:
+        if fd_growth is not None:
+            layer.signals["fd_growth"] = fd_growth
+        if slope >= 5 or (fd_growth is not None and fd_growth >= 100):
             layer.score = max(layer.score or 0, 70)
 
 

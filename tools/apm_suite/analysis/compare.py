@@ -114,13 +114,16 @@ def _paired_deltas(
     deltas: list[dict[str, Any]] = []
     for name in sorted(set(left) | set(right)):
         value_a, value_b = left.get(name, 0.0), right.get(name, 0.0)
-        difference = value_b - value_a
+        # The verdict is judged on the printed delta, not the raw one: the
+        # attribution table prints 1 decimal, so a raw 0.04 ms difference
+        # renders as "Δ +0.0" and calling that a win reads as a contradiction.
+        difference = round(value_b - value_a, ndigits)
         deltas.append(
             {
                 label: name,
                 a_key: value_a,
                 b_key: value_b,
-                "delta_b_minus_a": round(difference, ndigits),
+                "delta_b_minus_a": difference,
                 "better": _winner(difference)
                 if name in left and name in right
                 else "not_comparable",

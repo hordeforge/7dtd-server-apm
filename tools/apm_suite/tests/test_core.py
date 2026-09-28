@@ -4293,6 +4293,48 @@ def test_memory_trend_omits_fds_when_every_sample_is_unknown(tmp_path: Path) -> 
     assert trend["rss_growth_mb_per_s"] == pytest.approx(0.5)
 
 
+def test_memory_pressure_omits_fds_when_unmeasured() -> None:
+    """memory_trend omits both fd endpoints when no sample could list
+    /proc/<pid>/fd. Defaulting the missing pair to 0 published a measured
+    "fd_growth": 0 for a channel nobody measured, so the signal and the score
+    term are both dropped instead of reading as a healthy zero."""
+    from apm_suite.analysis.report import _apply_memory_trend
+
+    layers = [LayerScore(layer="memory_cache", score=10, state="collected", signals={})]
+    _apply_memory_trend(layers, {"rss_growth_mb_per_s": 0.5})
+    assert "fd_growth" not in layers[0].signals
+    assert layers[0].score == 10
+
+    measured = [LayerScore(layer="memory_cache", score=10, state="collected", signals={})]
+    _apply_memory_trend(measured, {"rss_growth_mb_per_s": 0.5, "fd_start": 40, "fd_end": 40})
+    assert measured[0].signals["fd_growth"] == 0
+
+
+def test_diagnose_lag_reports_unmeasured_fd_count() -> None:
+    from apm_suite.analysis.report import diagnose_lag
+
+    metadata = {
+        "frame": {"lateTicks": 5, "tickStallMsTotal": 200},
+        "memory": {"rss_growth_mb_per_s": 6.0},
+    }
+    causes = diagnose_lag([], metadata, {})["causes"]
+    growth = next(c for c in causes if c["cause"] == "memory_growth")
+    assert growth["detail"] == "RSS +6.0 MB/s, fd count unmeasured"
+    assert growth["severity"] == 0.3  # RSS term only; no invented fd term
+
+    leaked = diagnose_lag(
+        [],
+        {
+            "frame": {"lateTicks": 5, "tickStallMsTotal": 200},
+            "memory": {"rss_growth_mb_per_s": 6.0, "fd_start": 100, "fd_end": 260},
+        },
+        {},
+    )["causes"]
+    growth = next(c for c in leaked if c["cause"] == "memory_growth")
+    assert growth["detail"] == "RSS +6.0 MB/s, fd +160 over the window"
+    assert growth["severity"] == 0.62
+
+
 @pytest.mark.parametrize("step", [-2.0, 600.0])
 def test_memory_trend_ignores_wall_clock_step_when_mono_present(
     tmp_path: Path, step: float
@@ -4968,6 +5010,21 @@ def test_compare_winner_boundaries(delta_value: float, expected: str) -> None:
     from apm_suite.analysis.compare import _winner
 
     assert _winner(delta_value) == expected
+
+
+def test_paired_deltas_verdict_matches_printed_delta() -> None:
+    """The verdict is judged on the delta as printed, so a row cannot read
+    "Δ +0.0" beside a win: the attribution table prints 1 decimal, and a raw
+    0.04 ms difference rounds to 0.0 there."""
+    from apm_suite.analysis.compare import _paired_deltas
+
+    deltas = _paired_deltas({"io_saves": 100.0}, {"io_saves": 100.04}, "subsystem", "a_ms", "b_ms", 1)
+    assert deltas[0]["delta_b_minus_a"] == 0.0
+    assert deltas[0]["better"] == "tie"
+
+    coarse = _paired_deltas({"io_saves": 100.0}, {"io_saves": 105.0}, "subsystem", "a_ms", "b_ms", 1)
+    assert coarse[0]["delta_b_minus_a"] == 5.0
+    assert coarse[0]["better"] == "A"  # B grew, so A holds the lower heat
 
 
 def test_compare_sessions_ranks_layer_improvement(tmp_path: Path) -> None:
