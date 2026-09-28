@@ -1133,11 +1133,17 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
             # Missing or junk field: fall back to the bridge's own "unmeasured"
             # sentinel so the mono_alloc probe path below still runs.
             gross_bps = -1.0
-        gross_mb_s: float | None = round(gross_bps / 1048576, 2) if gross_bps >= 0 else None
+        # Unrounded MB/s is what the KB-per-tick division below consumes, and
+        # the stored value keeps 4 decimals rather than 2: at 2 decimals the
+        # resolution is 10 KB/s, so a lightly loaded 30 s window (a few hundred
+        # KB of churn) rounds to 0.0 and a MEASURED rate is stored as a healthy
+        # zero, which the budget gate and the lag profile both read as "no
+        # churn". grossAllocBytesPerSecond == 0 still stores an exact 0.0.
+        gross_mb_s: float | None = gross_bps / 1048576 if gross_bps >= 0 else None
         if gross_mb_s is None and window_s > 0:
             alloc_match = re.search(r"@alloc_bytes_total:\s*(\d+)", mono_alloc)
             if alloc_match:
-                gross_mb_s = round(int(alloc_match.group(1)) / 1048576 / window_s, 2)
+                gross_mb_s = int(alloc_match.group(1)) / 1048576 / window_s
         gc_meta: dict[str, Any] = {
             "allocMBPerSecond": round(alloc_mb_s, 2),  # net heap growth
             "fullCollections": collections,
@@ -1145,7 +1151,7 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
             "windowSeconds": round(window_s, 1),
         }
         if gross_mb_s is not None:
-            gc_meta["grossAllocMBPerSecond"] = gross_mb_s  # true churn
+            gc_meta["grossAllocMBPerSecond"] = round(gross_mb_s, 4)  # true churn
             # Allocation per tick (KB): the garbage each tick creates that
             # Boehm must eventually scan. Ties churn to the tick budget.
             ticks = _int0(update.get("windowUpdates"))

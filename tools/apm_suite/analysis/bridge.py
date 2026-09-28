@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, iter_jsonl, load_json
-from ..models import as_number, first_number, first_present
+from ..models import as_mapping, as_number, first_number, first_present
 from .catalog import RULES, SECTION_TO_CSHARP
 from .flame_delta import load_weights
 
@@ -160,19 +160,28 @@ def attribute_subsystems(
     long_running: list[str] = []
     for section in sections:
         name = str(section.get("name") or "")
-        avg = float(section.get("avgMs") or 0)
+        # Per-field coercion, not bare float()/int(): these sections are re-read
+        # from imported bundles without schema guarantees, and one junk value
+        # ("avgMs": [5], "calls": "many") raised TypeError/ValueError out of
+        # attribute_snapshot's guard, so a single malformed section voided the
+        # ENTIRE attribution block and read as "no attribution" rather than one
+        # bad section. Non-finite is absent evidence for the same reason: a NaN
+        # totalMs poisons the ranking order and persists a bare NaN.
+        avg = first_present(section.get("avgMs"))
+        total_ms = first_present(section.get("totalMs"))
+        calls = int(first_present(section.get("calls")))
         if avg >= LONG_RUNNING_MS:
             long_running.append(name)
             continue
         is_deep = bool(section.get("deep")) or (
             "deep" not in section and name in DEEP_SECTION_NAMES
         )
-        scale = deep_sample_rate if is_deep else 1
-        scaled_ms = float(section.get("totalMs") or 0) * scale
+        scale = max(1, deep_sample_rate) if is_deep else 1
+        scaled_ms = total_ms * scale
         entry = {
             "name": name,
             "scaled_total_ms": round(scaled_ms, 1),
-            "calls_scaled": int(section.get("calls") or 0) * scale,
+            "calls_scaled": calls * scale,
             "deep_sampled": is_deep,
         }
         for drill, drill_prefixes in DRILLDOWN.items():
@@ -281,14 +290,19 @@ def attribute_subsystems(
 def attribute_document(doc: dict[str, Any]) -> dict[str, Any]:
     """Subsystem attribution from an already-parsed bridge snapshot document.
 
-    Raises on malformed nested values (a non-object "measurement"/"update"/
-    "world" block); callers decide whether that poisons the whole stage.
+    Every field is coerced, so a malformed nested value ("measurement" as a
+    list, one section with "totalMs": [1]) costs that one field, not the whole
+    attribution block; the document-level guard in attribute_snapshot remains
+    for a snapshot that is not an object at all.
     """
+    # as_number before int(): a "deepSampleRate": "16" string, a float rate, or
+    # a junk list must not raise out of the guard. The rate floor lives in
+    # attribute_subsystems, where the scaling happens.
     return attribute_subsystems(
         doc.get("sections") or [],
-        int((doc.get("measurement") or {}).get("deepSampleRate") or 1),
-        window_updates=int((doc.get("update") or {}).get("windowUpdates") or 0),
-        entities=int((doc.get("world") or {}).get("entities") or 0),
+        int(as_number(as_mapping(doc.get("measurement")).get("deepSampleRate")) or 1),
+        window_updates=int(as_number(as_mapping(doc.get("update")).get("windowUpdates")) or 0),
+        entities=int(as_number(as_mapping(doc.get("world")).get("entities")) or 0),
     )
 
 

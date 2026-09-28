@@ -28,7 +28,16 @@ namespace DtdApmBridge
         static double Percentile(double[] sorted, double p)
         {
             if (sorted.Length == 0) return 0;
-            return sorted[(int)Math.Min(sorted.Length - 1, Math.Round((p / 100.0) * (sorted.Length - 1)))];
+            // MidpointRounding.AwayFromZero, not the default ToEven: the index
+            // is an exact .5 whenever the sample count is even, and banker's
+            // rounding then resolves it by the parity of the index - p50 of a
+            // 4-sample ring rounds up, of a 6-sample ring down, so the reported
+            // median moved with the sample count instead of the data. These
+            // values gate budgets (max_section_heat) and the dashboard's
+            // severity rows, so the tie resolves one way, to the upper sample.
+            int index = (int)Math.Min(sorted.Length - 1,
+                Math.Round((p / 100.0) * (sorted.Length - 1), MidpointRounding.AwayFromZero));
+            return sorted[index];
         }
         // Two-phase snapshot so the Array.Sorts across all metrics (bounded by
         // MaxSections) run OUTSIDE the global Gate lock: Copy under the lock is a

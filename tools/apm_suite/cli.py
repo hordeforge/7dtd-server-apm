@@ -109,6 +109,8 @@ class ScaleBy(StrEnum):
 # One generation is kept: an operator tailing the file finds the previous run
 # in <output>.1 rather than an unexplained gap.
 MONITOR_MAX_BYTES = 64 * 1024**2
+# Decimal gigabyte, the unit every GB figure in the CLI and doctor states.
+GIGABYTE = 1000**3
 
 
 def _rotate_monitor_log(path: Path, max_bytes: int) -> None:
@@ -756,14 +758,16 @@ def prune_sessions(
     keep: Annotated[int, typer.Option(min=1, help="Number of newest sessions to retain.")] = 20,
     max_gb: Annotated[
         float | None,
-        typer.Option(help="Total size budget; oldest sessions removed until under it."),
+        typer.Option(
+            help="Total size budget in GB (10^9 bytes); oldest sessions removed until under it."
+        ),
     ] = None,
     dry_run: Annotated[
         bool, typer.Option(help="List what would be deleted without deleting.")
     ] = False,
 ) -> None:
     """Delete old sessions beyond --keep or a total size budget."""
-    max_bytes = max_gb * 1024**3 if max_gb is not None else None
+    max_bytes = max_gb * GIGABYTE if max_gb is not None else None
     doomed = sessions_beyond_budget(list_sessions(apm_root()), keep, max_bytes)
     for old in doomed:
         console.print(("would remove " if dry_run else "removing ") + escape(str(old)))

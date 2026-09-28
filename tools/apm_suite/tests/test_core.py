@@ -2080,6 +2080,27 @@ def test_attribution_scales_deep_sections_and_excludes_long_running() -> None:
     assert result["ms_per_entity_tick"] == 0.002
 
 
+def test_attribution_survives_junk_section_fields_and_snapshot_scales() -> None:
+    """One malformed section must cost that section, not the whole block.
+
+    Imported bundles carry unvalidated sections, and the per-field coercion
+    used here is what keeps a list "totalMs" or a non-numeric "calls" from
+    raising out of attribute_snapshot's guard (which drops ALL attribution).
+    A junk deepSampleRate must likewise not scale every deep section to 0 ms.
+    """
+    from apm_suite.analysis.bridge import attribute_subsystems
+
+    sections: list[dict[str, Any]] = [
+        {"name": "DecoManager.UpdateTick", "totalMs": [1], "calls": "many", "avgMs": "junk"},
+        {"name": "World.TickEntities", "totalMs": 100.0, "calls": 10, "deep": True},
+    ]
+    result = attribute_subsystems(sections, deep_sample_rate=0, window_updates=100, entities=5)
+    by_name = {s["subsystem"]: s for s in result["subsystems"]}
+    # The junk section contributes nothing; the good one still scales by 1.
+    assert by_name["entity_tick"]["scaled_total_ms"] == 100.0
+    assert result["measured_ms"] == 100.0
+
+
 def test_attribution_shares_sum_to_one_without_double_counting_frame_core() -> None:
     from apm_suite.analysis.bridge import attribute_subsystems
 
@@ -4405,7 +4426,7 @@ def test_prune_size_budget_removes_oldest_kept_first(
 
     # Three 1000-byte sessions total 3000 bytes; a 2500-byte budget must evict
     # the OLDEST kept session first, stopping as soon as the total fits.
-    result = runner.invoke(app, ["prune", "--keep", "3", "--max-gb", str(2500 / 1024**3)])
+    result = runner.invoke(app, ["prune", "--keep", "3", "--max-gb", str(2500 / 1000**3)])
     assert result.exit_code == 0
     assert sorted(p.name for p in root.glob("session_*")) == ["session_1", "session_2"]
 

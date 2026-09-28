@@ -13,6 +13,11 @@ from .io import file_sha256, load_jsonc
 from .paths import REPO, apm_root, bridge_mod_dir, dedicated_dir
 from .session import keep_sessions_budget, prune_grace_hours
 
+# Free space below this is reported as disk_low: perf.data for a full capture
+# runs to GBs. Decimal gigabytes, matching the unit the repo uses for every
+# other "GB" figure (see cli.prune_sessions --max-gb).
+DISK_LOW_BYTES = 5 * 1000**3
+
 
 def _command(name: str) -> dict[str, Any]:
     path = shutil.which(name)
@@ -194,5 +199,5 @@ def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
         },
         "perf_event_paranoid": paranoid,
         "disk_free_bytes": disk_free,
-        "disk_low": disk_free < 5 * 1024**3,  # perf.data can be GBs
+        "disk_low": disk_free < DISK_LOW_BYTES,
     }
