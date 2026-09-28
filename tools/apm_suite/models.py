@@ -329,6 +329,16 @@ def effective_seconds(meta: Mapping[str, Any]) -> float:
     return requested
 
 
+def layer_is_collected(layer: Mapping[str, Any]) -> bool:
+    """True when a summary layer entry carries evidence.
+
+    A missing `state` means collected, matching the LayerScore default, so
+    sessions written before the field existed score instead of vanishing from
+    health, budget, compare and the Prometheus export alike.
+    """
+    return str(layer.get("state", "collected")) == "collected"
+
+
 def collected_layer_scores(summary: Mapping[str, Any]) -> dict[str, float]:
     """layer name -> pressure score for layers with state "collected" and a score.
 
@@ -339,7 +349,7 @@ def collected_layer_scores(summary: Mapping[str, Any]) -> dict[str, float]:
     for layer in object_list(summary.get("layers")):
         name = layer.get("layer")
         pressure = as_number(layer.get("score"))
-        if name and layer.get("state", "collected") == "collected" and pressure is not None:
+        if name and layer_is_collected(layer) and pressure is not None:
             out[str(name)] = pressure
     return out
 

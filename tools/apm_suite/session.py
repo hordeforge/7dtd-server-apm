@@ -144,12 +144,12 @@ def _legacy_results(session: Path) -> list[CollectorResult]:
     collectors: list[CollectorResult] = []
     for name, (layer, rel) in COLLECTORS.items():
         artifact = session / rel
-        failed = sorted(p for p in (session / Path(rel).parent).glob("*.err") if p.stat().st_size)
+        failed = sorted(p for p in (session / Path(rel).parent).glob("*.err") if size_or_zero(p))
         status: Literal["ok", "failed", "unavailable"] = (
             "failed"
             if failed and not artifact.is_file()
             else "ok"
-            if artifact.is_file() and artifact.stat().st_size
+            if artifact.is_file() and size_or_zero(artifact)
             else "unavailable"
         )
         collectors.append(
@@ -184,6 +184,14 @@ def mtime_or_zero(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def size_or_zero(path: Path) -> int:
+    """Size of a file that may have been pruned since the caller globbed for it."""
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
 
 
 def list_sessions(root: Path) -> list[Path]:

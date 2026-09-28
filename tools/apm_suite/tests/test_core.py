@@ -1306,6 +1306,32 @@ def test_collected_layer_scores_skips_unparseable_scores() -> None:
     assert collected_layer_scores(summary) == {"cpu": 10.0}
 
 
+def test_layer_without_state_counts_as_collected_at_every_reader(tmp_path: Path) -> None:
+    """Sessions written before `state` existed omit the field entirely. The
+    LayerScore default is "collected", so health, bridge gating and the
+    Prometheus export must agree rather than each re-deciding the default."""
+    from apm_suite.models import collected_layer_scores
+
+    summary = {
+        "layers": [
+            {"layer": "cpu", "score": 10},
+            {"layer": "io", "state": "skipped", "score": 50},
+        ]
+    }
+    assert collected_layer_scores(summary) == {"cpu": 10.0}
+    collected, _signals = layer_state(summary)
+    assert collected == {"cpu"}
+
+    session = _session(tmp_path / "session_legacy_layer")
+    doc = load_json(session / "summary.json")
+    doc["layers"].append({"layer": "memory", "score": 42})
+    atomic_json(session / "summary.json", doc)
+    out = tmp_path / "metrics.txt"
+    result = runner.invoke(app, ["prometheus", str(session), "--output", str(out)])
+    assert result.exit_code == 0, result.output
+    assert 'sevendtd_apm_layer_pressure{layer="memory"} 42.000000' in out.read_text()
+
+
 def test_prometheus_drops_malformed_metric_fields_instead_of_crashing(
     tmp_path: Path,
 ) -> None:
@@ -3560,6 +3586,35 @@ def test_finalize_pipeline_end_to_end(tmp_path: Path) -> None:
     assert (session / "manifest.json").is_file()
 
 
+def test_churn_hint_coerces_junk_metadata(tmp_path: Path) -> None:
+    """The churn hint is the one console line the operator acts on, so a
+    hand-edited summary must cost the hint, never the finalize run."""
+    from apm_suite.finalize import _churn_hint, _load_object
+
+    unnamed = {"gc": {"grossAllocMBPerSecond": 9.0, "fullCollections": "many"}}
+    assert _churn_hint(unnamed) is not None  # junk beside the value still fires
+    assert _churn_hint({"gc": {"grossAllocMBPerSecond": 0.4, "fullCollections": 0}}) is None
+    assert _churn_hint({"gc": {"fullCollections": 2}}) is not None
+    # Sites named: the operator already has the attribution, no hint.
+    assert _churn_hint({**unnamed, "top_churn_sites": ["World.Tick"]}) is None
+    assert _churn_hint({}) is None
+
+    (tmp_path / "summary.json").write_text("{oops")
+    assert _load_object(tmp_path / "summary.json") == {}
+
+
+def test_size_or_zero_tolerates_a_pruned_file(tmp_path: Path) -> None:
+    """Auto-prune can remove a session between a glob and the stat that reads
+    it; the audit path must record the loss, not raise out of the audit."""
+    from apm_suite.session import size_or_zero
+
+    path = tmp_path / "gone.err"
+    path.write_text("boom")
+    assert size_or_zero(path) == 4
+    path.unlink()
+    assert size_or_zero(path) == 0
+
+
 def test_finalize_required_stage_failure_fails_run_optional_does_not(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -3659,6 +3714,14 @@ def _cmp_session(
         (
             {"workload": {"mode": "clients", "target": "standard"}},
             {"workload": {"mode": "clients", "target": "deep"}},
+            "workload manifests are not equivalent",
+        ),
+        # A manifest that is not an object coerces to {} like every other
+        # unvalidated session document, so the CLI names the mismatch instead
+        # of raising AttributeError out of a traceback.
+        (
+            {"workload": {"mode": "clients", "target": "standard"}},
+            {"workload": [1, 2]},
             "workload manifests are not equivalent",
         ),
     ],

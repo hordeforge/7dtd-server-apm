@@ -34,6 +34,33 @@ _LITTLE_N = re.compile(r"@little_n:\s*(\d+)")
 _STW_SUM = re.compile(r"@stw_sum:\s*(\d+)")
 _STW_PAUSE = re.compile(r"STW_PAUSE (\d+) us")
 
+# subsystem -> (reader-facing label, what to do about it). One table, so a
+# subsystem named in the verdict always has both halves; a name in one and not
+# the other used to print an unexplained cause.
+_SUBSYSTEM_FALLBACK_FIX = "see optimizer OPTIMIZATION_CANDIDATES.md"
+_SUBSYSTEM_LABELS: dict[str, tuple[str, str]] = {
+    "network": (
+        "network serialization + entity distribution to clients",
+        (
+            "off-thread package serialization; spatially cull NetEntityDistribution "
+            "(per-player lists ~O(players x entities)); batch ConnectionManager work "
+            "(optimizer 4d/B3)"
+        ),
+    ),
+    "io_saves": (
+        "chunk/region save + streaming",
+        "chunk view/sim distance + save cadence (B4); NVMe Saves",
+    ),
+    "entity_tick": (
+        "entity tick machinery",
+        "tick-stride far entities at TickEntity level (A1/A3)",
+    ),
+    "mesh": (
+        "dynamic mesh",
+        "tighter DynamicMesh budgets / OnlyPlayerAreas (B5)",
+    ),
+}
+
 
 def _has_content(path: Path) -> bool:
     """One stat per path: is_file() followed by stat() is two syscalls for
@@ -408,7 +435,9 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
             # bridge reply. Availability is the contract here, so report the
             # layer as unavailable instead of a confidently empty one. The
             # ingested snapshot, when there is one, is still real evidence.
-            present = any(_has_content(p) for p in sources[score.layer][:1])
+            # Named, not picked by list position: reordering `sources` must not
+            # silently change which artifact qualifies this layer.
+            present = _has_content(session / "app/apm_app.json")
         score.state = "collected" if present else "unavailable" if wanted else "skipped"
         score.confidence = "medium" if score.state == "collected" else "low"
         if score.state != "collected":
@@ -976,12 +1005,7 @@ def diagnose_lag(
     if top:
         share = _num0(top.get("share"))
         name = str(top.get("subsystem"))
-        friendly = {
-            "network": "network serialization + entity distribution to clients",
-            "io_saves": "chunk/region save + streaming",
-            "entity_tick": "entity tick machinery",
-            "mesh": "dynamic mesh",
-        }.get(name, name)
+        friendly = _SUBSYSTEM_LABELS.get(name, name)
         if share >= 0.45:
             causes.append(
                 {
@@ -993,14 +1017,9 @@ def diagnose_lag(
                         if name == "network"
                         else ""
                     ),
-                    "fix": {
-                        "network": "off-thread package serialization; spatially cull "
-                        "NetEntityDistribution (per-player lists ~O(players x entities)); "
-                        "batch ConnectionManager work (optimizer 4d/B3)",
-                        "io_saves": "chunk view/sim distance + save cadence (B4); NVMe Saves",
-                        "entity_tick": "tick-stride far entities at TickEntity level (A1/A3)",
-                        "mesh": "tighter DynamicMesh budgets / OnlyPlayerAreas (B5)",
-                    }.get(name, "see optimizer OPTIMIZATION_CANDIDATES.md"),
+                    "fix": _SUBSYSTEM_LABELS[name][1]
+                    if name in _SUBSYSTEM_LABELS
+                    else _SUBSYSTEM_FALLBACK_FIX,
                 }
             )
 

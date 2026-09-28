@@ -17,7 +17,14 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, iter_jsonl, json_loads, load_json, read_text
-from ..models import as_mapping, as_number, first_number, first_present, object_list
+from ..models import (
+    as_mapping,
+    as_number,
+    first_number,
+    first_present,
+    layer_is_collected,
+    object_list,
+)
 from .catalog import RULES, SECTION_TO_CSHARP
 from .flame_delta import load_weights
 
@@ -540,7 +547,7 @@ def layer_state(summary: dict[str, Any]) -> tuple[set[str], dict[str, dict[str, 
     # nor a "signals" block is guaranteed to be an object.
     for layer in object_list(summary.get("layers")):
         name = str(layer.get("layer"))
-        if layer.get("state") == "collected":
+        if layer_is_collected(layer):
             collected.add(name)
             signals[name] = as_mapping(layer.get("signals"))
     return collected, signals

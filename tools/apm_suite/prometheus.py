@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .io import atomic_text, load_json
-from .models import as_number, layer_signals, object_list
+from .models import as_mapping, as_number, layer_is_collected, layer_signals, object_list
 
 
 class MetricError(Exception):
@@ -59,7 +59,7 @@ def export_metrics(session: Path, output: Path) -> None:
         # a safe coercion: a crafted shape or value must degrade to "no line",
         # never raise mid-export.
         score = as_number(layer.get("score"))
-        if layer.get("state") == "collected" and score is not None:
+        if layer_is_collected(layer) and score is not None:
             name = _prom_label(layer.get("layer", "unknown"))
             lines.append(f'sevendtd_apm_layer_pressure{{layer="{name}"}} {score:.6f}')
     health_path = session / "health.json"
@@ -70,7 +70,7 @@ def export_metrics(session: Path, output: Path) -> None:
         # gate is a read failure, and letting it escape would reach the CLI's
         # output-write handler and blame the destination path instead.
         try:
-            health = load_json(health_path)
+            health = as_mapping(load_json(health_path))
         except (ValueError, OSError) as error:
             raise MetricError(f"unreadable {health_path}: {error}") from None
     if not health:
@@ -85,7 +85,7 @@ def export_metrics(session: Path, output: Path) -> None:
     attribution: dict[str, Any] = {}
     if bridge_path.is_file():
         try:
-            attribution = load_json(bridge_path).get("attribution") or {}
+            attribution = as_mapping(load_json(bridge_path).get("attribution"))
         except (ValueError, OSError) as error:
             raise MetricError(f"unreadable {bridge_path}: {error}") from None
     subsystems = object_list(attribution.get("subsystems"))

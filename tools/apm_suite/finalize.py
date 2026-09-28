@@ -12,9 +12,9 @@ from __future__ import annotations
 import sys
 import traceback
 from collections.abc import Callable
-from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .analysis.bridge import analyze
 from .analysis.budget import check_budget
@@ -24,7 +24,7 @@ from .analysis.index import write_index
 from .analysis.jitsym import annotate_session
 from .analysis.report import build_summary
 from .io import json_loads, read_text
-from .models import as_mapping
+from .models import as_mapping, as_number
 from .reporting import render_session
 
 
@@ -101,24 +101,45 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
         print(f"finalized {session}")
     summary_path = session / "summary.json"
     if summary_path.is_file():
-        with suppress(Exception):
-            meta = as_mapping(
-                as_mapping(json_loads(read_text(summary_path), summary_path)).get("metadata")
-            )
-            lag = meta.get("lag_diagnosis") or {}
-            if lag.get("verdict"):
-                print(f">> lag diagnosis: {lag['verdict']}")
-            if lag.get("profile"):
-                print(f">> {lag['profile']}")
-            gc_meta = meta.get("gc") or {}
-            gross = gc_meta.get("grossAllocMBPerSecond")
-            high_churn = (gross is not None and float(gross) >= 4) or int(
-                gc_meta.get("fullCollections") or 0
-            ) >= 1
-            if high_churn and not meta.get("top_churn_sites"):
-                print(
-                    ">> hint: significant GC churn but the allocating sites are "
-                    "unnamed; re-capture with --only alloc,app to attribute it "
-                    "(top_churn_sites / top_alloc_sites)"
-                )
+        meta = as_mapping(_load_object(summary_path).get("metadata"))
+        lag = as_mapping(meta.get("lag_diagnosis"))
+        if lag.get("verdict"):
+            print(f">> lag diagnosis: {lag['verdict']}")
+        if lag.get("profile"):
+            print(f">> {lag['profile']}")
+        hint = _churn_hint(meta)
+        if hint:
+            print(f">> hint: {hint}")
     return result
+
+
+def _churn_hint(meta: dict[str, Any]) -> str | None:
+    """Hint when GC churn is high but no site is named, else None.
+
+    net heap growth reads ~0 under churn, so the gross rate and the full-GC
+    count are the signals; both are coerced, so a hand-edited summary costs
+    the hint instead of raising out of a finalize that already succeeded.
+    """
+    gc_meta = as_mapping(meta.get("gc"))
+    gross = as_number(gc_meta.get("grossAllocMBPerSecond"))
+    full_gc = as_number(gc_meta.get("fullCollections")) or 0
+    high_churn = (gross is not None and gross >= 4) or full_gc >= 1
+    if not high_churn or meta.get("top_churn_sites"):
+        return None
+    return (
+        "significant GC churn but the allocating sites are unnamed; re-capture "
+        "with --only alloc,app to attribute it (top_churn_sites / top_alloc_sites)"
+    )
+
+
+def _load_object(path: Path) -> dict[str, Any]:
+    """Read a session document as an object, or {} when it is unreadable.
+
+    The finalization stages already ran and reported their own failures; a
+    broken summary.json costs the operator the console hints, not a traceback
+    out of a finalize that otherwise succeeded.
+    """
+    try:
+        return as_mapping(json_loads(read_text(path), path))
+    except (ValueError, OSError):
+        return {}
