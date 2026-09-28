@@ -59,6 +59,17 @@ def apm_root() -> Path:
     return _env_path("SEVENDTD_APM_DIR", Path.home() / ".local/share/7dtd-server-apm")
 
 
+def backup_root() -> Path | None:
+    """Configured destination for the store copy, or None when unset.
+
+    One knob for the scheduled run and for the report that says whether the
+    last one happened: a cron entry and `doctor` must not each name a different
+    destination, or the backup that is checked is not the one that runs.
+    """
+    value = os.environ.get("SEVENDTD_APM_BACKUP_DIR", "").strip()
+    return Path(value) if value else None
+
+
 def require_backends() -> None:
     """Fail fast when the collector backends beside this package are absent.
 

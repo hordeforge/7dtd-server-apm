@@ -204,6 +204,7 @@ uv run 7dtd-server-apm monitor --interval 5 --output monitor.jsonl --max-bytes 6
 uv run 7dtd-server-apm compare BASELINE CANDIDATE
 uv run 7dtd-server-apm budget CANDIDATE --baseline BASELINE
 uv run 7dtd-server-apm export SESSION -o support-bundle.zip
+uv run 7dtd-server-apm backup /mnt/backup/apm-store                  # verified store copy
 uv run 7dtd-server-apm verify-store ~/.local/share/7dtd-server-apm   # restore drill
 uv run 7dtd-server-apm prune --keep 20 --dry-run
 uv run 7dtd-server-apm flame build SESSION_DIR
@@ -227,6 +228,7 @@ appears only as set/unset). An exported-but-empty variable is treated as unset.
 |---|---|---|---|
 | `SEVENDTD_TELNET_PASSWORD` | unset | server telnet password | Secret for the app-layer scrape and telnet actions. Environment only: there is deliberately no `--telnet-password` flag, so the secret never lands in shell history or `/proc/<pid>/cmdline`. Required for the `app` collector to authenticate. |
 | `SEVENDTD_APM_DIR` | `~/.local/share/7dtd-server-apm` | writable directory | Session store root (`session_*`, `.scenario`, `.trash`). |
+| `SEVENDTD_APM_BACKUP_DIR` | unset | writable directory | Where `7dtd-server-apm backup` copies the store (another host or filesystem). Unset means no copy exists; `doctor` reports it as a failed `store_backup` check. The scheduled run and the check read the same value, so a backup that is verified is the backup that runs. |
 | `SEVENDTD_DS_DIR` | Steam default dedicated-server path | existing directory | Dedicated install used by `doctor`, bridge build/install scripts, and probe helpers. |
 | `SEVENDTD_GAME_DIR` | Steam default client path | existing directory | Client install fallback for `make bridge-build` when the dedicated Managed assemblies are absent. Build-time only; no runtime code reads it. |
 | `SEVENDTD_DS_BIN` | `<SEVENDTD_DS_DIR>/7DaysToDieServer.x86_64` | absolute path | Binary `tools/host_profiler/find_server.sh` matches `/proc/<pid>/exe` against, so a wrapper-launched server is still identified. Without it the script falls back to the truncated process name. When set explicitly and no running server resolves to it, the script exits 1 rather than handing back another install's PID. |

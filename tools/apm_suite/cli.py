@@ -21,6 +21,7 @@ from .analysis.budget import check_budget
 from .analysis.compare import run_compare
 from .analysis.index import write_index
 from .analysis.scaling import analyze_scaling
+from .backup import BackupError, backup_store
 from .bundle import BundleError, export_bundle, import_bundle
 from .capture import (
     bridge_telemetry_file,
@@ -41,7 +42,7 @@ from .io import (
     write_stdout,
 )
 from .models import as_mapping, as_number
-from .paths import REPO, apm_root, require_backends
+from .paths import REPO, apm_root, backup_root, require_backends
 from .prometheus import MetricError, export_metrics
 from .runner import backend_python, run, terminate_tree
 from .session import (
@@ -437,6 +438,73 @@ def verify_store(
     else:
         console.print("no .scenario, .trash, or index.html in this store")
     _exit(1 if invalid or (strict and incomplete) else 0)
+
+
+@app.command()
+def backup(
+    destination: Annotated[
+        Path | None,
+        typer.Argument(
+            help="Backup directory (another host or filesystem, not the store). "
+            "Defaults to SEVENDTD_APM_BACKUP_DIR."
+        ),
+    ] = None,
+    store: Annotated[
+        Path | None,
+        typer.Option(
+            "--store",
+            "--root",
+            help="APM session store to copy (default: the APM data root).",
+        ),
+    ] = None,
+) -> None:
+    """Copy the session store to DESTINATION and verify the copy.
+
+    The store is this tool's only durable state and it lives on one disk, so
+    the copy is the answer to host loss. Each session lands through a staging
+    rename (an interrupted run leaves whole sessions or none), the destination
+    is audited against its recorded hashes on every run, and sessions pruned
+    from the source are kept in the destination. Exit 1 when the copy could not
+    be made or the destination does not read back clean.
+    """
+    target = destination or backup_root()
+    if target is None:
+        # A copy nobody scheduled is the silent failure this command exists to
+        # prevent, so the destination is required from one of the two sources.
+        raise typer.BadParameter(
+            "pass a destination or set SEVENDTD_APM_BACKUP_DIR", param_hint="DESTINATION"
+        )
+    try:
+        report = backup_store(store or apm_root(), target)
+    except BackupError as error:
+        _fail(str(error), 2)
+    except OSError as error:
+        # An unwriteable destination, a full disk, an unreadable source session.
+        _fail(f"cannot back up into {target}: {error}", 1)
+    if report.same_device:
+        # Staging before an upload is legitimate, but a destination that stays
+        # here is a copy the same disk loss takes with it.
+        err_console.print(
+            f"[yellow]warning:[/yellow] {escape(str(report.destination))} is on the same "
+            "filesystem as the store; the copy dies with the disk unless it is uploaded"
+        )
+    for name in report.skipped:
+        err_console.print(f"[yellow]skipped[/yellow] {escape(name)} (no manifest recorded yet)")
+    for name, problems in report.invalid.items():
+        err_console.print(f"[red]INVALID {escape(name)}[/red]")
+        for problem in problems:
+            err_console.print(f"{' ' * _VERDICT_WIDTH}  {escape(problem)}")
+    console.print(
+        f"backed up {report.backed_up} session(s) to {escape(str(report.destination))}: "
+        f"{len(report.copied)} copied, {len(report.unchanged)} already current"
+    )
+    if report.extras:
+        console.print("store entries copied: " + ", ".join(report.extras))
+    if report.backed_up == 0:
+        # A copy of nothing is the silent failure this command exists to catch:
+        # an empty store and a failed copy look identical from the outside.
+        _fail("no finalized session to back up", 1)
+    _exit(1 if report.invalid else 0)
 
 
 @app.command()

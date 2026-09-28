@@ -8,9 +8,10 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from .backup import backup_status
 from .capture import server_candidates
 from .io import file_sha256, load_jsonc
-from .paths import REPO, apm_root, bridge_mod_dir, dedicated_dir
+from .paths import REPO, apm_root, backup_root, bridge_mod_dir, dedicated_dir
 from .session import keep_sessions_budget, prune_grace_hours
 
 # Free space below this is reported as disk_low: perf.data for a full capture
@@ -148,6 +149,7 @@ def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
     checks["sudo"] = _sudo()
     checks["telnet"] = _telnet(host, port)
     checks["bridge"] = _bridge_status()
+    checks["store_backup"] = backup_status(backup_root())
     checks["mono_gc_probe"] = _mono_gc_probe(pid)
     checks["target"] = {
         "ok": process_ok,
@@ -198,6 +200,7 @@ def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
         "environment": {
             "apm_root": str(apm_root()),
             "dedicated_dir": str(dedicated_dir()),
+            "backup_dir": os.environ.get("SEVENDTD_APM_BACKUP_DIR", "").strip() or None,
             "keep_sessions": keep_sessions_budget(),
             "prune_grace_hours": prune_grace_hours(),
             "telnet_password_set": bool(os.environ.get("SEVENDTD_TELNET_PASSWORD", "")),

@@ -79,6 +79,23 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 - Collectors: `proc_sample.py` bounds its `find_server.sh` pid lookup, so a
   wedged locator is reported as a missing pid instead of hanging the collector
   before its first sample.
+- Backup: new `7dtd-server-apm backup DESTINATION` command copies the session
+  store off-host and proves the copy. The store is the tool's only durable
+  state and nothing copied it, so a host loss took every session with it. Each
+  session is copied through a staging rename (an interrupted run leaves whole
+  sessions or none), a rerun skips sessions whose recorded manifest hash is
+  unchanged, `.scenario` and the index come along, and `.trash` deliberately
+  does not. Sessions still capturing are named as skipped, a run that backs up
+  nothing exits 1, and the destination is audited against its recorded hashes
+  on every run (including sessions an earlier run copied) with exit 1 on any
+  `INVALID`. Pruning the live store no longer shrinks the archive. A
+  destination inside the store, or a store inside the destination, is refused;
+  a destination on the same filesystem is reported as a warning rather than
+  an error, since staging before an upload is a legitimate use. The
+  destination can be given as an argument or through the new
+  `SEVENDTD_APM_BACKUP_DIR`, which `doctor` reads too: its `store_backup`
+  check fails when nothing is configured, nothing has been copied, or the last
+  run recorded no session, and carries the age of the last run.
 
 - Events: past the 2000-event retention bound the timeline keeps the most
   severe events, newest first within a severity, instead of the first ones

@@ -15,7 +15,7 @@ The canonical product surface is the `7dtd-server-apm` CLI.
 | Profile | Flame build/diff, live `monitor`, Prometheus export |
 | Compare | Compatible-session compare, regression budgets |
 | Scale | Capture ladder, super-linear scaling detection |
-| Ops | Sanitized export, `import` restore, read-only `verify-store` drill, retention prune, `index` |
+| Ops | Sanitized export, `import` restore, read-only `verify-store` drill, verified `backup` copy, retention prune, `index` |
 
 Lag diagnosis covers GC gross-allocation churn, stop-the-world pause timing, allocation-site attribution, and kernel chunk bandwidth (detail: [APM](APM.md)).
 

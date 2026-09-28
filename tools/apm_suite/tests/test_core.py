@@ -145,6 +145,7 @@ def test_cli_version_flag_works_without_subcommand() -> None:
         "prometheus",
         "monitor",
         "prune",
+        "backup",
         "compare",
         "budget",
         "bridge",
@@ -2091,6 +2092,160 @@ def test_verify_store_rejects_a_path_that_is_not_a_store(tmp_path: Path) -> None
     result = runner.invoke(app, ["verify-store", str(missing)])
     assert result.exit_code == 2
     assert "not a store directory" in result.stderr
+
+
+# --- unit: store backup --------------------------------------------------------
+
+
+def test_backup_copies_a_verified_store_and_skips_captures_in_flight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    session = _session(root / "session_kept")
+    audit_session(session)
+    # A capture still running has no recorded baseline, so it has nothing to be
+    # verified against once copied: it is named and left for the next run.
+    _session(root / "session_running")
+    (root / ".scenario").mkdir()
+    (root / ".scenario" / "loadgen_1.json").write_text("{}")
+
+    dest = tmp_path / "backup"
+    result = runner.invoke(app, ["backup", str(dest)])
+
+    assert result.exit_code == 0
+    assert "1 copied, 0 already current" in " ".join(result.stdout.split())
+    assert (dest / "session_kept" / "manifest.json").is_file()
+    assert load_json(dest / "session_kept" / "meta.json") == load_json(session / "meta.json")
+    assert (dest / ".scenario" / "loadgen_1.json").is_file()
+    assert not (dest / "session_running").exists()
+    assert "skipped session_running" in " ".join(result.stderr.split())
+    # The destination is readable by verify-store: the backup proves itself.
+    assert runner.invoke(app, ["verify-store", str(dest)]).exit_code == 0
+
+
+def test_backup_rerun_is_incremental_and_survives_prune(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    for index, name in enumerate(("session_0", "session_1")):
+        audit_session(_session(root / name))
+        stamp = 1_700_000_000 + index * 100
+        os.utime(root / name, (stamp, stamp))  # deterministic age order
+
+    dest = tmp_path / "backup"
+    assert runner.invoke(app, ["backup", str(dest)]).exit_code == 0
+    # Unchanged session: the recorded fingerprint skips the copy.
+    second = runner.invoke(app, ["backup", str(dest)])
+    assert second.exit_code == 0
+    assert "0 copied, 2 already current" in " ".join(second.stdout.split())
+
+    # Retention on the live store must not shrink the archive: a pruned session
+    # is still the only copy of that evidence.
+    assert runner.invoke(app, ["prune", "--keep", "1"]).exit_code == 0
+    assert runner.invoke(app, ["backup", str(dest)]).exit_code == 0
+    assert (dest / "session_0").is_dir()
+
+
+def test_backup_fails_when_the_copy_does_not_read_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A copy that cannot be verified is a failed backup, not a successful one:
+    the exit code is what a cron job's alerting sees."""
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    session = _session(root / "session_bad")
+    audit_session(session)
+    (session / "summary.json").write_text('{"tampered": true}\n')
+
+    result = runner.invoke(app, ["backup", str(tmp_path / "backup")])
+    assert result.exit_code == 1
+    assert "INVALID" in result.stderr
+    assert "summary.json" in result.stderr
+
+
+def test_backup_refuses_a_destination_inside_the_store(tmp_path: Path) -> None:
+    root = tmp_path / "apm"
+    root.mkdir()
+    result = runner.invoke(app, ["backup", str(root / "inner"), "--store", str(root)])
+    assert result.exit_code == 2
+    assert "inside the store" in result.stderr
+    assert not (root / "inner").exists()
+
+
+def test_backup_of_an_empty_store_is_not_a_successful_backup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    result = runner.invoke(app, ["backup", str(tmp_path / "backup")])
+    assert result.exit_code == 1
+    assert "no finalized session to back up" in result.stderr
+
+
+def test_backup_warns_when_the_copy_shares_the_store_filesystem(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    session = _session(root / "session_same")
+    audit_session(session)
+    dest = tmp_path / "backup"
+    result = runner.invoke(app, ["backup", str(dest)])
+    # tmp_path is one filesystem, so this run exercises the warning path. The
+    # copy still succeeds: a staging step before an upload is legitimate.
+    assert result.exit_code == 0
+    assert "same filesystem" in " ".join(result.stderr.split())
+
+
+def test_backup_destination_falls_back_to_the_configured_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The scheduled run and the doctor check must name the same destination,
+    so it is one environment variable rather than a per-invocation argument."""
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    monkeypatch.delenv("SEVENDTD_APM_BACKUP_DIR", raising=False)
+    dest = tmp_path / "backup"
+    session = _session(root / "session_env")
+    audit_session(session)
+
+    # No destination anywhere is a usage error, not a silent no-op.
+    missing = runner.invoke(app, ["backup"])
+    assert missing.exit_code == 2
+    assert "SEVENDTD_APM_BACKUP_DIR" in " ".join(missing.stderr.split())
+
+    monkeypatch.setenv("SEVENDTD_APM_BACKUP_DIR", str(dest))
+    assert runner.invoke(app, ["backup"]).exit_code == 0
+    assert (dest / "session_env" / "manifest.json").is_file()
+
+    from apm_suite.backup import backup_status
+    from apm_suite.paths import backup_root
+
+    status = backup_status(backup_root())
+    assert status["ok"] is True
+    assert status["sessions"] == 1
+    # Unconfigured is reported, not assumed healthy: an unbacked store is the
+    # default state this command exists to change.
+    assert backup_status(None)["ok"] is False
+
+
+def test_doctor_reports_the_configured_backup_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SEVENDTD_APM_BACKUP_DIR", str(tmp_path / "backup"))
+    result = runner.invoke(app, ["doctor", "--json", "-"])
+    assert result.exit_code == 0
+    report = json.loads(result.stdout)
+    assert report["environment"]["backup_dir"] == str(tmp_path / "backup")
+    assert report["checks"]["store_backup"]["ok"] is False  # nothing copied yet
 
 
 # --- parser fixtures ----------------------------------------------------------

@@ -165,15 +165,30 @@ but it does not replicate or back up the store by itself.
 | Disaster | What is lost | Recovery |
 |---|---|---|
 | Bad `prune --keep` / runaway auto-prune | Nothing within the grace window | `mv ~/.local/share/7dtd-server-apm/.trash/session_X ~/.local/share/7dtd-server-apm/` |
-| Accidental file deletion inside a session | Files not yet trashed | Re-export/import from a bundle copy, or restore from your host backup |
-| Host disk loss | Whole store unless copied out | Copy-back from off-host backups or shared support bundles |
+| Accidental file deletion inside a session | Files not yet trashed | Re-export/import from a bundle copy, or restore from the backup copy |
+| Host disk loss | Whole store unless copied out | Copy the backup directory back over `SEVENDTD_APM_DIR`, then `verify-store` |
 
-- **RPO:** unbounded for the local store unless an external copy exists.
-  Schedule one (`rsync -a ~/.local/share/7dtd-server-apm/ backup-host:/apm-store/`
-  from cron/systemd timer); sessions are immutable after finalize, so rsync is
-  incremental and safe to re-run. Bundles made with `export` are a second,
-  sanitized copy; treat any bundle you keep as the recovery artifact for that
-  session.
+- **RPO:** the interval between two `backup` runs. Nothing copies the store by
+  itself, so an unscheduled store has no bound at all: schedule the command.
+  Each session lands in the destination through a staging rename, a rerun
+  skips sessions whose recorded manifest hash is unchanged, and sessions
+  pruned from the live store are not removed from the destination, so
+  `prune --keep` cannot quietly shrink the archive.
+  ```bash
+  export SEVENDTD_APM_BACKUP_DIR=/mnt/backup/apm-store
+  uv run 7dtd-server-apm backup                          # every night, from cron
+  ```
+  `SEVENDTD_APM_BACKUP_DIR` is the destination the scheduled run and the
+  `doctor` check both read, so a backup that is verified is the backup that
+  runs; the argument overrides it for a one-off.
+  The destination should be another host or another filesystem; a directory
+  on the same device is reported as `warning: ... same filesystem`, because
+  disk loss then takes the copy with it. `.scenario` manifests and the index
+  are copied with the sessions; `.trash` is not (its contents are already
+  retired evidence). Sessions still capturing (no `manifest.json` yet) are
+  named as `skipped` and picked up by the next run, and a run that backs up
+  nothing exits 1. Bundles made with `export` remain a second, sanitized
+  copy; treat any bundle you keep as the recovery artifact for that session.
 - **RTO:** minutes: sessions are self-contained directories; no service
   restart, migration, or schema step is involved in recovery.
 - **Soft-delete window:** prune and post-capture auto-prune move removed
@@ -186,14 +201,19 @@ but it does not replicate or back up the store by itself.
   as `finalize`, and writes a fresh integrity manifest. Exported bundles are
   lossy by design (no raw telnet drain, perf data, or stderr), so prefer
   whole-directory copies for archival fidelity and bundles for sharing.
-- **Restore drill (whole-store copies):** a `rsync` copy-back is the archival
-  path, and its integrity claim is only as good as the last drill.
-  `7dtd-server-apm verify-store [STORE]` audits every session in a store
-  against its recorded `manifest.json` and the versioned schemas, then exits
-  non-zero when any session is invalid. It writes nothing: `audit` re-stamps
-  `manifest.json` on a clean session, which would absorb the very drift a
-  restore check looks for, so it cannot be used on a restored copy. Run it on
-  the copy after every restore, and periodically against the live store.
+- **Restore drill (whole-store copies):** the `backup` copy is the archival
+  path, and its integrity claim is only as good as the last drill. `backup`
+  runs the drill itself: after copying it audits every session in the
+  destination, including ones an earlier run copied, and exits 1 when any of
+  them fails or when nothing was backed up at all.
+  `7dtd-server-apm verify-store [STORE]` is the standalone form for a copy
+  that arrived some other way (an rsync, a copy-back after disk loss). It
+  audits every session in a store against its recorded `manifest.json` and the
+  versioned schemas, then exits non-zero when any session is invalid. It
+  writes nothing: `audit` re-stamps `manifest.json` on a clean session, which
+  would absorb the very drift a restore check looks for, so it cannot be used
+  on a restored copy. Run it on the copy after every restore, and periodically
+  against the live store.
   - `ok`: every recorded artifact matches its hash, required documents present,
     schemas valid.
   - `INVALID`: hash drift, a schema failure, or a recorded path that escapes the
@@ -201,13 +221,16 @@ but it does not replicate or back up the store by itself.
   - `incomplete`: a session still capturing, or one copied before `finalize`
     and with no `manifest.json` recorded, so its hashes were never baselined.
     Not a failure, and `--strict` fails the drill on it.
-- **Silent backup failure:** an `rsync` job that dies on a permissions error
-  still exits `0` if it ran with some files, and a store that stops growing is
-  indistinguishable from a quiet server. Watch the store, not the job: alert on
-  the age of the newest `session_*` directory and on a stalled `mtime` for
-  `<store>/index.html`. `verify-store` confirms the sessions and the store
-  entries are intact, but reports no ages, so age the store yourself (for
-  example `ls -lt --time=ctime ~/.local/share/7dtd-server-apm | head`).
+- **Silent backup failure:** alert on the `backup` exit code (a copy that
+  cannot be made, a destination that does not verify, or a run that backed up
+  nothing all exit 1). `doctor` carries the same signal as the
+  `checks.store_backup` block: `ok: false` when no destination is configured,
+  when nothing has been copied, or when the last run recorded no session, and
+  `age_seconds` for the threshold your schedule implies. A store that stops
+  growing is indistinguishable from a quiet server, and a destination that
+  quietly stopped syncing looks exactly like a healthy one, so age the store
+  as well (for example
+  `ls -lt --time=ctime ~/.local/share/7dtd-server-apm | head`).
 
 ## Related docs
 
