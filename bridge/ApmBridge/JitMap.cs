@@ -112,7 +112,8 @@ namespace DtdApmBridge
             // perf hardcodes /tmp/perf-<pid>.map, but /tmp is tmpfs (RAM) on
             // typical hosts: the map lives on disk here and the APM capture
             // host symlinks it into /tmp (zero RAM) before recording.
-            int pid = Process.GetCurrentProcess().Id;
+            int pid;
+            using (Process process = Process.GetCurrentProcess()) pid = process.Id;
             Directory.CreateDirectory(BridgeMod.OutputDir);
             string path = Path.Combine(BridgeMod.OutputDir, "perf-" + pid + ".map");
             lock (WriteLock)

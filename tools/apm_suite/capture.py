@@ -718,20 +718,18 @@ def run_capture(
     )
     atomic_json(session / "meta.json", schema_dict(meta))
 
+    def _sigterm(_signum: int, _frame: object) -> None:
+        raise KeyboardInterrupt
+
+    # Acquired inside the try that releases them: the jitmap symlink and the
+    # root-owned bind mount are host-global claims (the mount blocks the NEXT
+    # capture's mount, the /tmp link is never swept by anything), so an
+    # exception between taking them and entering the try would strand both for
+    # the life of the host.
     perf_map_link: tuple[Path, Path] | None = None
-    if symbolize:
-        # Independent of reset_bridge: managed-frame resolution is what makes
-        # perf flames and ustack probes attributable at all.
-        perf_map_link = _export_jitmap(session, pid, telnet_host, telnet_port, telnet_password)
-
-    if reset_bridge:
-        # Reset section/GC totals so they cover only this window (vs server uptime).
-        if reset_bridge_stats(telnet_host, telnet_port, telnet_password):
-            print(">> bridge stats reset; section totals cover this capture window")
-        else:
-            _warn(session, "bridge stat reset failed; section totals span server uptime")
-
-    mono_link = _bind_mono(session, pid, sudo_ok)
+    mono_link: Path | None = None
+    running: list[_Running] = []
+    # mono_so is filled in once the bind mount lands, inside the try below.
     ctx = CaptureContext(
         session=session,
         pid=pid,
@@ -740,16 +738,24 @@ def run_capture(
         telnet_host=telnet_host,
         telnet_port=telnet_port,
         telnet_password=telnet_password,
-        mono_so=mono_link,
         sudo_ok=sudo_ok,
     )
-
-    def _sigterm(_signum: int, _frame: object) -> None:
-        raise KeyboardInterrupt
-
-    running: list[_Running] = []
     previous_sigterm = signal.signal(signal.SIGTERM, _sigterm)
     try:
+        if symbolize:
+            # Independent of reset_bridge: managed-frame resolution is what makes
+            # perf flames and ustack probes attributable at all.
+            perf_map_link = _export_jitmap(session, pid, telnet_host, telnet_port, telnet_password)
+
+        if reset_bridge:
+            # Reset section/GC totals so they cover only this window (vs server uptime).
+            if reset_bridge_stats(telnet_host, telnet_port, telnet_password):
+                print(">> bridge stats reset; section totals cover this capture window")
+            else:
+                _warn(session, "bridge stat reset failed; section totals span server uptime")
+
+        mono_link = _bind_mono(session, pid, sudo_ok)
+        ctx.mono_so = mono_link
         try:
             _launch_collectors(ctx, only, no_app, running)
             deadline = time.monotonic() + seconds + max(GRACE_SECONDS, seconds)

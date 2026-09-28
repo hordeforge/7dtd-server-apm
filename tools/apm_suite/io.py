@@ -6,6 +6,7 @@ import os
 import re
 import tempfile
 from collections.abc import Iterator
+from contextlib import suppress
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -70,7 +71,17 @@ def atomic_text(path: Path, content: str) -> None:
     fd, raw = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     tmp = Path(raw)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as stream:
+        stream = os.fdopen(fd, "w", encoding="utf-8", newline="")
+    except BaseException:
+        # fdopen is the only step that can fail between mkstemp handing back an
+        # open descriptor and the `with` owning it; bail out closing the raw fd
+        # so a failure here cannot leak one per atomic write.
+        with suppress(OSError):
+            os.close(fd)
+        tmp.unlink(missing_ok=True)
+        raise
+    try:
+        with stream:
             stream.write(content)
             stream.flush()
             os.fsync(stream.fileno())

@@ -81,6 +81,35 @@ class ScaleBy(StrEnum):
     ENTITIES = "entities"
 
 
+# A monitor with --count 0 runs until killed, so its JSONL is the only thing it
+# ever produces and the only thing that grows. A default interval of 5s writes
+# ~17k lines/day, so without a cap a 24/7 service fills the volume on its own.
+# One generation is kept: an operator tailing the file finds the previous run
+# in <output>.1 rather than an unexplained gap.
+MONITOR_MAX_BYTES = 64 * 1024**2
+
+
+def _rotate_monitor_log(path: Path, max_bytes: int) -> None:
+    """Rename a full sample log to <path>.1 so the next append starts empty.
+
+    Runs before the write, so the live file never exceeds the cap by more than
+    one record. A stat/unlink/replace failure leaves the log exactly as it was:
+    an unwritable directory is the operator's problem to see, not a reason to
+    drop samples.
+    """
+    if max_bytes <= 0:
+        return
+    try:
+        if path.stat().st_size < max_bytes:
+            return
+    except OSError:
+        return  # no log yet: the first append creates it
+    previous = path.with_name(path.name + ".1")
+    with suppress(OSError):
+        previous.unlink(missing_ok=True)
+        os.replace(path, previous)
+
+
 def _exit(code: int) -> None:
     if code:
         raise typer.Exit(code)
@@ -873,10 +902,18 @@ def monitor(
         typer.Option(
             "--output",
             "-o",
-            help="Append JSONL here. Grows without bound - if run as a 24/7 service, "
-            "rotate it (logrotate or a size check); ~1 line per interval.",
+            help="Append JSONL here, ~1 line per interval. Capped by --max-bytes; "
+            "at the cap the current file becomes <output>.1 and a fresh one starts.",
         ),
     ] = None,
+    max_bytes: Annotated[
+        int,
+        typer.Option(
+            "--max-bytes",
+            min=0,
+            help=f"Cap on --output in bytes; 0 disables rotation. Default {MONITOR_MAX_BYTES}.",
+        ),
+    ] = MONITOR_MAX_BYTES,
 ) -> None:
     """Continuously sample process and bridge health without a full capture."""
     import psutil
@@ -979,6 +1016,7 @@ def monitor(
             )
             if output:
                 output.parent.mkdir(parents=True, exist_ok=True)
+                _rotate_monitor_log(output, max_bytes)
                 with output.open("a", encoding="utf-8") as stream:
                     stream.write(json.dumps(sample) + "\n")
             taken += 1

@@ -4044,6 +4044,52 @@ def test_scenario_run_teardown_survives_second_interrupt(
     assert result.exit_code == 130
 
 
+def test_monitor_rotates_its_sample_log_at_the_cap(tmp_path: Path) -> None:
+    """A monitor with --count 0 is a 24/7 service, so its JSONL is the only
+    thing that grows. Crossing --max-bytes must keep the current file under the
+    cap instead of appending forever, and must retain the previous generation
+    rather than truncating the history an operator is tailing."""
+    from apm_suite.cli import _rotate_monitor_log
+
+    log = tmp_path / "monitor.jsonl"
+    log.write_text("a\n" * 10, encoding="utf-8")
+
+    _rotate_monitor_log(log, 1024)  # under the cap: untouched
+    assert log.read_text(encoding="utf-8") == "a\n" * 10
+    assert not (tmp_path / "monitor.jsonl.1").exists()
+
+    _rotate_monitor_log(log, 5)  # at/over the cap: swapped out
+    assert not log.exists()
+    assert (tmp_path / "monitor.jsonl.1").read_text(encoding="utf-8") == "a\n" * 10
+
+    # 0 is the documented opt-out, and a missing file must not raise.
+    _rotate_monitor_log(log, 0)
+    _rotate_monitor_log(tmp_path / "never-written.jsonl", 5)
+
+    # The cap applies through the real CLI, not only to the helper.
+    live = tmp_path / "live.jsonl"
+    live.write_text("x\n" * 500, encoding="utf-8")
+    result = runner.invoke(
+        app,
+        [
+            "monitor",
+            "--pid",
+            str(os.getpid()),
+            "--count",
+            "1",
+            "--interval",
+            "0.5",
+            "--output",
+            str(live),
+            "--max-bytes",
+            "100",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "live.jsonl.1").read_text(encoding="utf-8") == "x\n" * 500
+    assert len(live.read_text(encoding="utf-8").splitlines()) == 1
+
+
 def test_monitor_samples_process_and_coerces_corrupt_bridge_snapshot(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -4516,6 +4562,57 @@ def test_bind_mono_reports_the_precise_blocker(
     monkeypatch.setattr(subprocess, "run", fake_run)
     assert capture._bind_mono(session, 1, sudo_ok=True) is None
     assert "bind mount failed" in (session / "WARN.txt").read_text()
+
+
+def test_capture_releases_jitmap_link_and_mono_mount_when_a_later_step_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The /tmp perf map link and the root bind mount are host-global claims:
+    the mount blocks the NEXT capture's mount and nothing ever sweeps the /tmp
+    link. Both must be released even when a step after acquiring them fails, so
+    the acquisition cannot sit outside the try that owns the release."""
+    from apm_suite import capture
+
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setattr(capture, "apm_root", lambda: root)
+    monkeypatch.setattr(capture, "_sudo_available", lambda: True)
+    monkeypatch.setattr(capture, "tool_version", lambda name: "")
+
+    link = tmp_path / "perf.map"
+    target = tmp_path / "session-map"
+    link.symlink_to(target)
+    bound = tmp_path / "bind-target"
+    unbound: list[Path] = []
+    removed: list[Path] = []
+    monkeypatch.setattr(capture, "_export_jitmap", lambda *a, **k: (link, target))
+    monkeypatch.setattr(capture, "_bind_mono", lambda *a, **k: bound)
+    monkeypatch.setattr(
+        capture, "_remove_perf_map_link", lambda link_, target_: removed.append(link_)
+    )
+    monkeypatch.setattr(capture, "_unmount_mono", lambda m: unbound.append(m))
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(capture, "_launch_collectors", boom)
+
+    with pytest.raises(OSError):
+        capture.run_capture(
+            seconds=1,
+            pid=os.getpid(),
+            only="",
+            no_app=True,
+            telnet_host="",
+            telnet_port=0,
+            telnet_password="",
+            finalize=False,
+            symbolize=True,
+            reset_bridge=False,
+        )
+    assert unbound == [bound]
+    assert removed == [link]
+    assert link.is_symlink()  # the stubbed release stands in for the real one
 
 
 def test_capture_sudo_probe_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:

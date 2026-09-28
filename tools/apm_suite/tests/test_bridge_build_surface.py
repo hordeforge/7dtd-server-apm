@@ -162,3 +162,31 @@ def test_bridge_readme_documents_the_response_contract() -> None:
         "spikes",
     ):
         assert f"| `{key}`" in readme, f"response contract does not document {key}"
+
+
+def test_bridge_releases_every_os_handle_it_acquires() -> None:
+    # The mod runs inside the dedicated server for weeks, and `apm jitmap` fires
+    # on every --symbolize capture. A Process/FileStream/StreamWriter taken
+    # without `using` holds a real OS handle until the finalizer runs, so each
+    # invocation leaks one against a handle the host is already near its limit
+    # for. Every acquisition site must be scoped.
+    sources = {
+        path.name: path.read_text(encoding="utf-8")
+        for path in sorted((REPO / "bridge" / "ApmBridge").glob("*.cs"))
+    }
+    assert sources, "no bridge sources found"
+    factories = (
+        "Process.GetCurrentProcess(",
+        "new Process(",
+        "File.OpenRead(",
+        "new FileStream(",
+        "new StreamWriter(",
+        "new StreamReader(",
+    )
+    pattern = "|".join(re.escape(factory) for factory in factories)
+    for name, source in sources.items():
+        for match in re.finditer(pattern, source):
+            line = source.count("\n", 0, match.start()) + 1
+            assert "using" in source[max(0, match.start() - 200) : match.start()], (
+                f"{name}:{line} acquires a disposable handle outside a using block"
+            )

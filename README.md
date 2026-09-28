@@ -184,7 +184,7 @@ uv run 7dtd-server-apm scenario run --preset deep --bot-mode demolition --no-spa
 uv run 7dtd-server-apm scenario run --preset deep --spawn-entity vehicleTruck4x4 --spawn-per-player 5
 uv run 7dtd-server-apm scenario run --preset deep --bot-mode bait --rally --label combat
 uv run 7dtd-server-apm scenario matrix plans/campaign.default.json
-uv run 7dtd-server-apm monitor --interval 5
+uv run 7dtd-server-apm monitor --interval 5 --output monitor.jsonl --max-bytes 67108864
 uv run 7dtd-server-apm compare BASELINE CANDIDATE
 uv run 7dtd-server-apm budget CANDIDATE --baseline BASELINE
 uv run 7dtd-server-apm export SESSION -o support-bundle.zip
