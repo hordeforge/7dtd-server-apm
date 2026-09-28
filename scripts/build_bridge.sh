@@ -63,6 +63,11 @@ mkdir -p "$OUT/Config" "$OUT/WebMod"
 command -v bunx >/dev/null 2>&1 || { echo "ERROR: bunx (bun) not found; cannot build WebMod" >&2; exit 1; }
 bunx -p "typescript@$TSC_VERSION" tsc -p "$ROOT/bridge/ApmBridge/WebMod/tsconfig.json"
 cp "$ROOT/bridge/ApmBridge/ModInfo.xml" "$OUT/ModInfo.xml"
+# The DLL is redistributed to operators' servers inside a zip they download,
+# so the terms it is shipped under travel with it: without this file the mod
+# folder is a binary carrying no license text. The mod loader ignores files it
+# does not recognize, and the file is inert at runtime.
+cp "$ROOT/LICENSE" "$OUT/LICENSE"
 # Ship the factory settings under the .example name only: users install the
 # release zip by unzipping it over Mods/, so a live Config/apmbridge.json in
 # the archive would reset their tuned settings on every upgrade. The mod runs

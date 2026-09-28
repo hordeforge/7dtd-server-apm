@@ -41,6 +41,11 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+- Packaging: the wheel carries the PEP 561 `py.typed` marker. Every module is
+  annotated and the tree is mypy strict, but a wheel without the marker is
+  untyped to whoever installs it, so a consumer's type check resolved the whole
+  package to `Any` instead of reading those annotations.
+
 ## 2.4.1 - host CLI - 2026-09-29
 
 - Report, dashboard, session index, flame delta, and interactive flamegraph
@@ -449,6 +454,17 @@ major.
   SHA-256 work over every collected artifact at the end of a run.
 
 ## Unreleased - bridge mod
+
+- Packaging: the release zip carries the repository `LICENSE` in the mod
+  folder. The zip is how the DLL reaches a server, and it shipped a binary
+  with no statement of the terms it is redistributed under.
+- Docs: the release-zip install is written down where an operator installing
+  from the zip will read it: verify the `.sha256`, unzip into `<server>/Mods/`
+  (the archive holds the mod folder at its top level), seed a config from the
+  shipped `.example` if a setting is wanted, and on an upgrade clear the mod
+  folder except `Config/` first. Unzipping over an existing folder overwrites
+  what the new release ships and leaves the rest, so a file that release
+  dropped keeps being served; `make bridge-install` already pruned that case.
 
 ## 3.1.1 (tag v3.1.1) - bridge mod - 2026-09-29
 

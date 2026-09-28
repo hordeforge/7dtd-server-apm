@@ -210,6 +210,36 @@ A reinstall seeds a fresh factory config, so a second uninstall writes to
 `7dtd-server-apm-bridge-config.json.1` (and `.2`, and so on) rather than
 overwriting the config the first uninstall saved.
 
+### Installing a release zip
+
+A release attaches `7dtd-server-apm-bridge-<version>.zip` and its `.sha256`.
+The archive holds the `7dtd-server-apm-bridge/` mod folder at its top level,
+so it unzips into `<server>/Mods/`, not into the server root.
+
+Verify before unpacking; a `.sha256` file fetched beside the zip only proves
+the two files arrived together:
+
+```bash
+cd /path/to/downloads
+sha256sum -c 7dtd-server-apm-bridge-3.0.0.zip.sha256
+unzip -o 7dtd-server-apm-bridge-3.0.0.zip -d "/path/to/7 Days to Die Dedicated Server/Mods/"
+```
+
+First install needs no config file: the mod runs on built-in defaults until
+one exists. Copy `Mods/7dtd-server-apm-bridge/Config/apmbridge.json.example` to
+`apmbridge.json` beside it to change a setting.
+
+Upgrading by unzipping over an existing folder overwrites the files the new
+release ships and leaves everything else in place, so a file the new release
+dropped (a renamed asset, a retired WebMod) keeps being served. Clear the mod
+folder except `Config/` first, or install with `make bridge-install`, which
+prunes those files and rolls the previous release back if a copy fails:
+
+```bash
+cd "/path/to/7 Days to Die Dedicated Server/Mods/7dtd-server-apm-bridge"
+find . -mindepth 1 ! -path './Config' ! -path './Config/*' -delete
+```
+
 Restart the dedicated server, then run `apm capabilities`, `apm status`, or
 `apm dump`. JSON is written under
 `Mods/7dtd-server-apm-bridge/telemetry/` using `7dtd.apm.app.v3`.
