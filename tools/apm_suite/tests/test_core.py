@@ -911,11 +911,12 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
         events_line = archive.read("events.jsonl").decode()
         vfs = archive.read("io/vfs.bt.out").decode()
         svg = archive.read("cpu/perf/flame.svg").decode()
-        leaked = "".join(
-            archive.read(name).decode("utf-8", errors="replace")
-            for name in names
-            if "203.0.113.7" in name or "efficientserver" in name
-        )
+        # Scan the CONTENT of every member, not the members whose name looks
+        # private: exclusion is the assertion about names, and the scrub is the
+        # assertion about what survives inside the members that were kept.
+        kept = {
+            name: archive.read(name).decode("utf-8", errors="replace") for name in sorted(names)
+        }
     assert home not in events_line + vfs + svg
     assert '"cmdline": "<redacted>"' in events_line
     assert "~/save" in events_line and "truncated-line ~/more" in events_line
@@ -923,7 +924,10 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
     assert "~/libgame.so" in svg
     assert "app/bridge.jsonl" not in names
     assert "app/efficientserver_log_excerpt.txt" not in names
-    assert "203.0.113.7" not in leaked and "Alice" not in leaked
+    for name, text in kept.items():
+        assert "203.0.113.7" not in text, f"{name} carried the scraped address"
+        assert "Alice" not in text, f"{name} carried the player name"
+        assert "203.0.113.7" not in name, f"{name} carried the scraped address in its name"
 
 
 def test_export_survives_unparseable_meta_timestamp(tmp_path: Path) -> None:
@@ -986,8 +990,6 @@ def test_export_streamed_text_members_match_full_text_scrub_bytes(tmp_path: Path
     JSONL redaction, and the home prefix replaced everywhere."""
     import zipfile
 
-    from apm_suite.bundle import _scrub_jsonl_line
-
     home = str(Path.home())
     session = tmp_path / "session_stream"
     (session / "io").mkdir(parents=True)
@@ -997,26 +999,24 @@ def test_export_streamed_text_members_match_full_text_scrub_bytes(tmp_path: Path
     # them to LF before the line-wise scrub runs.
     vfs_raw = f"openat 1\nopenat {home}/steamapps\r\nclose\rno-newline-tail"
     (session / "io/vfs.bt.out").write_bytes(vfs_raw.encode("utf-8"))
-    jsonl_lines = [
-        json.dumps({"t": 1.0, "cmdline": "-quiet", "note": f"at {home}/x"}),
-        f"malformed trailing {home}/y",  # no newline at EOF
-    ]
-    (session / "events.jsonl").write_text("\n".join(jsonl_lines))
+    (session / "events.jsonl").write_text(
+        json.dumps({"t": 1.0, "cmdline": "-quiet", "note": f"at {home}/x"})
+        + "\n"
+        + f"malformed trailing {home}/y"  # no newline at EOF
+    )
 
     bundle = tmp_path / "bundle.zip"
     result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
     assert result.exit_code == 0, result.output
 
-    # Expected bytes from the former implementation's contract.
-    def legacy_text(raw: str) -> str:
-        return "".join(line.replace(home, "~") + "\n" for line in raw.splitlines())
-
-    def legacy_jsonl(raw: str) -> str:
-        return "".join(_scrub_jsonl_line(line, home) + "\n" for line in raw.splitlines())
-
+    # Expected bytes spelled out from the former implementation's contract,
+    # NOT by calling the production scrubber: a comparison against the code
+    # under test holds for any behaviour of that code, including doing nothing.
     expected = {
-        "io/vfs.bt.out": legacy_text(vfs_raw),
-        "events.jsonl": legacy_jsonl("\n".join(jsonl_lines)),
+        "io/vfs.bt.out": "openat 1\nopenat ~/steamapps\nclose\nno-newline-tail\n",
+        "events.jsonl": (
+            '{"t": 1.0, "cmdline": "<redacted>", "note": "at ~/x"}\nmalformed trailing ~/y\n'
+        ),
     }
     with zipfile.ZipFile(bundle) as archive:
         for name, want in expected.items():
@@ -1795,19 +1795,25 @@ def test_audit_reports_unreadable_documents_instead_of_crashing(tmp_path: Path) 
     assert any("meta.json" in e and "could not read" in e for e in manifest.errors)
 
 
-def test_audit_reports_unreadable_collector_result(tmp_path: Path) -> None:
+def test_audit_reports_unreadable_collector_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Denying the read through the open() the audit actually uses keeps the
+    # branch covered everywhere; a chmod(0o000) fixture silently skips on any
+    # host that can read it anyway (root), leaving the finding unverified.
     session = _session(tmp_path / "session_unreadable_result")
     (session / "sync").mkdir()
-    path = session / "sync/futex.result.json"
-    atomic_json(path, _result_json("ok", name="futex", layer="sync"))
-    path.chmod(0o000)
-    if os.access(path, os.R_OK):  # running as root: perms do not deny the read
-        path.chmod(0o600)
-        pytest.skip("cannot make a session file unreadable as this user")
-    try:
+    atomic_json(session / "sync/futex.result.json", _result_json("ok", name="futex", layer="sync"))
+    original = Path.open
+
+    def deny(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name.endswith(".result.json"):
+            raise PermissionError(13, "Permission denied")
+        return original(self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "open", deny)
         manifest, valid = audit_session(session)
-    finally:
-        path.chmod(0o600)
     assert not valid
     assert any("unreadable collector result" in e for e in manifest.errors)
 
@@ -2291,7 +2297,11 @@ def test_build_summary_survives_snapshot_with_non_numeric_fields(tmp_path: Path)
     atomic_json(session / "meta.json", _meta())
     summary = build_summary(session)  # must not raise
     # Host-side evidence survived; only snapshot-derived blocks were dropped.
-    assert [layer.layer for layer in summary.layers] != []
+    assert "lag_diagnosis" in summary.metadata
+    assert "cpu_hot_paths" in summary.metadata
+    # The string fields must not have reached the frame arithmetic: the gap is
+    # the difference of the coerced numbers, not absent evidence.
+    assert summary.metadata["frame"]["engineGapMs"] == pytest.approx(13.4)
 
 
 def test_build_summary_survives_snapshot_with_infinite_fields(tmp_path: Path) -> None:
@@ -2315,7 +2325,13 @@ def test_build_summary_survives_snapshot_with_infinite_fields(tmp_path: Path) ->
     text = path.read_text()
     assert "Infinity" not in text  # valid JSON for strict external consumers
     assert json.loads(text)["schema"] == "7dtd.apm.summary.v2"
-    assert [layer.layer for layer in summary.layers] != []
+    # The host-side blocks below the snapshot are built regardless of it.
+    assert "lag_diagnosis" in summary.metadata
+    # as_number rejects inf, so the block survives with the inf fields read as
+    # absent evidence (0) rather than rates computed from Infinity/0.
+    assert summary.metadata["gc"]["heapDeltaBytes"] == 0
+    assert summary.metadata["gc"]["windowSeconds"] == 0.0
+    assert summary.metadata["gc"]["allocMBPerSecond"] == 0
 
 
 def test_build_summary_survives_snapshot_with_non_object_blocks(tmp_path: Path) -> None:
@@ -2340,7 +2356,7 @@ def test_build_summary_survives_snapshot_with_non_object_blocks(tmp_path: Path) 
     )
     atomic_json(session / "meta.json", _meta())
     summary = build_summary(session)  # must not raise
-    assert [layer.layer for layer in summary.layers] != []
+    assert "lag_diagnosis" in summary.metadata  # host evidence survived
     assert "gc" not in summary.metadata  # snapshot-derived blocks dropped whole
 
 
@@ -2503,6 +2519,8 @@ def test_jitsym_annotate_session_streams_and_skips_unchanged(
     assert annotated.is_file()
     # Byte parity with the whole-text implementation, including line endings.
     assert annotated.read_text() == annotate(resolvable.read_text(), *load_map(map_file))
+    # ...and the parity is not a shared no-op: the symbol really was resolved.
+    assert "EntityAlive.updateTasks+0x0" in annotated.read_text()
     assert not (tmp_path / "runtime" / "futex.bt.annotated.txt").exists()
     assert not (tmp_path / "scheduler" / "runqlat.bt.annotated.txt").exists()
 
@@ -3133,8 +3151,12 @@ def test_every_generated_page_carries_the_shared_tokens(tmp_path: Path) -> None:
     }
     stray = re.compile(r"#[0-9a-fA-F]{3,8}")
     for name, page in pages.items():
+        # Assert the selector exists first: splitting it out of a page that has
+        # no :root block yields "", and the literal scan below would then pass
+        # without ever reading a rule.
+        assert ":root{" in page, f"{name}: no :root token block to scan"
         assert f"--apm-bg:{TOKENS['bg']};" in page, f"{name}: token block missing"
-        rules = page.split("}", 1)[1] if ":root{" in page else ""
+        rules = page.split("}", 1)[1]
         # The :root block is the only place a literal is allowed; every other
         # rule has to read a token, or the page can drift from the others again.
         assert not stray.search(rules), f"{name}: raw color literal outside :root"
@@ -5062,10 +5084,13 @@ def test_doctor_reports_resolved_environment_without_secrets(
     assert env["prune_grace_hours"] == 6.0
     assert env["keep_sessions"] == 40
     assert env["telnet_password_set"] is False
-    assert "apm-root-secret" not in json.dumps(result)
 
+    # The leak check has to run with the secret present: an unset variable
+    # cannot leak, so the "set" branch would go unverified.
     monkeypatch.setenv("SEVENDTD_TELNET_PASSWORD", "apm-root-secret")
-    assert inspect(None, "127.0.0.1", 8081)["environment"]["telnet_password_set"] is True
+    result = inspect(None, "127.0.0.1", 8081)
+    assert result["environment"]["telnet_password_set"] is True
+    assert "apm-root-secret" not in json.dumps(result)
 
 
 def test_doctor_sudo_timeout_is_reported_not_raised(monkeypatch: pytest.MonkeyPatch) -> None:
