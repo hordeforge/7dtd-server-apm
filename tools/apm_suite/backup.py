@@ -9,6 +9,10 @@ systemd timer, an operator's own rsync) is the only part left outside the tool.
 
 Three properties matter more than throughput here:
 
+* **Owner-only.** Sessions hold raw host evidence, including the telnet
+  artifact and any server-log slice the operator dropped in, and the
+  destination is expected to be another host. A destination this run creates is
+  0700; one that already exists is left at the mode its owner gave it.
 * **Atomic per session.** A session is copied into a staging directory and
   renamed into place, so an interrupted run leaves the destination with whole
   sessions or none, never a half-written one that reads as evidence.
@@ -30,6 +34,7 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -145,10 +150,20 @@ def backup_store(store: Path, destination: Path) -> BackupReport:
     if resolved_store.is_relative_to(resolved_destination):
         raise BackupError("store is inside the destination; the copy would swallow it")
 
+    # A session carries raw host evidence, the telnet artifact with
+    # player-identifying lines, and any server-log slice the operator dropped
+    # in, and the destination is expected to be another host or filesystem.
+    # A directory this run creates is owner-only from the start, like the store
+    # and a restored bundle; an operator-chosen directory that already exists is
+    # left at whatever mode they gave it, because this tool does not own it.
+    created = not destination.exists()
     try:
         destination.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         raise BackupError(f"cannot create {destination}: {error}") from error
+    if created:
+        with suppress(OSError):
+            destination.chmod(0o700)
 
     report = BackupReport(
         destination=destination,

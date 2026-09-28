@@ -402,7 +402,10 @@ def remove_sessions(
         return
     trash = _trash_dir(doomed[0].parent)
     try:
-        trash.mkdir(parents=True, exist_ok=True)
+        # Owner-only like the store root: a trashed session is the same raw
+        # evidence, and the grace window is exactly the time a retired session
+        # must not become readable to another local account.
+        trash.mkdir(parents=True, exist_ok=True, mode=0o700)
     except OSError as error:
         yield doomed[0], error
         return

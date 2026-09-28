@@ -2168,6 +2168,29 @@ def test_backup_fails_when_the_copy_does_not_read_back(
     assert "summary.json" in result.stderr
 
 
+def test_backup_creates_an_owner_only_destination_and_leaves_an_existing_one_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session holds the raw telnet artifact and any server-log slice the
+    operator dropped in, and the destination is expected to be another host, so
+    a directory this run creates is owner-only like the store. A directory the
+    operator already owns is not this tool's to tighten."""
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    audit_session(_session(root / "session_perms"))
+
+    created = tmp_path / "fresh"
+    assert runner.invoke(app, ["backup", str(created)]).exit_code == 0
+    assert stat.S_IMODE(created.stat().st_mode) == 0o700
+
+    existing = tmp_path / "chosen"
+    existing.mkdir(mode=0o755)
+    existing.chmod(0o755)
+    assert runner.invoke(app, ["backup", str(existing)]).exit_code == 0
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o755
+
+
 def test_backup_refuses_a_destination_inside_the_store(tmp_path: Path) -> None:
     root = tmp_path / "apm"
     root.mkdir()

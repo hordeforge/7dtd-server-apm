@@ -183,7 +183,10 @@ but it does not replicate or back up the store by itself.
   runs; the argument overrides it for a one-off.
   The destination should be another host or another filesystem; a directory
   on the same device is reported as `warning: ... same filesystem`, because
-  disk loss then takes the copy with it. `.scenario` manifests and the index
+  disk loss then takes the copy with it. A destination the run creates is
+  0700, like the store, because a session carries the raw telnet drain; a
+  destination that already exists keeps the mode its owner gave it, so point
+  the command at a directory of its own. `.scenario` manifests and the index
   are copied with the sessions; `.trash` is not (its contents are already
   retired evidence). Sessions still capturing (no `manifest.json` yet) are
   named as `skipped` and picked up by the next run, and a run that backs up
