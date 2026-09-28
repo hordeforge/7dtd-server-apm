@@ -50,12 +50,12 @@ def load_sections(session: Path) -> dict[str, float]:
     return heat
 
 
-def load_flame_deltas(a: Path, b: Path, top: int = 20) -> list[dict[str, Any]]:
+def load_flame_deltas(a: Path, b: Path) -> list[dict[str, Any]]:
     """Top frame weight deltas between two sessions' folded stacks."""
     folded_a, folded_b = folded_stack_path(a), folded_stack_path(b)
     if not folded_a or not folded_b:
         return []
-    return delta(load_weights(folded_a), load_weights(folded_b), top=top)
+    return delta(load_weights(folded_a), load_weights(folded_b), top=20)
 
 
 def _attribution_totals(session: Path) -> dict[str, float]:

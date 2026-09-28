@@ -71,11 +71,6 @@ namespace DtdApmBridge
         // /tmp symlink, the capture host copy) observe torn symbol tables.
         static readonly object WriteLock = new object();
 
-        static void SweepStaleMapTemps()
-        {
-            TempFiles.SweepStale("perf-*.map.*.tmp", "jitmap temp");
-        }
-
         public static string Write(bool full = false)
         {
             var entries = new List<KeyValuePair<long, string>>();
@@ -129,7 +124,7 @@ namespace DtdApmBridge
                             File.Delete(old);
                 }
                 catch { /* stale-map sweep is best-effort */ }
-                SweepStaleMapTemps();
+                TempFiles.SweepStale("perf-*.map.*.tmp", "jitmap temp");
                 // Stage under a unique temp and Replace so a reader never sees a
                 // half-written map through the /tmp symlink (same pattern as the
                 // Telemetry latest.json swap).

@@ -66,7 +66,6 @@ def main() -> int:
     text = re.sub(r"#ifndef TARGET_PID\n#error[^\n]*\n#endif\n?", "", text)
     text = re.sub(r"#ifndef MONO_SO\n#error[^\n]*\n#endif\n?", "", text)
     text = re.sub(r"#ifndef TARGET_COMM\n#define TARGET_COMM[^\n]*\n#endif\n?", "", text)
-    text = re.sub(r"#define TARGET_COMM[^\n]*\n", "", text)
 
     # Numeric / string literals that bpftrace macro-expands if #define works;
     # still emit defines for expressions like /pid == TARGET_PID/

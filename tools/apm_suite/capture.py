@@ -133,7 +133,7 @@ def tool_version(binary: str) -> str:
 
 
 def count_samples(artifact: Path) -> int | None:
-    if not artifact.is_file() or artifact.suffix == ".data":
+    if not artifact.is_file():
         return None
     try:
         with artifact.open("rb") as stream:
@@ -1002,7 +1002,6 @@ __all__ = [
     "bridge_telemetry_file",
     "find_server_pid",
     "run_capture",
-    "unknown_only_tokens",
     "wanted",
     "write_plan_text",
 ]

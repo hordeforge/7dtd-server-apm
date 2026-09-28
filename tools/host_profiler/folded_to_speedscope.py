@@ -96,9 +96,9 @@ def to_speedscope(rows: list[tuple[list[str], int]], name: str = "CPU") -> dict[
     }
 
 
-def to_d3_tree(rows: list[tuple[list[str], int]], root_name: str = "all") -> dict[str, Any]:
+def to_d3_tree(rows: list[tuple[list[str], int]]) -> dict[str, Any]:
     """Hierarchical tree for d3-flame-graph / our interactive HTML."""
-    root: dict[str, Any] = {"name": root_name, "value": 0, "children": {}}
+    root: dict[str, Any] = {"name": "all", "value": 0, "children": {}}
 
     def ensure(node: dict[str, Any], name: str) -> dict[str, Any]:
         ch: dict[str, dict[str, Any]] = node["children"]

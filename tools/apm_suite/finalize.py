@@ -28,7 +28,6 @@ from .reporting import render_session
 
 @dataclass
 class FinalizeResult:
-    session: Path
     failed_stages: list[str] = field(default_factory=list)
     # Verdict of the manifest stage (None when that stage did not run or
     # raised). run_capture reads it from here instead of auditing the session
@@ -59,7 +58,7 @@ def _record_manifest(session: Path) -> bool:
 
 
 def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
-    result = FinalizeResult(session=session)
+    result = FinalizeResult()
 
     def stage(name: str, action: Callable[[], object], *, required: bool) -> None:
         print(f">> finalize: {name}")

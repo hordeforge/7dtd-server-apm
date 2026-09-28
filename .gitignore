@@ -4,8 +4,6 @@
 **/*.pyc
 **/*.user
 server/logs/
-server/logs/ebpf/
-server/logs/apm/
 *.log
 # Local Cecil dumps of game types (do not redistribute)
 research/il/
@@ -22,7 +20,6 @@ htmlcov/
 .idea/
 .vscode/
 .coverage.json
-*.lock
 
 # Local scratch (benchmarks, throwaway probes)
 .scratch/

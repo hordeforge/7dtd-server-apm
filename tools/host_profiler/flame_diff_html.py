@@ -37,7 +37,7 @@ def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
         # so it carries the same bad/good token the rest of the product uses.
         tone = "bad" if r["delta"] > 0 else "ok"
         tr.append(
-            f"<tr><td><code>{_esc(r['frame'][:90])}</code></td>"
+            f"<tr><td><code>{html.escape(r['frame'][:90], quote=True)}</code></td>"
             f'<td class="num">{r["a"]}</td><td class="num">{r["b"]}</td>'
             f'<td class="num delta-{tone}">{r["delta"]:+}</td>'
             f'<td><div aria-hidden="true" class="mag {tone}" style="width:{w:.1f}%"></div></td></tr>'
@@ -47,7 +47,7 @@ def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
 <style>{base_css(FLAME_CSS)}</style></head><body>
 <main>
 <h1>Speedscope / folded frame delta</h1>
-<p class="muted">A={_esc(str(a))}<br/>B={_esc(str(b))}<br/>
+<p class="muted">A={html.escape(str(a), quote=True)}<br/>B={html.escape(str(b), quote=True)}<br/>
 Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
 <p><a href="dashboard.html">Dashboard</a> · <a href="../index.html">All sessions</a></p>
 <div class="scroll"><table>
@@ -58,10 +58,6 @@ Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
 </main>
 </body></html>
 """
-
-
-def _esc(s: str) -> str:
-    return html.escape(s, quote=True)
 
 
 def main() -> int:

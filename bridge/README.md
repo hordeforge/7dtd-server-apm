@@ -95,7 +95,7 @@ is an unmeasured world, not an empty one.
 | `health` | export queue state, dropped exports, last export error |
 | `host` | `/proc` load, memory, uptime, RSS; `null` on a non-Linux or unreadable host |
 | `gc` | window-scoped collection counts, heap, gross allocation rate |
-| `world` | last sampled clients, entities, GC generations, memory, thread count |
+| `world` | last sampled clients, entities, alive entities, players, working-set bytes, thread count, frame delta |
 | `mapTransfers` | per-package `packages`, `bytes`, `lastBytes`, `maxBytes` |
 | `sections` | per-hook calls, avg/last/max/p50/p95/p99/total ms, `deep` flag |
 | `spikes` | newest `DashboardSpikeRecords` (12) spikes, newest last, each with its own `world` sample |

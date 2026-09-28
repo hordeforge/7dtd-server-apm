@@ -64,9 +64,8 @@ namespace DtdApmBridge
     public sealed class WorldSample
     {
         public string utc;
-        public int clients, entities, players, entityAlives, threadCount, unityFrame;
-        public long managedBytes, workingSetBytes;
-        public int gcGen0, gcGen1, gcGen2;
+        public int clients, entities, players, entityAlives, threadCount;
+        public long workingSetBytes;
         public double unityDeltaMs;
     }
 
@@ -284,11 +283,9 @@ namespace DtdApmBridge
                 if (world != null) { sample.entities = world.Entities?.list?.Count ?? 0; sample.players = world.Players?.list?.Count ?? 0; sample.entityAlives = world.EntityAlives?.Count ?? 0; }
             }
             catch (Exception ex) { _lastExportError = "world: " + ex.Message; }
-            sample.managedBytes = GC.GetTotalMemory(false); sample.gcGen0 = GC.CollectionCount(0);
-            sample.gcGen1 = GC.CollectionCount(1); sample.gcGen2 = GC.CollectionCount(2);
             using (Process process = Process.GetCurrentProcess())
             { sample.workingSetBytes = process.WorkingSet64; sample.threadCount = process.Threads.Count; }
-            sample.unityFrame = UnityEngine.Time.frameCount; sample.unityDeltaMs = UnityEngine.Time.unscaledDeltaTime * 1000.0;
+            sample.unityDeltaMs = UnityEngine.Time.unscaledDeltaTime * 1000.0;
             return sample;
         }
         /// <summary>Rows the dashboard panel's spike table shows. The API
@@ -430,17 +427,12 @@ namespace DtdApmBridge
         // unique *.tmp beside its target forever; swept on the periodic export
         // path (best effort) instead of accumulating across restarts on a
         // 24/7 host.
-        static void SweepStaleTempFiles()
-        {
-            TempFiles.SweepStale("apm_app_*.tmp", "temp");
-        }
-
         static void Write(string path)
         {
             // File.Replace so `latest` never has a does-not-exist window for external
             // consumers (scrapers/dashboards read it continuously in production).
             Directory.CreateDirectory(BridgeMod.OutputDir);
-            SweepStaleTempFiles();
+            TempFiles.SweepStale("apm_app_*.tmp", "temp");
             string temp = TempFiles.NewTempPath(path);
             try
             {

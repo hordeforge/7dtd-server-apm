@@ -253,13 +253,11 @@ function updateCrumb() {
   crumb.querySelector("[data-root]").onclick = (ev) => { ev.preventDefault(); zoomTo(ROOT, "the whole profile"); };
 }
 
-// Re-render around a node and tell assistive tech what happened. `what` is an
-// optional screen-reader announcement; the visual state is the same either way.
+// Re-render around a node and tell assistive tech what happened.
 function zoomTo(node, what, viaKeyboard) {
   focus = node;
   render();
   updateCrumb();
-  if (what === undefined) return;
   announce(`Zoomed to ${what}`);
   // render() replaced the DOM, dropping keyboard focus; put it back on the new
   // zoom root so keyboard users are not thrown back to the page top.

@@ -155,7 +155,6 @@ def attribute_subsystems(
     details: dict[str, list[dict[str, Any]]] = {key: [] for key in SUBSYSTEMS}
     drilldown_details: dict[str, list[dict[str, Any]]] = {key: [] for key in DRILLDOWN}
     long_running: list[str] = []
-    unmapped: list[str] = []
     for section in sections:
         name = str(section.get("name") or "")
         avg = float(section.get("avgMs") or 0)
@@ -184,9 +183,6 @@ def attribute_subsystems(
                     totals[subsystem] += scaled_ms
                     details[subsystem].append(entry)
                     break
-            else:
-                if scaled_ms > 0:
-                    unmapped.append(name)
     # Sections nest: frame_core (GameManager.UpdateTick) includes most other
     # buckets. Approximate its exclusive time by subtracting the buckets that
     # run inside the tick on the main thread (mesh + connection managers are
@@ -206,8 +202,7 @@ def attribute_subsystems(
     # not double-count the nested buckets (which are already counted on their own
     # line). Without this, every subsystem share is deflated and they do not sum
     # to ~100%.
-    if "frame_core" in totals:
-        totals["frame_core"] = frame_core_exclusive
+    totals["frame_core"] = frame_core_exclusive
 
     def scaled_calls(section_name: str) -> int:
         for bucket in (details, drilldown_details):
@@ -277,7 +272,6 @@ def attribute_subsystems(
             ],
         },
         "long_running_excluded": long_running,
-        "unmapped_sections": unmapped,
     }
 
 

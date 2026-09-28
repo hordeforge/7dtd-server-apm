@@ -183,7 +183,6 @@ RULES: list[dict[str, Any]] = [
         "prof_sections": [
             "ConnectionManager.Update",
             "ConnectionManager.LateUpdate",
-            "NetConnectionSimple.taskSerialize",
             "NetConnectionSimple.FlushSendQueue",
             "NetEntityDistributionEntry.updatePlayerList",
         ],
@@ -380,57 +379,9 @@ SECTION_TO_CSHARP: dict[str, dict[str, Any]] = {
         "types": ["World"],
         "methods": ["TickEntities", "TickEntity", "TickEntitiesSlice"],
     },
-    "EntityActivity": {
-        "types": ["World"],
-        "methods": ["EntityActivityUpdate"],
-    },
     "TickSleeperVolumes": {
         "types": ["World", "SleeperVolume"],
         "methods": ["TickSleeperVolumes", "Tick"],
-    },
-    "AiDirectorTick": {
-        "types": ["AIDirector"],
-        "methods": ["Tick", "ComponentsTick"],
-    },
-    "ConnectionUpdate": {
-        "types": ["ConnectionManager"],
-        "methods": ["Update", "ProcessPackages"],
-    },
-    "ConnectionLateUpdate": {
-        "types": ["ConnectionManager"],
-        "methods": ["LateUpdate"],
-    },
-    "DynamicMeshUpdate": {
-        "types": ["DynamicMeshManager"],
-        "methods": ["Update"],
-    },
-    "DynamicMeshServer": {
-        "types": ["DynamicMeshServer"],
-        "methods": ["Update"],
-    },
-    "SpawnBiomeUpdate": {
-        "types": ["SpawnManagerBiomes"],
-        "methods": ["SpawnUpdate", "Update"],
-    },
-    "DecoUpdate": {
-        "types": ["DecoManager"],
-        "methods": ["UpdateTick"],
-    },
-    "WorldBlockTicker": {
-        "types": ["WorldBlockTicker"],
-        "methods": ["Tick"],
-    },
-    "EntityUpdateTasks": {
-        "types": ["EntityAlive"],
-        "methods": ["updateTasks", "OnUpdateLive"],
-    },
-    "EaiManagerUpdate": {
-        "types": ["EAIManager", "EAIBase"],
-        "methods": ["Update", "OnUpdateTasks"],
-    },
-    "PathNavigateUpdate": {
-        "types": ["GamePath.PathNavigate", "GamePath.PathFinderThread"],
-        "methods": ["UpdateNavigation", "FindPath"],
     },
     "EntityMoveHelper.UpdateMoveHelper": {
         "types": ["EntityMoveHelper"],
