@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import as_mapping, as_number, layer_signals
+from ..models import as_mapping, as_number, layer_signals, object_list
 from ..paths import apm_root
 from ..web_tokens import base_css
 
@@ -55,11 +55,10 @@ def scan(root: Path) -> list[dict[str, Any]]:
             # Health lives in its own file, but an imported or hand-written
             # summary.json may inline it instead.
             health = as_mapping(summary.get("health"))
-        entries = summary.get("layers")
         layers = {
-            layer["layer"]: layer.get("score")
-            for layer in (entries if isinstance(entries, list) else [])
-            if isinstance(layer, dict) and layer.get("layer")
+            str(layer["layer"]): layer.get("score")
+            for layer in object_list(summary.get("layers"))
+            if layer.get("layer")
         }
         meta = as_mapping(summary.get("meta"))
         metadata = as_mapping(summary.get("metadata"))

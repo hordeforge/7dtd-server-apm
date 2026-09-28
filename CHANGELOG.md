@@ -41,6 +41,29 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+- Events: past the 2000-event retention bound the timeline keeps the most
+  severe events, newest first within a severity, instead of the first ones
+  parsed. A busy window emits more than the bound and the first events are
+  routine samples from the opening seconds, so a long capture's ending stall
+  used to be dropped behind thousands of quiet records. The survivors are
+  still laid out chronologically, and `by_kind` still counts every event.
+- Sessions: a record block that is not a list, or a list holding non-objects,
+  now reads as absent evidence across every unvalidated reader
+  (`prometheus`, `compare`, `scaling`, `index`, the bridge section parser, the
+  event timeline, and the thread summary) instead of raising `AttributeError`
+  mid-analysis. One shared `object_list` coercion joins the `as_number` and
+  `as_mapping` family in `models.py`; no schema field changed, so the emitted
+  documents and the gates read the same values as before.
+- Scaling: the `scaling` document now records that its `total_exponent` column
+  is only a fit on bridge-reset windows, the caveat `compare` already carried
+  for subsystem attribution. `totalMs` is cumulative since the last `apm reset`.
+- Events: `EventV2` declares the `t`, `value`, and `line` fields the readers
+  already consumed as untyped extras, so the type checker sees them. The
+  timeline now writes them as explicit nulls when an event has none, and
+  `EventSink` normalizes them through the shared numeric coercion, so an
+  out-of-range stamp from a collector drops the field instead of failing
+  validation and taking the events stage down with it.
+
 - Tooling: a `.pre-commit-config.yaml` runs ruff, `ruff format --check`, mypy,
   and shellcheck at commit time, and the WebMod, HTML, and pytest gates at
   push time. Every hook calls the same `make` target CI runs, so the local and

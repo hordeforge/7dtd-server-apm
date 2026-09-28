@@ -2,7 +2,8 @@
 
 Parses SLOW_* lines, managed bridge spikes, thread wchan snapshots, and proc
 samples into events.json/events.jsonl. Raw event materialization is bounded
-per source; aggregate counts always cover every parsed event.
+per source, and the final retention bound keeps the most severe events rather
+than the first; aggregate counts always cover every parsed event.
 """
 
 from __future__ import annotations
@@ -15,10 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, iter_jsonl
-from ..models import EventsV2, as_number, schema_dict
+from ..models import EventsV2, as_number, object_list, schema_dict
 
 RETAINED_MAX = 2000
 PER_SOURCE_MAX = 500
+# Retention ranks by severity, most severe first. An unrecognized severity
+# sorts last so a format change cannot promote junk over real evidence.
+_SEVERITY_RANK = {"error": 0, "warn": 1, "info": 2}
 
 # Non-reset count() aggregators printed once per interval as growing cumulative
 # lines ("@wait_n: 40"); the LAST occurrence is the true total.
@@ -52,6 +56,14 @@ class EventSink:
         if seen >= PER_SOURCE_MAX:
             return
         self._per_source[source] = seen + 1
+        # Every source funnels through here, so the declared numeric fields are
+        # normalized once instead of at each parser: `t` and `value` are copied
+        # straight out of unvalidated collector JSONL, and a digit run past the
+        # double range (JSON 1e999) would otherwise fail EventV2 validation
+        # and take the whole required events stage with it. An unusable stamp or
+        # magnitude reads as absent, exactly like any other collector field.
+        event["t"] = as_number(event.get("t"))
+        event["value"] = as_number(event.get("value"))
         self.events.append(event)
 
 
@@ -221,9 +233,7 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
     if not isinstance(snapshot, dict):
         return
     spikes = snapshot.get("spikes")
-    for spike in spikes if isinstance(spikes, list) else []:
-        if not isinstance(spike, dict):
-            continue
+    for spike in object_list(spikes):
         # spikes[] sits outside BridgeSnapshotV3 validation (extra="allow"), so
         # a format-changed or hand-edited record must coerce like every other
         # collector field instead of raising float(TypeError) mid-timeline.
@@ -275,7 +285,24 @@ def build_timeline(session: Path) -> EventsV2:
         else:
             timed.append((stamp, event))
     timed.sort(key=lambda item: item[0])
-    retained = ([e for _, e in timed] + untimed)[:RETAINED_MAX]
+    ordered = [event for _, event in timed] + untimed
+    if len(ordered) > RETAINED_MAX:
+        # The bound must pick which events survive, not which came first. A
+        # busy window emits more than RETAINED_MAX, and the first ones parsed
+        # are routine samples from the opening seconds, so a hard prefix kept a
+        # long capture's ending stall and dropped thousands of quiet records.
+        # Severity decides first, recency breaks the tie: an operator reading a
+        # bounded timeline wants the errors, latest first. The survivors are
+        # then laid back out chronologically, which is the order the timeline
+        # contract and the HTML view both read.
+        keep = sorted(
+            range(len(ordered)),
+            key=lambda i: (_SEVERITY_RANK.get(str(ordered[i].get("severity")), 3), -i),
+        )[:RETAINED_MAX]
+        surviving = set(keep)
+        retained = [event for i, event in enumerate(ordered) if i in surviving]
+    else:
+        retained = ordered
 
     return EventsV2.model_validate(
         {

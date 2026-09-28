@@ -21,15 +21,29 @@ from pydantic import ValidationError
 from typer.testing import CliRunner
 
 from apm_suite import capture, paths
-from apm_suite.analysis.bridge import match_rules, parse_section_line
+from apm_suite.analysis.bridge import (
+    layer_state,
+    match_rules,
+    parse_section_line,
+    ranked_section_heats,
+)
 from apm_suite.analysis.events import PER_SOURCE_MAX, build_timeline
 from apm_suite.analysis.health import build_health
 from apm_suite.analysis.report import parse_perf_stat, top_alloc_sites
+from apm_suite.analysis.scaling import analyze_scaling
 from apm_suite.capture import CaptureContext, CollectorSpec
 from apm_suite.cli import app, console
 from apm_suite.finalize import finalize
 from apm_suite.io import atomic_json, force_utf8_stdio, load_json, load_jsonc, write_stdout
-from apm_suite.models import Artifact, EventsV2, LayerScore, ManifestV2, Target, schema_dict
+from apm_suite.models import (
+    Artifact,
+    EventsV2,
+    LayerScore,
+    ManifestV2,
+    Target,
+    object_list,
+    schema_dict,
+)
 from apm_suite.paths import REPO
 from apm_suite.reporting import render_session
 from apm_suite.runner import terminate_tree
@@ -1295,6 +1309,64 @@ def test_prometheus_drops_malformed_metric_fields_instead_of_crashing(
     assert "Infinity" not in text and "inf" not in text.replace("inflate", "")
 
 
+def test_object_list_keeps_only_object_records() -> None:
+    assert object_list([{"a": 1}, "text", 5, None, ["nested"]]) == [{"a": 1}]
+    # A scalar or object where a record list belongs reads as absent evidence.
+    assert object_list({"a": 1}) == []
+    assert object_list("layers") == []
+    assert object_list(None) == []
+
+
+def test_prometheus_tolerates_non_list_record_blocks(tmp_path: Path) -> None:
+    """A record block that is not a list (or holds non-objects) reads as absent
+    evidence; it must not raise out of the exporter."""
+    session = _session(tmp_path / "session_shape")
+    summary = load_json(session / "summary.json")
+    summary["layers"] = {"cpu": 10}
+    summary["metadata"] = {"lag_diagnosis": {"laggy": False, "causes": "gc_pauses"}}
+    atomic_json(session / "summary.json", summary)
+    atomic_json(
+        session / "csharp_bridge.json",
+        {"attribution": {"subsystems": {"World.TickEntities": {"scaled_total_ms": 9}}}},
+    )
+    out = tmp_path / "metrics.txt"
+    result = runner.invoke(app, ["prometheus", str(session), "--output", str(out)])
+    assert result.exit_code == 0, result.output
+    text = out.read_text()
+    assert "layer_pressure{" not in text
+    assert "subsystem_ms{" not in text
+    assert "lag_cause_severity" not in text
+
+
+def test_readers_tolerate_non_object_records_in_bridge_output(tmp_path: Path) -> None:
+    """The same untrusted-shape contract on the other record readers: a
+    csharp_bridge.json whose section list is a dict, or holds bare strings,
+    reads as no sections instead of raising AttributeError mid-analysis."""
+    session = _session(tmp_path / "session_bridge_shape")
+    atomic_json(
+        session / "csharp_bridge.json",
+        {"top_managed_sections": ["World.TickEntities", {"name": "AI", "avgMs": 2}]},
+    )
+    assert ranked_section_heats(session) == {"AI": 2.0}
+    atomic_json(session / "csharp_bridge.json", {"top_managed_sections": {"AI": {}}})
+    assert ranked_section_heats(session) == {}
+    assert analyze_scaling([session])["sections"] == []
+
+
+def test_scaling_and_compare_tolerate_malformed_record_blocks(tmp_path: Path) -> None:
+    """Same contract on the summary/bridge record lists the ladder fit and the
+    before/after delta walk read."""
+    session = _session(tmp_path / "session_ladder_shape")
+    summary = load_json(session / "summary.json")
+    summary["metadata"] = {"world": {"entities": 4, "players": 2}}
+    summary["layers"] = ["cpu"]
+    atomic_json(session / "summary.json", summary)
+    result = analyze_scaling([session])
+    assert result["scales"] == [2.0]
+    assert result["sections"] == []
+    assert layer_state(summary) == (set(), {})
+
+
 def test_budget_fails_closed_on_unparseable_summary_numbers(tmp_path: Path) -> None:
     """Unparseable gate inputs are UNKNOWN (gate fails); they must neither pass
     silently nor raise a conversion traceback."""
@@ -1962,6 +2034,58 @@ def test_events_bound_materialization_but_count_everything(tmp_path: Path) -> No
     assert len(doc.events) == PER_SOURCE_MAX
     assert doc.by_kind["futex"] == 600
     assert doc.dropped == 600 - PER_SOURCE_MAX
+
+
+def test_events_bound_keeps_the_worst_events_not_the_first(tmp_path: Path) -> None:
+    """Past the retention bound the timeline keeps errors over warnings over
+    info (recency breaking the tie), not whichever events parsed first: a long
+    busy window must not drop its ending stall behind thousands of quiet
+    opening samples."""
+    session = tmp_path / "session_bound"
+    (session / "sync").mkdir(parents=True)
+    # PER_SOURCE_MAX is 500 per source, so several sources are needed to pass
+    # RETAINED_MAX: 2400 futex warnings plus one error from the last source.
+    (session / "sync/futex.bt.out").write_text(
+        "\n".join(f"SLOW_FUTEX tid=1 wait={i}ms" for i in range(PER_SOURCE_MAX))
+    )
+    (session / "io").mkdir(parents=True)
+    (session / "io/vfs.bt.out").write_text(
+        "\n".join(f"SLOW_VFS_MAIN tid=1 wait={i}ms" for i in range(PER_SOURCE_MAX))
+    )
+    (session / "io/block.bt.out").write_text(
+        "\n".join(f"SLOW_BLOCK tid=1 wait={i}ms" for i in range(PER_SOURCE_MAX))
+    )
+    (session / "runtime").mkdir(parents=True)
+    (session / "runtime/mono_gc.bt.out").write_text(
+        "\n".join(f"SLOW mono_gc_collect tid=1 wait={i}ms" for i in range(PER_SOURCE_MAX))
+    )
+    # The bridge spike is the only error, and it lands last in parse order.
+    (session / "app").mkdir(parents=True)
+    atomic_json(
+        session / "app/apm_app.json",
+        {
+            "spikes": [
+                {"utc": f"2026-01-01T00:00:{i:02d}Z", "gmUpdateDurationMs": 900 + i}
+                for i in range(PER_SOURCE_MAX)
+            ]
+        },
+    )
+    doc = build_timeline(session)
+    assert doc.count > 2000
+    assert len(doc.events) == 2000
+    assert doc.dropped == doc.count - 2000
+    assert [e.severity for e in doc.events].count("info") == 0
+    # Every surviving error is a frame spike; the whole error tier survives,
+    # so none of the recorded spike durations is lost to the bound.
+    errors = [e for e in doc.events if e.severity == "error"]
+    assert len(errors) == PER_SOURCE_MAX
+    assert all(e.kind == "frame_spike" for e in errors)
+    assert sorted(e.value for e in errors if e.value is not None) == [
+        900 + i for i in range(PER_SOURCE_MAX)
+    ]
+    # The materialized set is still laid out chronologically.
+    stamps = [e.t for e in doc.events if e.t is not None]
+    assert stamps == sorted(stamps)
 
 
 def test_stackcollapse_keeps_module_for_unknown_frames() -> None:

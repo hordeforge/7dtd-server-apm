@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .io import atomic_text, load_json
-from .models import as_number, layer_signals
+from .models import as_number, layer_signals, object_list
 
 
 class MetricError(Exception):
@@ -45,10 +45,11 @@ def export_metrics(session: Path, output: Path) -> None:
         "# HELP sevendtd_apm_layer_pressure Layer pressure from a collected APM layer.",
         "# TYPE sevendtd_apm_layer_pressure gauge",
     ]
-    for layer in summary.get("layers") or []:
+    for layer in object_list(summary.get("layers")):
         # summary.json is re-read without schema guarantees (hand-edited or
-        # imported), so every numeric field goes through a safe coercion: a
-        # crafted value must degrade to "no line", never raise mid-export.
+        # imported), so both the record list and every numeric field go through
+        # a safe coercion: a crafted shape or value must degrade to "no line",
+        # never raise mid-export.
         score = as_number(layer.get("score"))
         if layer.get("state") == "collected" and score is not None:
             name = _prom_label(layer.get("layer", "unknown"))
@@ -75,7 +76,7 @@ def export_metrics(session: Path, output: Path) -> None:
             attribution = load_json(bridge_path).get("attribution") or {}
         except ValueError as error:
             raise MetricError(f"unreadable {bridge_path}: {error}") from None
-    subsystems = attribution.get("subsystems") or []
+    subsystems = object_list(attribution.get("subsystems"))
     if subsystems:
         lines += [
             "# HELP sevendtd_apm_subsystem_ms Window-scoped managed time per subsystem.",
@@ -95,7 +96,7 @@ def export_metrics(session: Path, output: Path) -> None:
             "# TYPE sevendtd_apm_laggy gauge",
             f"sevendtd_apm_laggy {1 if lag.get('laggy') else 0}",
         ]
-        causes = lag.get("causes") or []
+        causes = object_list(lag.get("causes"))
         if causes:
             lines += [
                 "# HELP sevendtd_apm_lag_cause_severity Per-cause lag severity (0-1).",

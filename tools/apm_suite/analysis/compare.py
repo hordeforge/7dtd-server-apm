@@ -19,6 +19,7 @@ from ..models import (
     effective_seconds,
     first_present,
     layer_signals,
+    object_list,
 )
 from .bridge import ranked_section_heats
 from .flame_delta import delta, folded_stack_path, load_weights
@@ -44,9 +45,7 @@ def load_sections(session: Path) -> dict[str, float]:
             except (ValueError, OSError):
                 continue
             sections = obj.get("sections")
-            for section in sections if isinstance(sections, list) else []:
-                if not isinstance(section, dict):
-                    continue
+            for section in object_list(sections):
                 name = section.get("name")
                 if not name:
                     continue
@@ -72,9 +71,7 @@ def _attribution_totals(session: Path) -> dict[str, float]:
         return {}
     attribution = as_mapping(load_json(bridge).get("attribution"))
     totals: dict[str, float] = {}
-    for entry in attribution.get("subsystems") or []:
-        if not isinstance(entry, dict):
-            continue
+    for entry in object_list(attribution.get("subsystems")):
         name = entry.get("subsystem")
         total = as_number(entry.get("scaled_total_ms"))
         if name and total is not None:

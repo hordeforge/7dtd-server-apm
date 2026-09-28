@@ -22,6 +22,7 @@ from ..models import (
     as_number,
     effective_seconds,
     layer_requested,
+    object_list,
     schema_dict,
 )
 from .bridge import attribute_document, attribute_snapshot
@@ -506,7 +507,7 @@ def thread_summary(session: Path) -> dict[str, Any]:
                 "wchan": t.get("wchan"),
                 "state": t.get("state"),
             }
-            for t in (last.get("top") or [])[:8]
+            for t in object_list(last.get("top"))[:8]
         ],
     }
 

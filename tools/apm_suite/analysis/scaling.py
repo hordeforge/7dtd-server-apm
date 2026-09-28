@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import load_json
-from ..models import as_number
+from ..models import as_number, object_list
 
 # exponent (slope of log(cost) vs log(load)) thresholds
 LINEAR_LOW = 0.8
@@ -66,7 +66,7 @@ def _sections(session: Path) -> dict[str, dict[str, float]]:
         # uses whatever sessions remain readable.
         return {}
     out: dict[str, dict[str, float]] = {}
-    for s in doc.get("top_managed_sections") or []:
+    for s in object_list(doc.get("top_managed_sections")):
         name = s.get("name")
         avg = as_number(s.get("avgMs"))
         total = as_number(s.get("totalMs"))
@@ -129,6 +129,12 @@ def analyze_scaling(sessions: list[Path], scale_key: str = "players") -> dict[st
         "schema": "7dtd.apm.scaling.v1",
         "scale_key": scale_key,
         "scales": scales,
+        # totalMs is the bridge's cumulative section total, which spans server
+        # uptime unless the window opened with an `apm reset` (scenario run
+        # does; a bare capture does not). The total_exponent column is
+        # therefore only a scaling fit on reset windows; the caveat travels
+        # with the data so a consumer cannot read it as measured otherwise.
+        "total_ms_window_scoped": "only when every session was captured with bridge stats reset",
         "sections": findings,
         "super_linear": super_linear,
     }

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, iter_jsonl, load_json
-from ..models import as_mapping, as_number, first_number, first_present
+from ..models import as_mapping, as_number, first_number, first_present, object_list
 from .catalog import RULES, SECTION_TO_CSHARP
 from .flame_delta import load_weights
 
@@ -345,7 +345,7 @@ def ranked_section_heats(session: Path) -> dict[str, float | None]:
         return {}
     data = load_json(path)
     heats: dict[str, float | None] = {}
-    for section in data.get("top_managed_sections") or []:
+    for section in object_list(data.get("top_managed_sections")):
         name = str(section.get("name") or "")
         if not name:
             continue
@@ -427,8 +427,8 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
         # not raise AttributeError past the JSONDecodeError suppression.
         if not isinstance(obj, dict):
             return
-        for section in obj.get("sections") or []:
-            if not isinstance(section, dict) or not section.get("name"):
+        for section in object_list(obj.get("sections")):
+            if not section.get("name"):
                 continue
             key = json.dumps(section, sort_keys=True)
             if key not in seen:
@@ -531,7 +531,7 @@ def section_rank(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def layer_state(summary: dict[str, Any]) -> tuple[set[str], dict[str, dict[str, Any]]]:
     collected: set[str] = set()
     signals: dict[str, dict[str, Any]] = {}
-    for layer in summary.get("layers") or []:
+    for layer in object_list(summary.get("layers")):
         name = str(layer.get("layer"))
         if layer.get("state") == "collected":
             collected.add(name)
@@ -768,7 +768,7 @@ def stall_correlation(session: Path) -> list[dict[str, Any]]:
     if not events_path.is_file():
         return []
     try:
-        events = load_json(events_path).get("events") or []
+        events = object_list(load_json(events_path).get("events"))
     except (ValueError, OSError):
         return []
     timed = [e for e in events if isinstance(e.get("t"), (int, float))]

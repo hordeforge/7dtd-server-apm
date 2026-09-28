@@ -37,6 +37,22 @@ def as_mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, dict) else {}
 
 
+def object_list(value: Any) -> list[dict[str, Any]]:
+    """Coerce an unvalidated JSON value to a list of objects, dropping the rest.
+
+    The list-shaped sibling of as_mapping: session documents and bridge outputs
+    are re-read without schema guarantees (hand-edited, older writers, imported
+    bundles), so a scalar or object where a list of records belongs
+    ("layers": {...}, a list holding a bare string) must read as absent records
+    instead of iterating a dict's keys or raising AttributeError on the first
+    non-object element. Same posture as as_number/as_mapping: unreadable shape
+    is missing evidence, never a crash of the reader.
+    """
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
 def first_number(*values: Any) -> float | None:
     """First value coercible to a finite number, else None.
 
@@ -162,13 +178,24 @@ class MetaV2(StrictModel):
 
 
 class EventV2(BaseModel):
+    # extra="allow": an imported bundle may carry collector keys this writer
+    # does not know, and an unknown key must not fail an audit. The fields the
+    # readers below actually consume are declared, not left to the extras, so
+    # the type checker sees them; defaults keep every document that validated
+    # before still validating.
     model_config = ConfigDict(extra="allow")
     kind: str
     severity: Literal["info", "warn", "error"]
     message: str
-    # Declared, not an `extra`: EventSink bounds retention per source
-    # (PER_SOURCE_MAX), so readers and the type checker both need the field.
+    # EventSink bounds retention per source (PER_SOURCE_MAX), so readers and
+    # the type checker both need the field.
     source: str = ""
+    # Wall-clock epoch seconds, None for a collector event the probe printed
+    # without one (the bpftrace SLOW_* lines). The timeline sorts on it and the
+    # bridge stall correlation windows on it.
+    t: float | None = None
+    # The measured magnitude: spike duration ms, waiters, cpu%, RSS delta.
+    value: float | None = None
 
 
 class EventsV2(StrictModel):
@@ -309,10 +336,7 @@ def collected_layer_scores(summary: Mapping[str, Any]) -> dict[str, float]:
     so shape is checked here rather than assumed.
     """
     out: dict[str, float] = {}
-    entries = summary.get("layers")
-    for layer in entries if isinstance(entries, list) else []:
-        if not isinstance(layer, dict):
-            continue
+    for layer in object_list(summary.get("layers")):
         name = layer.get("layer")
         pressure = as_number(layer.get("score"))
         if name and layer.get("state", "collected") == "collected" and pressure is not None:
@@ -329,9 +353,8 @@ def layer_signals(summary: Mapping[str, Any], layer_name: str) -> dict[str, Any]
     older writers), so the lookup tolerates any shape instead of assuming
     layers[] entries are objects.
     """
-    entries = summary.get("layers")
-    for layer in entries if isinstance(entries, list) else []:
-        if isinstance(layer, dict) and layer.get("layer") == layer_name:
+    for layer in object_list(summary.get("layers")):
+        if layer.get("layer") == layer_name:
             signals = layer.get("signals")
             return signals if isinstance(signals, dict) else {}
     return {}
