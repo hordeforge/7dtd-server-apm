@@ -62,8 +62,19 @@ if [ ! -d "$cache_dir/anti-slop-src" ]; then
     echo "7dtd-server-apm: lint-webui: anti-slop tarball for $anti_slop_sha does not match ANTI_SLOP_SHA256 (GitHub re-gzip or tampering); inspect upstream and update ANTI_SLOP_SHA + ANTI_SLOP_SHA256 together to accept" >&2
     exit 1
   fi
-  mkdir -p "$cache_dir/anti-slop-src"
-  tar xzf "$cache_dir/anti-slop.tar.gz" -C "$cache_dir/anti-slop-src" --strip-components=2 "anti-slop-$anti_slop_sha/src"
+  # Extract into a staging dir and rename it into place: `set -e` aborts a
+  # half-extracted source tree inside anti-slop-src, and the guard above would
+  # then treat that debris as a populated cache on every later run, so a retry
+  # could never converge and oxlint would fail on a missing plugin file.
+  staging="$cache_dir/anti-slop-src.$$"
+  rm -rf "$staging"
+  mkdir -p "$staging"
+  if ! tar xzf "$cache_dir/anti-slop.tar.gz" -C "$staging" --strip-components=2 "anti-slop-$anti_slop_sha/src"; then
+    rm -rf "$staging"
+    echo "7dtd-server-apm: lint-webui: could not extract anti-slop $anti_slop_sha; cache left clean for the next run" >&2
+    exit 1
+  fi
+  mv "$staging" "$cache_dir/anti-slop-src"
 fi
 # type module: the vendored anti-slop plugin source is ESM; without the field
 # node reparses it with a MODULE_TYPELESS_PACKAGE_JSON warning.

@@ -62,6 +62,40 @@ def test_release_zip_ships_example_config_not_live_config() -> None:
     )
 
 
+def test_bridge_uninstall_keeps_every_config_it_ever_saved() -> None:
+    # Rerun property: install -> uninstall -> install -> uninstall must not
+    # destroy the tuned config the first uninstall preserved. The reinstall
+    # seeds a fresh factory apmbridge.json, so a second uninstall that moves
+    # it onto the saved name with -f overwrites the operator's settings with
+    # defaults that no archive in this repo carries.
+    makefile = (REPO / "Makefile").read_text(encoding="utf-8")
+    uninstall = makefile.split("bridge-uninstall:", 1)[1].split("\npackage:", 1)[0]
+    assert "mv -f" not in uninstall, (
+        "bridge-uninstall must not overwrite a config an earlier uninstall saved"
+    )
+    assert "7dtd-server-apm-bridge-config.json" in uninstall
+    assert '[ -e "$$dest" ]' in uninstall, (
+        "the saved-config target must be probed for a free name, not overwritten"
+    )
+
+
+def test_lint_webui_extraction_leaves_no_half_populated_cache() -> None:
+    # Same rerun property for the vendored plugin cache: the fetch is guarded
+    # by `[ ! -d anti-slop-src ]`, so an extraction that dies midway (disk
+    # full, interrupted tar) would leave a directory every later run accepts as
+    # a populated cache and never retries. The rename-into-place keeps a failed
+    # run leaving no such directory behind.
+    script = (REPO / "scripts" / "lint-webui.sh").read_text(encoding="utf-8")
+    bootstrap = script.split('if [ ! -d "$cache_dir/anti-slop-src" ]; then', 1)[1]
+    extract = bootstrap.split("tar xzf", 1)[1].split("\nfi", 1)[0]
+    assert 'mv "$staging" "$cache_dir/anti-slop-src"' in extract, (
+        "anti-slop-src must be created by renaming a completed extraction"
+    )
+    assert 'mkdir -p "$cache_dir/anti-slop-src"\n' not in bootstrap, (
+        "anti-slop-src must not be created in place before the extract succeeds"
+    )
+
+
 def test_every_bridge_rest_endpoint_declares_admin_only_permissions() -> None:
     # Deny side of the web authorization matrix: the game dashboard gates each
     # REST endpoint through AdminWebModules before any handler runs, using the

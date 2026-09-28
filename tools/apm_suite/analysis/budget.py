@@ -92,6 +92,9 @@ def check(
 
     max_sum = budget.get("max_sum_layer_score")
     if max_sum is not None:
+        # gate() coerces the limit through as_number, so a crafted budget
+        # (non-numeric string, list) reports UNKNOWN and fails closed instead of
+        # raising float() out of the gate.
         gate("sum_layers", sum(layers.values()), max_sum)
 
     for name, limit in as_mapping(budget.get("max_section_heat")).items():

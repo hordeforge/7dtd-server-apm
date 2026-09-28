@@ -70,11 +70,16 @@ bridge-uninstall:
 	@# The tuned config is the one file in the mod folder the operator cannot
 	@# regenerate: the release zip ships apmbridge.json.example, not a live
 	@# config. Move it beside the mod dir and print where it went instead of
-	@# letting rm -rf take the settings with the code.
+	@# letting rm -rf take the settings with the code. A reinstall seeds a
+	@# fresh factory config, so a second uninstall must not overwrite the
+	@# config the first one saved: take the next free name instead.
 	@cfg="$(DS)/Mods/7dtd-server-apm-bridge/Config/apmbridge.json"; \
+	saved="$(DS)/Mods/7dtd-server-apm-bridge-config.json"; \
 	if [ -f "$$cfg" ]; then \
-	  mv -f "$$cfg" "$(DS)/Mods/7dtd-server-apm-bridge-config.json"; \
-	  echo "config kept -> $(DS)/Mods/7dtd-server-apm-bridge-config.json"; \
+	  dest="$$saved"; n=1; \
+	  while [ -e "$$dest" ]; do dest="$$saved.$$n"; n=$$((n + 1)); done; \
+	  mv "$$cfg" "$$dest"; \
+	  echo "config kept -> $$dest"; \
 	fi
 	rm -rf "$(DS)/Mods/7dtd-server-apm-bridge"
 	@echo "Uninstalled. Reinstall, then move the saved config back to Mods/7dtd-server-apm-bridge/Config/apmbridge.json to keep your settings."

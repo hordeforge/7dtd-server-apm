@@ -53,7 +53,13 @@ to 2.3.0 and 2.2.4 stays skipped.
 - Packaging: `make bridge-uninstall` moves the tuned
   `Config/apmbridge.json` to `Mods/7dtd-server-apm-bridge-config.json` before
   removing the mod folder, instead of deleting settings that the release zip
-  only ships as a `.example`.
+  only ships as a `.example`. A second uninstall no longer overwrites that
+  saved file: the reinstall seeds a factory config, so the moved copy takes the
+  next free `.1`, `.2`, name.
+- Tooling: the lint-webui vendored plugin cache is extracted into a staging
+  directory and renamed into place, so an interrupted extraction no longer
+  leaves a half-populated `anti-slop-src` that every later run accepts as a
+  populated cache and never retries.
 - Validity: a window whose app scrape only holds failed telnet records is
   `app_sim unavailable` instead of a collected layer with no evidence. The
   collector result, the summary state, and `audit` all name the cause.
