@@ -74,7 +74,7 @@ is an unmeasured world, not an empty one.
 | `world` | last sampled clients, entities, GC generations, memory, thread count |
 | `mapTransfers` | per-package `packages`, `bytes`, `lastBytes`, `maxBytes` |
 | `sections` | per-hook calls, avg/last/max/p50/p95/p99/total ms, `deep` flag |
-| `spikes` | ring of recent spikes, newest last, each with its own `world` sample |
+| `spikes` | newest `DashboardSpikeRecords` (12) spikes, newest last, each with its own `world` sample |
 
 A field that failed to read is never faked: `health.lastExportError` names the
 read that failed (and `gc.grossAllocBytesPerSecond` is `-1` when no gross
@@ -82,6 +82,14 @@ allocation counter exists on the runtime), so a client sees which numbers are
 unmeasured instead of a plausible zero. Add fields inside the existing objects;
 the schema version changes only for a removed or retyped field, since consumers
 parse the document with a strict section model (`ManagedSectionV3`).
+
+`spikes` is a tail, not the whole ring: the API serves the newest 12 records
+(`Telemetry.DashboardSpikeRecords`) so a long spike streak cannot push 128
+world samples down the wire on every 2 s poll. A client must not read a
+12-element array as "that was every spike"; the periodic JSON export file
+carries the full ring and is the surface to read for audit and compare.
+Trimming the tail is not a removed or retyped field, so it does not move
+`schema`.
 
 Map delivery telemetry separates `ChunkManager.SendChunksToClients`, chunk and
 map serialization, initial world-folder transfer, connection serialization, and

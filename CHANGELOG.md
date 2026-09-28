@@ -13,6 +13,23 @@ disagrees with `ModInfo.xml`. Only the bridge is tagged, so a CLI-only release
 ships without one. Breaking telemetry-schema or config changes to the bridge
 are expected to bump its major version.
 
+The **host CLI** has no tag and no external SemVer policy was ever written
+down, so the rules below are inferred from the released sections here, not
+adopted from a published policy. Its public contract is the `7dtd-server-apm`
+command surface and the on-disk session, manifest, and budget schemas
+(`7dtd.apm.budget.v2`):
+
+- **patch**: a fix that leaves every command, flag default, and schema field
+  readable exactly as before.
+- **minor**: a new command, flag, or output field.
+- **major**: a removed or renamed command or flag, a changed flag default, or
+  a session/budget/manifest field that a current reader cannot parse.
+
+A reader that has to special-case a new field to keep working is a major, not
+a minor. Bump `pyproject.toml` and `tools/apm_suite/__init__.py` together and
+add the released section here; `scripts/check_version.py` fails the build
+when either the two files or this changelog disagree with the shipped version.
+
 `v2.2.4` is tagged at a commit whose `ModInfo.xml` still read 2.2.3; it
 predates the tag gate and no 2.2.4 mod was ever built. The bridge goes 2.2.3
 to 2.3.0 and 2.2.4 stays skipped.
@@ -70,26 +87,6 @@ to 2.3.0 and 2.2.4 stays skipped.
   production dependency inventory (name, version, artifact hashes, CycloneDX
   graph) a scanner or downstream consumer can read. The inventory stays out of
   the archive: it unzips into `<server>/Mods/`.
-
-## Unreleased - bridge mod
-
-- API contract: `bridge/README.md` now documents the `GET /api/apm` response
-  itself (status codes, the `SNAPSHOT_FAILED` error envelope, every top-level
-  key, and which fields are nullable), not just the authorization matrix.
-- API contract: `world.utc` no longer carries the string `"unavailable"`
-  before the first world sample; it is `null`, like every other unmeasured
-  value in the payload. No documented consumer read the old literal, and a
-  client parsing `utc` fields as timestamps no longer has to special-case a
-  date slot holding a placeholder. Every `utc` field in the snapshot is an
-  ISO-8601 instant or absent.
-- Correctness: an unrecognized `apm` console verb now answers with the
-  verb list instead of silently returning the `status` summary, so a typo no
-  longer looks like a successful call. `apm benchmark <non-number>` reports
-  the bad argument instead of quietly benchmarking the default iteration
-  count, and `apm jitmap FULL` matches its case-insensitive verb.
-
-## Unreleased - host CLI
-
 - `verify-store [STORE]`: read-only integrity audit of every session in a
   session store, so a whole-store copy-back can be proven instead of assumed.
   Reports `ok` / `incomplete` (no recorded manifest, or required documents
@@ -127,6 +124,48 @@ to 2.3.0 and 2.2.4 stays skipped.
 - One `manifest.json` write per capture: `finalize`'s manifest stage already
   stamped the session, and `capture` no longer re-audits it, which halved the
   SHA-256 work over every collected artifact at the end of a run.
+
+## Unreleased - bridge mod
+
+- API contract: `bridge/README.md` now documents the `GET /api/apm` response
+  itself (status codes, the `SNAPSHOT_FAILED` error envelope, every top-level
+  key, and which fields are nullable), not just the authorization matrix.
+- API contract: `GET /api/apm` now caps `spikes` at the newest
+  `Telemetry.DashboardSpikeRecords` (12) records instead of carrying the full
+  128-entry ring, so a long spike streak no longer pushes 128 world samples
+  down the wire on every 2 s poll. Before: a client paging the array for spike
+  history read the whole ring. After: it reads the newest 12, and must not
+  read a shorter array as "that was all of them". Element shape, order
+  (newest last), and key names are unchanged, so by the rule in
+  `bridge/README.md` this is not a `schema` bump. The periodic JSON export
+  file is unaffected and still carries the full ring for audit and compare.
+- API contract: `world.utc` no longer carries the string `"unavailable"`
+  before the first world sample; it is `null`, like every other unmeasured
+  value in the payload. No documented consumer read the old literal, and a
+  client parsing `utc` fields as timestamps no longer has to special-case a
+  date slot holding a placeholder. Every `utc` field in the snapshot is an
+  ISO-8601 instant or absent.
+- Correctness: an unrecognized `apm` console verb now answers with the
+  verb list instead of silently returning the `status` summary, so a typo no
+  longer looks like a successful call. `apm benchmark <non-number>` reports
+  the bad argument instead of quietly benchmarking the default iteration
+  count, and `apm jitmap FULL` matches its case-insensitive verb.
+- Correctness: the export and GC window deadlines are now scheduled on the
+  monotonic `Stopwatch` rather than cached `Time.realtimeSinceStartup` values.
+  `realtimeSinceStartup` is a float whose resolution degrades to 2 s once the
+  process has been up about 194 days and to 4 s past about 388, which
+  quantized a 30 s export window to 28 s or 32 s and let `windowSeconds`, the
+  denominator of every reported rate, drift with it.
+- Correctness: a frame timestamp read and the trash grace clock are now taken
+  under their guards, so a concurrent spike sample or a prune sweep cannot
+  race the main thread into a torn read.
+- Correctness: `apm jitmap` releases its host claims and OS handles on every
+  exit path, including a failed capture, instead of leaking the bind mount
+  and file handles for the life of the process.
+- Dashboard: the WebMod panel builds one layout pass shared by the spike table
+  and the session report and sends fewer bytes per response, so a long
+  capture no longer stutters the dashboard or floods the browser with payload
+  it immediately discards.
 
 ## 2.2.0 - host CLI - 2026-08-26
 

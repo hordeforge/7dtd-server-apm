@@ -9,6 +9,12 @@ bridge/README.md must carry the same version. Same convention as
 Host CLI: pyproject.toml and tools/apm_suite/__init__.py must carry the
 same package version (the analyzer/session version derives from it).
 
+CHANGELOG.md: the newest released section of each artifact must carry the
+version that artifact actually ships, so a release cannot ship with a missing,
+stale, or duplicated entry. The manifest files cannot drift from each other
+without this gate noticing; without the changelog half they can still ship
+with no record of what changed.
+
 Run: python3 scripts/check_version.py   (wired into `make test`)
 """
 
@@ -38,6 +44,68 @@ BRIDGEMOD = ROOT / "bridge" / "ApmBridge" / "BridgeMod.cs"
 BRIDGE_README = ROOT / "bridge" / "README.md"
 PYPROJECT = ROOT / "pyproject.toml"
 APM_INIT = ROOT / "tools" / "apm_suite" / "__init__.py"
+CHANGELOG = ROOT / "CHANGELOG.md"
+
+# "## <version> - host CLI - <date>" and "## <version> (tag v<version>) - bridge mod - <date>".
+# The tag suffix is optional: only tagged bridge releases carry one, and a
+# section that spells the tag must spell the version it is under.
+SECTION_RE = re.compile(
+    r"^## (?P<version>\d+(?:\.\d+)+)"
+    r"(?: \(tag v(?P<tag>\d+(?:\.\d+)+)\))? - (?P<artifact>host CLI|bridge mod)\b",
+    re.M,
+)
+UNRELEASED_RE = re.compile(r"^## Unreleased - (?P<artifact>host CLI|bridge mod)\s*$", re.M)
+ARTIFACTS = ("host CLI", "bridge mod")
+
+
+def check_changelog(bridge_version: str | None, cli_version: str | None) -> list[str]:
+    """The changelog must record exactly what each artifact ships.
+
+    Catches the three ways it rots: a shipped version with no released
+    section, a released section for a version that was never shipped, and a
+    second "Unreleased" block for the same artifact, which splits one
+    artifact's pending changes across two headings and hides the lower one
+    from anything reading the file top-down.
+    """
+    text = CHANGELOG.read_text(encoding="utf-8")
+    fails: list[str] = []
+    shipped = {"host CLI": cli_version, "bridge mod": bridge_version}
+
+    for artifact in ARTIFACTS:
+        unreleased = UNRELEASED_RE.findall(text)
+        count = unreleased.count(artifact)
+        if count == 0:
+            fails.append(f"CHANGELOG.md: no 'Unreleased - {artifact}' section")
+        elif count > 1:
+            fails.append(
+                f"CHANGELOG.md: {count} 'Unreleased - {artifact}' sections; "
+                "merge them so one artifact has one pending block"
+            )
+
+    sections = list(SECTION_RE.finditer(text))
+    for artifact in ARTIFACTS:
+        released = [m for m in sections if m.group("artifact") == artifact]
+        if not released:
+            if shipped[artifact] is not None:
+                fails.append(
+                    f"CHANGELOG.md: no released '{artifact}' section for shipped "
+                    f"version {shipped[artifact]}"
+                )
+            continue
+        newest = released[0]
+        if shipped[artifact] is not None and newest.group("version") != shipped[artifact]:
+            fails.append(
+                f"CHANGELOG.md: newest '{artifact}' section is "
+                f"{newest.group('version')} but {shipped[artifact]} is shipped"
+            )
+        for match in released:
+            if match.group("tag") is not None and match.group("tag") != match.group("version"):
+                fails.append(
+                    f"CHANGELOG.md: '{artifact}' {match.group('version')} section is "
+                    f"tagged v{match.group('tag')}"
+                )
+
+    return fails
 
 
 def main() -> int:
@@ -70,6 +138,8 @@ def main() -> int:
 
     if pp and ai and pp.group(1) != ai.group(1):
         fails.append(f"pyproject {pp.group(1)} != apm_suite __version__ {ai.group(1)}")
+
+    fails.extend(check_changelog(mi.group(1) if mi else None, pp.group(1) if pp else None))
 
     for f in fails:
         print(f"check_version: {f}", file=sys.stderr)
