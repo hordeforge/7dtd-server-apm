@@ -1,45 +1,27 @@
 "use strict";
-// 7dtd-server-apm-bridge WebMod (TypeScript source).
-// Compiled to bundle.js by `tsc -p WebMod/tsconfig.json` (wired into
-// scripts/build_bridge.sh). The dashboard loads /webmods/7dtd-server-apm-bridge/bundle.js
-// and reads window["7dtd-server-apm-bridge"]: the one route renders as a direct
-// sidebar entry, and no Settings tab is registered (settings is empty). The
-// route is registered unconditionally and renders its auth-required state when
-// the session lacks admin rights.
-// Do not hand-edit bundle.js; regenerate from this file.
-//
-// The whole body is an IIFE on purpose: webmod bundles are plain <script> tags
-// sharing the global scope, and a bare top-level const (e.g. modId) collides
-// across mods (SyntaxError kills the later bundle's registration).
 (() => {
     const modId = "7dtd-server-apm-bridge";
-    const HIST = 60; // rolling samples kept for sparklines (~2 min at 2s)
-    const TICK_BUDGET_MS = 50; // 20 TPS
+    const HIST = 60;
+    const TICK_BUDGET_MS = 50;
     const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
     const fx = (v, n) => num(v).toFixed(n);
     const mib = (bytes) => num(bytes) / 1048576;
-    // Snapshot shape guards: the API payload may omit sections (partial writes,
-    // older bridge schema). Coerce once here instead of fallback-defaulting every
-    // property access in the render path.
     function objOrEmpty(candidate) {
         if (candidate === undefined || candidate === null || typeof candidate !== "object" || Array.isArray(candidate)) {
             return {};
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: the guard above proves the runtime value is a plain object
         return candidate;
     }
     function listOrEmpty(candidate) {
         if (!Array.isArray(candidate)) {
             return [];
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: Array.isArray is the runtime proof for the element cast
         return candidate;
     }
     function strOrEmpty(candidate) {
         if (candidate === undefined || candidate === null) {
             return "";
         }
-        // oxlint-disable-next-line typescript/no-base-to-string -- deliberate: payload values are JSON primitives (numbers, strings); String() renders them into labels
         return String(candidate);
     }
     function grade(update) {
@@ -58,8 +40,6 @@
         }
         return { tps, cls: "apm-bad", label: "SATURATED" };
     }
-    // Rising trend: is the tail meaningfully above the head of the window? Used to
-    // flag GC gen2 / heap climbing (a leak signal) without a server-side history.
     function rising(series) {
         if (series.length < 8) {
             return false;
@@ -86,10 +66,6 @@
         const lastPoint = (_a = pts.split(" ").pop()) !== null && _a !== void 0 ? _a : "";
         const [lastX, lastY] = lastPoint.split(",");
         const gradId = `apm-grad-${color.slice(1)}`;
-        // Faint quarter reference lines: unlit structure so position reads without
-        // axes even at thumbnail size (preserveAspectRatio none stretches strokes,
-        // hence vectorEffect). Decorative overall: the enclosing trend cell prints
-        // the current value as text.
         const refs = [0.25, 0.5, 0.75].map((f) => React.createElement("line", {
             key: f, x1: 0, y1: h * f, x2: w, y2: h * f,
             stroke: "rgba(127,127,127,.14)", strokeWidth: 1, vectorEffect: "non-scaling-stroke"
@@ -98,27 +74,20 @@
     }
     function budgetBar(React, frac, cls) {
         const pct = Math.max(0, Math.min(1, frac));
-        // Decorative: the adjacent .apm-budget-pct span prints the percentage.
-        // scaleX, not width: the fill animates on the compositor (see styling.css).
         return React.createElement("div", { className: "apm-bar", "aria-hidden": true }, React.createElement("div", { className: `apm-bar-fill ${cls}`, style: { transform: `scaleX(${pct.toFixed(4)})` } }));
     }
-    // The dashboard HTTP wrapper may hand us the axios response, the {data: ...}
-    // envelope, or the bare payload; accept all three.
     function unwrapSnap(o) {
         if (typeof o !== "object" || o === null) {
             return {};
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
         const record = o;
         const { data } = record;
         if (typeof data !== "object" || data === null) {
             return record;
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
         const innerRecord = data;
         const inner = innerRecord.data;
         if (typeof inner === "object" && inner !== null) {
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
             return inner;
         }
         if (innerRecord.schema !== undefined || innerRecord.update !== undefined) {
@@ -153,7 +122,6 @@
         if (typeof candidate !== "object" || candidate === null) {
             return null;
         }
-        // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
         const o = candidate;
         const memTotal = num(o.memTotalBytes);
         if (memTotal <= 0) {
@@ -171,8 +139,6 @@
             cpuCores: num(o.cpuCores)
         };
     }
-    // Coerce every optional snapshot section once per render instead of guarding
-    // each property access in the render path.
     function snapshotViewsOf(snapshot) {
         return {
             update: objOrEmpty(snapshot.update),
@@ -208,15 +174,11 @@
     }
     function renderAuthError(h, title, status, authMessage, unavailablePrefix) {
         const msg = status === 403 ? authMessage : `${unavailablePrefix} (HTTP ${status !== null && status !== void 0 ? status : "error"}).`;
-        // The pill must match the message: a network error or 500 is not an auth
-        // problem, and telling the user to log in would send them in circles.
         const pill = status === 403 ? "AUTH REQUIRED" : "UNAVAILABLE";
         return h("div", { className: "seven-dtd-apm" }, h("h2", null, title), h("span", { className: "apm-pill apm-bad" }, pill), h("p", null, msg), h("button", { type: "button", className: "apm-btn", onClick: () => { location.href = "/"; } }, "Log in"));
     }
     function renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update) {
-        return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), 
-        // The leading glyphs are decorative; the accessible name is the word only.
-        h("button", { type: "button", className: "apm-btn", onClick: toggleFreeze }, h("span", { "aria-hidden": true }, frozen ? "▶ " : "⏸ "), frozen ? "Resume" : "Freeze"), h("button", { type: "button", className: "apm-btn", onClick: copyJson }, h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"), h("span", { className: "apm-window" }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
+        return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), h("button", { type: "button", className: "apm-btn", onClick: toggleFreeze }, h("span", { "aria-hidden": true }, frozen ? "▶ " : "⏸ "), frozen ? "Resume" : "Freeze"), h("button", { type: "button", className: "apm-btn", onClick: copyJson }, h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"), h("span", { className: "apm-window" }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
     }
     function trendSeriesOf(H) {
         return [
@@ -243,16 +205,9 @@
         }
         return nice * base;
     }
-    // x-axis timescale for the trends chart. Uniform mode gives every sample an
-    // equal pixel width. Compressed mode shrinks each step going back by
-    // TREND_DECAY, so the recent window keeps full detail while older history
-    // tapers toward the left edge; the vertical grid (one line per TREND_GRID_S
-    // of real time) bunches up toward the left to visualize the taper.
     const TREND_DECAY = 0.93;
     const TREND_GRID_S = 30;
     const TREND_SAMPLE_S = 2;
-    // Configurable history depth (samples; memory stays proportional to what is
-    // drawn). Persisted per browser; trimming drops oldest samples first.
     const HISTORY_KEY = "apm.historySamples";
     const HISTORY_CHOICES = [60, 150, 300];
     let histDepth = HIST;
@@ -261,18 +216,14 @@
         if (HISTORY_CHOICES.includes(stored)) {
             histDepth = stored;
         }
-        // oxlint-disable-next-line @rikalabs/no-silent-catch-fallback -- deliberate: storage can be blocked (private mode); the default depth still applies for the session
     }
     catch (_a) {
-        // Keep the default depth.
     }
     function persistHistDepth(samples) {
         try {
             globalThis.localStorage.setItem(HISTORY_KEY, String(samples));
-            // oxlint-disable-next-line @rikalabs/no-silent-catch-fallback -- deliberate: persistence is best-effort; the chosen depth still applies for the session
         }
         catch (_a) {
-            // Storage unavailable: keep the session-only depth.
         }
     }
     function trimHistory(hist) {
@@ -283,14 +234,12 @@
             }
         }
     }
-    // Pixel width of the newest step (samples get narrower going back by decay).
     function trendStep0(innerW, n, compressed) {
         if (!compressed) {
             return innerW / (n - 1);
         }
         return (innerW * (1 - TREND_DECAY)) / (1 - Math.pow(TREND_DECAY, n));
     }
-    // x (0..innerW) of the sample that is `age` samples old (0 = newest).
     function trendX(innerW, n, age, compressed) {
         const step0 = trendStep0(innerW, n, compressed);
         if (!compressed) {
@@ -298,7 +247,6 @@
         }
         return innerW - (step0 * (1 - Math.pow(TREND_DECAY, age))) / (1 - TREND_DECAY);
     }
-    // Inverse of trendX: the sample age (float, samples) at inner-area x.
     function trendAgeOf(innerW, n, x, compressed) {
         const step0 = trendStep0(innerW, n, compressed);
         if (!compressed) {
@@ -348,7 +296,7 @@
         }
         return "apm-ok";
     }
-    function trendGrid(h, width, padLeft, padTop, innerH, max, yOf) {
+    function trendGrid(h, width, padLeft, max, yOf) {
         const fracs = [0, 0.25, 0.5, 0.75, 1];
         return h("g", null, fracs.map((f) => {
             const y = yOf(f * max);
@@ -358,17 +306,12 @@
     function trendSeriesSvg(h, s, innerW, innerH, max, yOf, xOf, hoverIdx) {
         const paths = seriesPaths(s.values, innerW, innerH, max, xOf);
         const gradId = `apg-${s.key}`;
-        // Leading-edge current-value marker: rests on the newest sample and is the
-        // eye anchor; the pointer drags it along the trace while hovering.
         const markerIdx = hoverIdx >= 0 ? hoverIdx : s.values.length - 1;
         return h("g", { key: s.key }, h("defs", null, h("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 }, h("stop", { offset: "0%", stopColor: s.color, stopOpacity: 0.3 }), h("stop", { offset: "100%", stopColor: s.color, stopOpacity: 0.02 }))), h("polygon", { points: `0,${innerH} ${paths.points} ${innerW},${innerH}`, fill: `url(#${gradId})` }), h("polyline", { points: paths.points, fill: "none", stroke: s.color, strokeWidth: 1.5 }), h("circle", {
             cx: xOf(markerIdx), cy: yOf(s.values[markerIdx]), r: 3,
             fill: s.color, stroke: "rgba(0,0,0,.6)", strokeWidth: 1
         }));
     }
-    // Faint vertical grid: one line per TREND_GRID_S of real time, drawn behind
-    // the series. Uniform mode spaces them evenly; compressed mode bunches them
-    // toward the left edge, which is what makes the timescale taper visible.
     function trendVGrid(h, innerW, n, padLeft, padTop, innerH, compressed) {
         const maxAgeS = (n - 1) * TREND_SAMPLE_S;
         const lines = [];
@@ -394,10 +337,8 @@
         const innerW = width - padLeft;
         const innerH = height - padTop - padBottom;
         const n = H.tps.length;
-        // Empty structure: the frame, grids, and scale render before the first two
-        // samples arrive; absence of signal stays visible instead of a text-only box.
         if (n < 2) {
-            return h("div", { className: "apm-chart apm-trends" }, trendControls(h, depth, onDepth, compressed, setCompressed), h("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Line chart axes for TPS and gmUpdate ms; collecting samples." }, trendGrid(h, width, padLeft, padTop, innerH, niceMax(1), (v) => padTop + innerH - (v / niceMax(1)) * innerH), h("text", { className: "apm-axis-label", x: width / 2, y: height / 2, textAnchor: "middle" }, "collecting samples…")));
+            return h("div", { className: "apm-chart apm-trends" }, trendControls(h, depth, onDepth, compressed, setCompressed), h("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Line chart axes for TPS and gmUpdate ms; collecting samples." }, trendGrid(h, width, padLeft, niceMax(1), (v) => padTop + innerH - (v / niceMax(1)) * innerH), h("text", { className: "apm-axis-label", x: width / 2, y: height / 2, textAnchor: "middle" }, "collecting samples…")));
         }
         const series = trendSeriesOf(H);
         const max = niceMax(Math.max(...series.reduce((acc, s) => [...acc, ...s.values], []), 1));
@@ -405,7 +346,6 @@
         const yOf = (v) => padTop + innerH - (v / max) * innerH;
         const crossX = hoverIdx >= 0 ? padLeft + xOf(hoverIdx) : -1;
         const onMove = (e) => {
-            // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the chart svg is the handler target
             const rect = e.currentTarget.getBoundingClientRect();
             const x = Math.max(0, Math.min(innerW, e.clientX - rect.left - padLeft));
             const age = trendAgeOf(innerW, n, x, compressed);
@@ -415,17 +355,13 @@
             width, height, viewBox: `0 0 ${width} ${height}`, onMouseMove: onMove,
             onMouseLeave: () => setHoverIdx(-1),
             role: "img",
-            // The hover crosshair is pointer-driven; keyboard and screen-reader
-            // users get the series values from the text legend below the chart.
             "aria-label": `Line chart: TPS and gmUpdate ms over the last ${Math.round(n * TREND_SAMPLE_S)} seconds, timescale ${compressed ? "compressed (recent detail, older history tapers left)" : "uniform"}; latest values are listed in the legend below.`
-        }, trendGrid(h, width, padLeft, padTop, innerH, max, yOf), trendVGrid(h, innerW, n, padLeft, padTop, innerH, compressed), h("g", null, series.map((s) => trendSeriesSvg(h, s, innerW, innerH, max, yOf, xOf, hoverIdx))), crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null, h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * TREND_SAMPLE_S)}s ago`), h("text", { className: "apm-axis-label", x: width - 4, y: height - 4, textAnchor: "end" }, "now")), trendLegend(h, series, hoverIdx, TREND_SAMPLE_S));
+        }, trendGrid(h, width, padLeft, max, yOf), trendVGrid(h, innerW, n, padLeft, padTop, innerH, compressed), h("g", null, series.map((s) => trendSeriesSvg(h, s, innerW, innerH, max, yOf, xOf, hoverIdx))), crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null, h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * TREND_SAMPLE_S)}s ago`), h("text", { className: "apm-axis-label", x: width - 4, y: height - 4, textAnchor: "end" }, "now")), trendLegend(h, series, hoverIdx, TREND_SAMPLE_S));
     }
-    // Chart head: history-depth setting plus the timescale toggle.
     function trendControls(h, depth, onDepth, compressed, setCompressed) {
         return h("div", { className: "apm-chart-head" }, h("button", { type: "button", className: "apm-btn", onClick: () => setCompressed(!compressed), "aria-pressed": compressed }, `Timescale: ${compressed ? "compressed" : "uniform"}`), h("select", {
             className: "apm-filter", "aria-label": "History depth",
             value: String(depth), onChange: (e) => {
-                // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the select is the handler target bound above
                 onDepth(Number(e.target.value));
             }
         }, HISTORY_CHOICES.map((c) => h("option", { key: c, value: String(c) }, `${Math.round((c * TREND_SAMPLE_S) / 60)} min`))), h("span", { className: "apm-axis-label" }, "older history tapers left · grid lines are 30s apart"));
@@ -452,25 +388,15 @@
         }
         return h("div", { className: "apm-chart apm-topbars" }, h("h3", null, "Top sections by P95"), top.map((s) => {
             const p95 = num(s.p95Ms);
-            // Fixed baseline: fraction of the 50 ms tick budget, not a per-render
-            // maximum, so bar lengths stay comparable while the data streams.
             const frac = Math.min(1, p95 / TICK_BUDGET_MS);
             const note = severityNote(p95);
-            return h("div", { key: s.name, className: "apm-topbar-row" }, h("span", { className: "apm-topbar-name" }, s.name), 
-            // Decorative bar; the ms value beside it carries the data.
-            h("div", { className: "apm-topbar-track", "aria-hidden": true }, h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { transform: `scaleX(${frac.toFixed(4)})` } })), h("span", { className: "apm-topbar-val" }, `${fx(p95, 2)} ms`, note === null ? null : sr(h, note)));
+            return h("div", { key: s.name, className: "apm-topbar-row" }, h("span", { className: "apm-topbar-name" }, s.name), h("div", { className: "apm-topbar-track", "aria-hidden": true }, h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { transform: `scaleX(${frac.toFixed(4)})` } })), h("span", { className: "apm-topbar-val" }, `${fx(p95, 2)} ms`, note === null ? null : sr(h, note)));
         }));
     }
     function renderGrid(h, React, g, H, update, gc, world, health) {
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined before the first sample
         const lastAlloc = H.alloc[H.alloc.length - 1];
-        return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "#57d977"), 
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined at runtime before the first sample
-        trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "#e6bd3a"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null), cell(h, "API errors", `${num(health.apiErrors)} / ${num(health.apiRequests)}`, num(health.apiErrors) > 0 ? "apm-warn" : null));
+        return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "#57d977"), trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "#e6bd3a"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null), cell(h, "API errors", `${num(health.apiErrors)} / ${num(health.apiRequests)}`, num(health.apiErrors) > 0 ? "apm-warn" : null));
     }
-    // Every read the bridge could not complete, labeled with its source. A hidden
-    // host strip or a panel that stopped updating otherwise looks like a healthy
-    // server: nothing in the payload says which field went unmeasured.
     function healthAlerts(h, health) {
         const alerts = [];
         const sources = [
@@ -488,9 +414,7 @@
     }
     function bySortKey(sort) {
         return (a, b) => {
-            // SAFETY: section rows come from the untyped JSON payload; sort.key is a known column of the same rows (bySortKey only keys on section columns)
             const av = sort.key === "name" ? a.name : num(a[sort.key]);
-            // SAFETY: same keyed access as av, on the other row
             const bv = sort.key === "name" ? b.name : num(b[sort.key]);
             let cmp = 0;
             if (av < bv) {
@@ -521,14 +445,9 @@
         }
         return "";
     }
-    // Screen-reader-only text (see .apm-visually-hidden in styling.css). Used to
-    // put non-visual words on state that the theme otherwise paints (severity
-    // colors, staged-change ring).
     function sr(h, text) {
         return h("span", { className: "apm-visually-hidden" }, text);
     }
-    // Same thresholds as sectionRowClass/topBarClass; gives the color-coded
-    // severity a text equivalent so it does not ride on color alone.
     function severityNote(p95Ms) {
         const p95 = num(p95Ms);
         if (p95 > 16) {
@@ -550,8 +469,6 @@
                 marker = sort.dir < 0 ? " ▼" : " ▲";
                 sortDir = sort.dir < 0 ? "descending" : "ascending";
             }
-            // Sort affordance is a real button (keyboard operable); the column state
-            // is exposed to AT via aria-sort on the header cell (WCAG 2.1.1 / 4.1.2).
             return h("th", { key: label, className: "apm-sortable", scope: "col", "aria-sort": sortDir }, h("button", { type: "button", className: "apm-sort-btn", onClick: () => setSortKey(key) }, `${label}${marker}`));
         };
         return [
@@ -559,14 +476,10 @@
                 className: "apm-filter", type: "search", placeholder: "filter…",
                 "aria-label": "Filter sections by name",
                 value: filter, onChange: (e) => {
-                    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the dashboard event target is the filter input the handler is bound to
                     setFilter(e.target.value);
                 }
             })),
             h("div", { className: "apm-table-scroll" }, h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Managed sections timing"), h("thead", null, h("tr", null, th("Section", "name"), th("Calls", "calls"), th("Avg", "avgMs"), th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"), h("th", { key: "budget", scope: "col" }, "% of 50ms"))), h("tbody", null, shown.length === 0
-                // Two different gaps, one message each: blaming the filter when the
-                // bridge reported no sections at all sends the reader hunting for a
-                // typo in a box they never touched.
                 ? h("tr", null, h("td", { className: "apm-empty", colSpan: 7 }, sections.length === 0
                     ? "No section timings were collected for this window."
                     : `No section matches “${filter}”. Clear the filter to see all ${sections.length}.`))
@@ -577,9 +490,6 @@
                 })))),
         ];
     }
-    // Rows the spike table shows, newest first. GET /api/apm caps spikes[] at
-    // this same count (Telemetry.DashboardSpikeRecords), so a full ring costs no
-    // extra bytes on the wire and the slice below only guards older bridges.
     const SPIKE_ROWS = 12;
     function renderSpikesSection(h, spikes) {
         if (spikes.length === 0) {
@@ -606,9 +516,6 @@
         }
         opts.setFrozen(!opts.frozen);
     }
-    // The copy notice is a transient confirmation, not a status line: the panel
-    // underneath keeps streaming new numbers every 2 s, so a message that never
-    // clears reads as a permanent state long after the click it reported.
     const COPY_STATUS_MS = 8000;
     let copyStatusTimer = null;
     function setCopyMessage(setCopyStatus, message) {
@@ -620,17 +527,12 @@
     }
     function copySnapshot(snapshot, setCopyStatus) {
         const txt = JSON.stringify(snapshot, null, 2);
-        // Clipboard requires a secure context; the dashboard may be served over
-        // plain http. Either way, say what happened (role=status announces it).
-        // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: clipboard is typed as always-present, but browsers omit it outside secure contexts
         if (navigator.clipboard === undefined) {
             setCopyMessage(setCopyStatus, "Copy failed: clipboard is unavailable over plain HTTP.");
             return;
         }
         void navigator.clipboard.writeText(txt).then(() => setCopyMessage(setCopyStatus, "Snapshot JSON copied to clipboard."), () => setCopyMessage(setCopyStatus, "Copy failed: the clipboard write was rejected."));
     }
-    // History-depth setting wired to a panel: the module variable is the single
-    // source that pushHistory reads; changing it persists and trims old samples.
     function depthController(React, hist) {
         const [depth, setDepth] = React.useState(histDepth);
         const changeDepth = (n) => {
@@ -644,16 +546,10 @@
     function ApmPanel({ React, HTTP, useQuery }) {
         var _a, _b;
         const h = React.createElement;
-        // Authentication gate: an unauthenticated or non-admin session gets a 403
-        // from /api/apm. Stop after the first failure instead of polling every 2 s
-        // into an error storm (observed when a stale session cookie shows the entry
-        // while logged out). retry:false skips react-query's default backoff retries.
         const [authBlocked, setAuthBlocked] = React.useState(false);
         const query = useQuery("seven-dtd-apm", () => HTTP.get("/api/apm"), { refetchInterval: 2000, enabled: !authBlocked, retry: false });
         React.useEffect(() => {
             var _a, _b;
-            // Latch only on auth failures: a transient network drop or a coded 500
-            // must not permanently freeze a live monitor on one bad poll.
             const status = (_b = (_a = query.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
             if (query.isError === true && (status === 401 || status === 403)) {
                 setAuthBlocked(true);
@@ -664,21 +560,11 @@
         const frozenSnap = React.useRef(null);
         const [filter, setFilter] = React.useState("");
         const [sort, setSort] = React.useState({ key: "p95Ms", dir: -1 });
-        // Copy/freeze feedback for assistive tech (role=status announces changes).
         const [copyStatus, setCopyStatus] = React.useState("");
-        // Every hook runs before any early return: returning earlier on a poll
-        // failure would drop this useState from the render and React would unmount
-        // the panel ("rendered fewer hooks than expected") instead of showing the
-        // error state.
         const { depth, changeDepth } = depthController(React, hist.current);
-        // First poll still in flight. Rendering the panel here would fill it with
-        // zeroes that read as measurements; "unavailable" is the honest state.
         if (query.isError !== true && query.data === undefined) {
             return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, h("h2", null, "7DTD APM")), h("p", { className: "apm-status" }, "Loading telemetry…"));
         }
-        // A failed fetch (e.g. logged-out session or logged-in non-admin) renders a
-        // clear state instead of the NO DATA pills, and the queries are paused
-        // (authBlocked) so nothing polls into an error storm.
         if (query.isError === true) {
             const status = (_b = (_a = query.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
             return renderAuthError(h, "7DTD APM", status, "Authentication required: log in to the dashboard as an admin (permission level 0) to view server telemetry.", "Telemetry unavailable");
@@ -692,17 +578,8 @@
         const g = grade(update);
         const toggleFreeze = () => freezeHandler({ frozen, setFrozen, live, frozenSnap });
         const setSortKey = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
-        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), 
-        // Visible, not screen-reader-only: a click with no on-screen result reads
-        // as a dead button. role=status still announces the change.
-        copyStatus === "" ? null : h("p", { className: "apm-status", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderTrendsChart(h, React, hist.current, depth, changeDepth), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), ...healthAlerts(h, health), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
+        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), copyStatus === "" ? null : h("p", { className: "apm-status", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderTrendsChart(h, React, hist.current, depth, changeDepth), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), ...healthAlerts(h, health), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
     }
-    // The stock dashboard renders every webmod `routes` entry as a direct sidebar
-    // item and every `settings` entry as a tab under Settings, unconditionally.
-    // The session cookie is set HttpOnly (see ../7dtd-engine-research/docs), so it
-    // is invisible to document.cookie and cannot gate registration here. Register
-    // the route always: while logged out it polls once, gets a 403, and renders its
-    // auth-required state; the dashboard reloads the page after login.
     const webMod = {
         about: "Live, low-overhead managed telemetry from 7dtd-server-apm-bridge.",
         routes: { "APM": ApmPanel },

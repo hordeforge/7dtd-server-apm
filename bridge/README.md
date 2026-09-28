@@ -64,7 +64,11 @@ otherwise so widening access cannot happen by silently dropping a default.
 The panel JS is TypeScript (`WebMod/bundle.ts`), compiled to `bundle.js` by
 the version-pinned `bunx` TypeScript path inside `make bridge-build`; do not
 hand-edit the generated bundle. Bun is required, but no global `tsc`
-installation is needed.
+installation is needed. The stock dashboard loads `bundle.js` and
+`styling.css` on every page, so they are the panel's entire download: the
+emit strips comments (the source of record is `bundle.ts`), and
+`test_bridge_build_surface.py` budgets both files. A change that needs more
+raises the budget in that test with the measurement behind it.
 
 ### Response contract
 

@@ -163,6 +163,34 @@ def test_lint_webui_plugin_cache_is_keyed_by_the_pinned_commit() -> None:
     assert "anti-slop-src" not in script, "the unversioned cache name must be gone"
 
 
+def test_shipped_webmod_assets_stay_inside_the_download_budget() -> None:
+    # The stock dashboard loads every webmod bundle.js and styling.css on every
+    # page, so their bytes are the panel's whole download cost. Budgets, not
+    # aspirations: a feature that needs more raises the number here with the
+    # measurement that justified it.
+    webmod = REPO / "bridge" / "ApmBridge" / "WebMod"
+    budgets = {"bundle.js": 36_000, "styling.css": 12_000}
+    for name, budget in budgets.items():
+        size = (webmod / name).stat().st_size
+        assert size <= budget, f"{name} is {size} B, over the {budget} B budget"
+
+
+def test_emitted_webmod_bundle_carries_no_comments() -> None:
+    # tsconfig emits with removeComments, so the source comments in bundle.ts
+    # (10.5 KB of a 44 KB emit) do not ride along on every dashboard load. The
+    # freshness gate in lint-webui.sh only compares a fresh tsc run, so it would
+    # not notice someone flipping the flag back on.
+    tsconfig = (REPO / "bridge" / "ApmBridge" / "WebMod" / "tsconfig.json").read_text(
+        encoding="utf-8"
+    )
+    assert '"removeComments": true' in tsconfig
+    bundle = (REPO / "bridge" / "ApmBridge" / "WebMod" / "bundle.js").read_text(encoding="utf-8")
+    assert "//" not in bundle, "the emitted bundle still carries a line comment"
+    assert bundle.startswith('"use strict";'), (
+        "the directive must survive comment removal: the panel relies on strict mode"
+    )
+
+
 def test_every_bridge_rest_endpoint_declares_admin_only_permissions() -> None:
     # Deny side of the web authorization matrix: the game dashboard gates each
     # REST endpoint through AdminWebModules before any handler runs, using the

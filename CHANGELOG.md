@@ -391,6 +391,13 @@ major.
 
 ## Unreleased - bridge mod
 
+- WebMod: the panel bundle is emitted with comments stripped, and
+  `tests/test_bridge_build_surface.py` budgets the shipped `bundle.js` (36 KB)
+  and `styling.css` (12 KB). The stock dashboard loads both on every page, so
+  the emit dropped 10,581 B of source comments (44,099 B to 33,518 B raw,
+  12,931 B to 8,930 B gzipped) that no browser renders. The freshness gate only
+  compares a fresh `tsc` run, so it would not have caught the weight coming
+  back.
 - Observability: `GET /api/apm` instruments itself. The panel polls it every
   2 s, so a failure there left the operator with a frozen dashboard and no
   record anywhere. The request is timed and counted as the

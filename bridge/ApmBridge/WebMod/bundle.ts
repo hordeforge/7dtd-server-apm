@@ -500,7 +500,7 @@ function topBarClass(p95: number): string {
   return "apm-ok";
 }
 
-function trendGrid(h: CreateElement, width: number, padLeft: number, padTop: number, innerH: number, max: number, yOf: (v: number) => number): unknown {
+function trendGrid(h: CreateElement, width: number, padLeft: number, max: number, yOf: (v: number) => number): unknown {
   const fracs = [0, 0.25, 0.5, 0.75, 1];
   return h("g", null, fracs.map((f): unknown => {
     const y = yOf(f * max);
@@ -570,7 +570,7 @@ function renderTrendsChart(h: CreateElement, React: PanelProps["React"], H: Spar
     return h("div", { className: "apm-chart apm-trends" },
       trendControls(h, depth, onDepth, compressed, setCompressed),
       h("svg", { width, height, viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": "Line chart axes for TPS and gmUpdate ms; collecting samples." },
-        trendGrid(h, width, padLeft, padTop, innerH, niceMax(1), (v: number): number => padTop + innerH - (v / niceMax(1)) * innerH),
+        trendGrid(h, width, padLeft, niceMax(1), (v: number): number => padTop + innerH - (v / niceMax(1)) * innerH),
         h("text", { className: "apm-axis-label", x: width / 2, y: height / 2, textAnchor: "middle" }, "collecting samples…")));
   }
   const series = trendSeriesOf(H);
@@ -595,7 +595,7 @@ function renderTrendsChart(h: CreateElement, React: PanelProps["React"], H: Spar
       // users get the series values from the text legend below the chart.
       "aria-label": `Line chart: TPS and gmUpdate ms over the last ${Math.round(n * TREND_SAMPLE_S)} seconds, timescale ${compressed ? "compressed (recent detail, older history tapers left)" : "uniform"}; latest values are listed in the legend below.`
     },
-      trendGrid(h, width, padLeft, padTop, innerH, max, yOf),
+      trendGrid(h, width, padLeft, max, yOf),
       trendVGrid(h, innerW, n, padLeft, padTop, innerH, compressed),
       h("g", null, series.map((s): unknown => trendSeriesSvg(h, s, innerW, innerH, max, yOf, xOf, hoverIdx))),
       crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null,

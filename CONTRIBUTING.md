@@ -91,7 +91,9 @@ gate on the lockfile rather than on the version. The gate checks the lock too.
 
 A `.ts` edit under `bridge/ApmBridge/WebMod/` must be recompiled, or the
 `lint-webui` freshness step fails: run `make bridge-build` and commit
-`bundle.js` with the source change.
+`bundle.js` with the source change. The same tests cap the shipped
+`bundle.js` and `styling.css`; the dashboard downloads both on every page, so
+raise those budgets only with a measurement.
 
 `make package` writes the release zip, its `.sha256`, and a `.buildinfo.txt`
 recording the SDK, the TypeScript version, and the sha256 of the game
