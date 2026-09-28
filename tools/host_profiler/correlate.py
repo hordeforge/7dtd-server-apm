@@ -45,10 +45,39 @@ def parse_ts(s: str) -> float:
     # host's zone rules including DST, keeping both sides on one clock;
     # stamping the naive value as UTC would shift every match by the UTC
     # offset and miss the window on any non-UTC host.
+    #
+    # The wall clock is ambiguous twice a year and this is the only thing
+    # standing between a spike and its host samples: on a fall-back date the
+    # 02:30 stamp occurs twice, and both occurrences resolve to the FIRST
+    # (DST) one, so every spike logged during the repeated hour is correlated
+    # against samples an hour away. spike_epoch() prefers the line's own UTC
+    # stamp for exactly that reason; this stays the fallback.
     try:
         return datetime.strptime(s, "%Y-%m-%dT%H:%M:%S").timestamp()  # noqa: DTZ007 -- naive on purpose, see rationale above
     except ValueError:
         return 0.0
+
+
+def parse_utc_ts(s: str) -> float | None:
+    """Epoch seconds for an ISO stamp that carries its own offset, else None.
+
+    Only an explicit offset (or Z) counts. A stamp without one is a wall clock
+    reading, and accepting it here would hide the ambiguity this function
+    exists to remove.
+    """
+    try:
+        parsed = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return None
+    return parsed.timestamp()
+
+
+def spike_epoch(wall: str, utc: str) -> float:
+    """The instant a SPIKE line records, from its UTC stamp when it has one."""
+    stamped = parse_utc_ts(utc)
+    return parse_ts(wall) if stamped is None else stamped
 
 
 def proc_jsonl(capture: Path) -> Path:
@@ -116,7 +145,7 @@ def main() -> int:
     for m in RE_SPIKE.finditer(text):
         spikes.append(
             {
-                "ts": parse_ts(m.group("ts")),
+                "ts": spike_epoch(m.group("ts"), m.group("utc")),
                 "frame_ms": float(m.group("frame")),
                 "zed": int(m.group("zed")),
                 "top": m.group("top").strip(),
