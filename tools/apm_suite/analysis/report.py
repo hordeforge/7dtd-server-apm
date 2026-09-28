@@ -10,13 +10,19 @@ from __future__ import annotations
 import contextlib
 import json
 import re
-import stat
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, iter_jsonl, json_loads, read_text, scrape_succeeded
+from ..io import (
+    atomic_json,
+    iter_jsonl,
+    json_loads,
+    read_text,
+    regular_file_size,
+    scrape_succeeded,
+)
 from ..models import (
     LayerScore,
     SummaryV2,
@@ -65,22 +71,33 @@ _SUBSYSTEM_LABELS: dict[str, tuple[str, str]] = {
 
 
 def _has_content(path: Path) -> bool:
-    """One stat per path: is_file() followed by stat() is two syscalls for
-    one answer, and layer availability stats every source path."""
-    try:
-        info = path.stat()
-    except OSError:
-        return False
-    return stat.S_ISREG(info.st_mode) and info.st_size > 0
+    """A regular file carrying data, without reading it."""
+    return (regular_file_size(path) or 0) > 0
 
 
 def _has_bytes(path: Path, minimum: int) -> bool:
     """A regular file carrying at least `minimum` bytes, without reading it."""
-    try:
-        info = path.stat()
-    except OSError:
-        return False
-    return stat.S_ISREG(info.st_mode) and info.st_size > minimum
+    return (regular_file_size(path) or 0) > minimum
+
+
+def _by_pressure(layer: LayerScore) -> float:
+    """Sort key: highest pressure first, an unmeasured layer last."""
+    return -(layer.score if layer.score is not None else -1)
+
+
+def _app_evidence(session: Path) -> bool:
+    """Whether the app_sim layer holds usable bridge evidence.
+
+    Every app_scrape record failing is not evidence, so a bridge.jsonl full of
+    ok:false records does not qualify the layer on artifact presence alone. The
+    ingested snapshot, when there is one, still is. Both artifacts are named
+    explicitly rather than read out of a list by position, so reordering the
+    layer's source table must not silently change which one qualifies it.
+    """
+    return _has_content(session / "app/apm_app.json") or (
+        _has_content(session / "app/bridge.jsonl")
+        and scrape_succeeded(session / "app/bridge.jsonl")
+    )
 
 
 def parse_perf_stat(text: str) -> dict[str, float]:
@@ -478,23 +495,14 @@ def layer_scores(
         ],
         "io": [session / "io/vfs.bt.out", session / "io/block.bt.out"],
         "runtime_gc": [session / "runtime/mono_gc.bt.out"],
-        "app_sim": [session / "app/apm_app.json", session / "app/bridge.jsonl"],
     }
     for score in scores:
         wanted = layer_requested(score.layer, requested)
-        present = any(_has_content(p) for p in sources[score.layer])
-        if (
-            present
-            and score.layer == "app_sim"
-            and not scrape_succeeded(session / "app/bridge.jsonl")
-        ):
-            # Every scrape attempt failed: the artifact is present but holds no
-            # bridge reply. Availability is the contract here, so report the
-            # layer as unavailable instead of a confidently empty one. The
-            # ingested snapshot, when there is one, is still real evidence.
-            # Named, not picked by list position: reordering `sources` must not
-            # silently change which artifact qualifies this layer.
-            present = _has_content(session / "app/apm_app.json")
+        present = (
+            _app_evidence(session)
+            if score.layer == "app_sim"
+            else any(_has_content(path) for path in sources[score.layer])
+        )
         score.state = "collected" if present else "unavailable" if wanted else "skipped"
         score.confidence = "medium" if score.state == "collected" else "low"
         if score.state != "collected":
@@ -510,7 +518,7 @@ def layer_scores(
                     "fields and WARN.txt: telnet unreachable or password rejected)"
                 )
             score.optimize = []
-    scores.sort(key=lambda s: -(s.score if s.score is not None else -1))
+    scores.sort(key=_by_pressure)
     return scores
 
 
@@ -1417,7 +1425,7 @@ def build_summary(session: Path) -> SummaryV2:
     # Every pressure adjustment above raises scores after layer_scores() sorted
     # them, so the stored order and the recommendation must be recomputed here:
     # naming the pre-adjustment maximum points operators at the wrong layer.
-    layers.sort(key=lambda layer: -(layer.score if layer.score is not None else -1))
+    layers.sort(key=_by_pressure)
     measured = [layer for layer in layers if layer.score is not None]
     top = measured[0] if measured else None
     recommendation = (

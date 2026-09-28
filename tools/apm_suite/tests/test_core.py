@@ -2160,6 +2160,39 @@ def test_app_scrape_facts_on_a_missing_artifact_is_absent_evidence(tmp_path: Pat
     assert app_scrape_facts(_session(tmp_path / "session_scrape_absent")) == AppScrapeFacts()
 
 
+def test_ingested_snapshot_stays_collected_when_every_scrape_failed(
+    tmp_path: Path,
+) -> None:
+    # The scrape log is all failures, but a schema-v3 snapshot was ingested for
+    # this window: that snapshot is real evidence, so the layer is collected.
+    from apm_suite.analysis.report import layer_scores
+
+    session = _session(tmp_path / "session_snapshot_only")
+    (session / "app").mkdir()
+    (session / "app/bridge.jsonl").write_text(
+        '{"t": 1.0, "ok": false, "error": "connection refused"}\n',
+        encoding="utf-8",
+    )
+    (session / "app/apm_app.json").write_text('{"provider": "x"}', encoding="utf-8")
+    app = next(s for s in layer_scores(session, {}, {}) if s.layer == "app_sim")
+    assert app.state == "collected"
+
+
+def test_regular_file_size_separates_missing_and_empty(tmp_path: Path) -> None:
+    from apm_suite.io import regular_file_size
+
+    present = tmp_path / "artifact.out"
+    present.write_text("data", encoding="utf-8")
+    empty = tmp_path / "empty.out"
+    empty.touch()
+
+    assert regular_file_size(present) == 4
+    assert regular_file_size(empty) == 0
+    assert regular_file_size(tmp_path / "absent.out") is None
+    # A directory is not a regular file: its st_size is metadata, not bytes.
+    assert regular_file_size(tmp_path) is None
+
+
 # --- unit: store restore verification -----------------------------------------
 
 

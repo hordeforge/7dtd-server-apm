@@ -15,7 +15,14 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 
 from .collectors import SPEC_BY_NAME
-from .io import atomic_json, file_sha256, load_json, member_is_safe, sync_parent_directory
+from .io import (
+    atomic_json,
+    file_sha256,
+    load_json,
+    member_is_safe,
+    regular_file_size,
+    sync_parent_directory,
+)
 from .models import (
     SERVER_COMM,
     Artifact,
@@ -231,14 +238,9 @@ def sessions_beyond_budget(
     def _size(path: Path) -> int:
         total = 0
         for f in path.rglob("*"):
-            # One stat per entry: is_file() then stat() is two syscalls and a
-            # racy pair, and a file can vanish between them.
-            try:
-                info = f.stat()
-            except OSError:
-                continue
-            if stat.S_ISREG(info.st_mode):
-                total += info.st_size
+            # A file deleted by a concurrent prune mid-walk reads as None and
+            # contributes 0; the session is going away anyway.
+            total += regular_file_size(f) or 0
         return total
 
     # Only the sessions that SURVIVE the count policy are measured: the freed
@@ -555,15 +557,9 @@ def missing_required_documents(session: Path) -> list[str]:
     """Required documents that are absent or zero-length in `session`."""
     errors: list[str] = []
     for rel in REQUIRED:
-        try:
-            # One stat per document: is_file() followed by stat() is two
-            # syscalls and a racy pair for one answer.
-            info = (session / rel).stat()
-        except OSError:
-            # Vanished under a concurrent prune: count it as missing, never raise.
-            errors.append(f"{MISSING_PREFIX}{rel}")
-            continue
-        if not stat.S_ISREG(info.st_mode) or not info.st_size:
+        # None covers a document vanished under a concurrent prune and a
+        # non-regular entry; 0 covers a truncated one. All three are missing.
+        if not regular_file_size(session / rel):
             errors.append(f"{MISSING_PREFIX}{rel}")
     return errors
 

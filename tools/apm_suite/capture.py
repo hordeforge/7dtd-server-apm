@@ -34,7 +34,7 @@ from .collectors import (
     planned_layers,
     wanted,
 )
-from .io import atomic_json, claim_dir, json_loads, read_text, scrape_succeeded
+from .io import atomic_json, claim_dir, json_loads, read_text, regular_file_size, scrape_succeeded
 from .models import (
     SERVER_COMM,
     BridgeSnapshotV3,
@@ -143,14 +143,9 @@ def count_samples(artifact: Path) -> int | None:
 
 
 def _has_bytes(path: Path) -> bool:
-    """One stat for "is a regular file carrying data": is_file() then stat() is
-    two syscalls and a racy pair, and a concurrent prune can remove the entry
-    between them. An unreadable or vanished artifact is not evidence."""
-    try:
-        info = path.stat()
-    except OSError:
-        return False
-    return stat.S_ISREG(info.st_mode) and info.st_size > 0
+    """Whether the artifact is a regular file carrying data. An unreadable or
+    vanished artifact is not evidence."""
+    return (regular_file_size(path) or 0) > 0
 
 
 def _mono_library(pid: int) -> Path | None:

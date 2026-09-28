@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 from collections.abc import Iterator
@@ -156,6 +157,21 @@ def member_is_safe(name: str) -> bool:
         return False
     candidate = PurePosixPath(name)
     return not candidate.is_absolute() and ".." not in candidate.parts
+
+
+def regular_file_size(path: Path) -> int | None:
+    """Size of a regular file, else None (missing, unreadable, or a directory).
+
+    One stat per path: is_file() followed by stat() is two syscalls for one
+    answer, and a racy pair, since a concurrent prune can remove the entry
+    between them. Callers compare the returned size against their own threshold
+    so the "carries data" rule stays named at the call site.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    return info.st_size if stat.S_ISREG(info.st_mode) else None
 
 
 def sync_parent_directory(path: Path) -> None:

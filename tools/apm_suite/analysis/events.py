@@ -106,7 +106,7 @@ def parse_bt_slow(sink: EventSink, path: Path, kind: str) -> None:
     counter_last: list[str | None] = [None] * len(_COUNTERS)
     with path.open("r", encoding="utf-8", errors="replace") as stream:
         for i, line in enumerate(stream):
-            if "SLOW_" in line or "SLOW " in line or "STALL_MAIN" in line or "STW_PAUSE" in line:
+            if "SLOW" in line or "STALL_MAIN" in line or "STW_PAUSE" in line:
                 sink.add(
                     {
                         "t": None,
