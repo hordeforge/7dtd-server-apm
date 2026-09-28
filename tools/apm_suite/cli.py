@@ -1400,7 +1400,16 @@ def scenario_run(
     if session is not None:
         attached = _attach_workload_manifest(session, workload, label, bot_mode)
         if attached and stats.is_file():
-            shutil.copy2(stats, session / "loadgen_stats.json")
+            # The capture already succeeded and its evidence is on disk: an
+            # unreadable stats file must be reported, not raised as a traceback
+            # that skips the audit below and the matrix exit code.
+            try:
+                shutil.copy2(stats, session / "loadgen_stats.json")
+            except OSError as error:
+                err_console.print(
+                    f"[red]loadgen stats not attached: "
+                    f"{escape(str(stats))}: {escape(str(error))}[/red]"
+                )
         audit_session(session)
         if attached:
             console.print(f"workload manifest attached: {session / 'workload.json'}")

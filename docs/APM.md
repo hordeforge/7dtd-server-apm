@@ -36,6 +36,12 @@ console-log lines (which name players, IPs, and Steam IDs) are filtered out in
 the collector before anything reaches the session store, the raw scrape file is
 excluded from export bundles, and session directories are owner-only.
 
+The scrape log records every attempt, so a window whose telnet endpoint was
+unreachable or whose password was rejected holds a full `app/bridge.jsonl` of
+failures. Such a window is `app_sim unavailable`, not collected: the collector
+result records the failure and the summary states why, so an empty app layer
+never reads as a healthy zero.
+
 ## Controlled scenarios
 
 ```bash

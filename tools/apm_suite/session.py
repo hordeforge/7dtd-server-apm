@@ -64,7 +64,10 @@ def parse_stamp(value: Any) -> datetime | None:
     TypeError when compared/subtracted against aware datetimes (e.g. the bridge
     snapshot stamp). A missing or unparseable stamp is missing evidence and
     stays None: substituting the current wall clock made two audits of the same
-    session bytes disagree, and reported a start time nobody measured.
+    session bytes disagree, and reported a start time nobody measured. A
+    hand-mangled meta.json therefore degrades to a null stamp instead of
+    crashing the audit or the export that records it; the malformed value is
+    still reported by _validate_documents.
     """
     if isinstance(value, str):
         try:
@@ -106,6 +109,11 @@ def _validate_documents(session: Path) -> list[str]:
             continue
         try:
             model.model_validate(load_json(path))
+        except OSError as error:
+            # Same untrusted/concurrent-prune contract as _int: an unreadable
+            # document is a finding to record, never a crash of the audit whose
+            # job is to report it (vanished between is_file() and the read).
+            errors.append(f"schema validation could not read {rel}: {error}")
         except (ValueError, ValidationError) as error:
             first = str(error).splitlines()
             detail = "; ".join(first[:3])
@@ -122,6 +130,8 @@ def _structured_results(session: Path) -> tuple[list[CollectorResult], list[str]
     for path in sorted(session.glob("*/**/*.result.json")):
         try:
             results.append(CollectorResult.model_validate(load_json(path)))
+        except OSError as error:
+            errors.append(f"unreadable collector result {path.relative_to(session)}: {error}")
         except (ValueError, ValidationError) as error:
             errors.append(f"invalid collector result {path.relative_to(session)}: {error}")
     return results, errors
@@ -465,6 +475,8 @@ def verify_recorded_hashes(session: Path) -> list[str]:
         return []
     try:
         recorded = ManifestV2.model_validate(load_json(path))
+    except OSError as error:
+        return [f"recorded manifest.json is unreadable ({error}); integrity baseline lost"]
     except (ValueError, ValidationError):
         return ["recorded manifest.json is unreadable; integrity baseline lost"]
     errors: list[str] = []
@@ -537,7 +549,10 @@ def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[Mani
     # _validate_documents), never crash the audit whose job is to record it.
     meta: dict[str, Any] = {}
     if (session / "meta.json").is_file():
-        with suppress(ValueError):  # load_json raises ValueError for non-object JSON too
+        # load_json raises ValueError for non-object JSON too, and OSError for a
+        # document that vanished or cannot be read: either way the audit records
+        # the problem (see _validate_documents) rather than dying on it.
+        with suppress(ValueError, OSError):
             meta = load_json(session / "meta.json")
     errors: list[str] = missing_required_documents(session)
     # Read the baseline before anything below rewrites manifest.json.

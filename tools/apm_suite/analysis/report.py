@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, iter_jsonl
+from ..io import atomic_json, iter_jsonl, scrape_succeeded
 from ..models import (
     LayerScore,
     SummaryV2,
@@ -361,6 +361,16 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
     for score in scores:
         wanted = layer_requested(score.layer, requested)
         present = any(p.is_file() and p.stat().st_size for p in sources[score.layer])
+        if (
+            present
+            and score.layer == "app_sim"
+            and not scrape_succeeded(session / "app/bridge.jsonl")
+        ):
+            # Every scrape attempt failed: the artifact is present but holds no
+            # bridge reply. Availability is the contract here, so report the
+            # layer as unavailable instead of a confidently empty one. The
+            # ingested snapshot, when there is one, is still real evidence.
+            present = any(p.is_file() and p.stat().st_size for p in sources[score.layer][:1])
         score.state = "collected" if present else "unavailable" if wanted else "skipped"
         score.confidence = "medium" if score.state == "collected" else "low"
         if score.state != "collected":
@@ -370,6 +380,11 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
                 if wanted
                 else "layer not requested"
             }
+            if wanted and score.layer == "app_sim":
+                score.signals["detail"] = (
+                    "every app_scrape record failed (see app/bridge.jsonl 'error' "
+                    "fields and WARN.txt: telnet unreachable or password rejected)"
+                )
             score.optimize = []
     scores.sort(key=lambda s: -(s.score if s.score is not None else -1))
     return scores

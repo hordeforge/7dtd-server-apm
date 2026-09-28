@@ -558,6 +558,35 @@ def test_scenario_run_survives_bad_loadgen_manifest_and_still_audits(
     assert (session / "manifest.json").is_file()
 
 
+def test_scenario_run_reports_unreadable_stats_and_still_audits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A stats file that cannot be copied (perms, vanished) must be reported,
+    not raised: the capture already succeeded and its evidence is on disk, so a
+    traceback here would skip the audit and the matrix exit code."""
+    import shutil
+
+    session, _started, _captured, _store = _scenario_env(
+        tmp_path,
+        monkeypatch,
+        manifest_body='{"mode": "clients"}',
+        stats_body='{"actions_done": 500}\n',
+    )
+    real_copy2 = shutil.copy2
+
+    def deny(src: Any, dst: Any, **kwargs: Any) -> Any:
+        if str(dst).endswith("loadgen_stats.json"):
+            raise PermissionError(13, "Permission denied")
+        return real_copy2(src, dst, **kwargs)
+
+    monkeypatch.setattr(shutil, "copy2", deny)
+    result = runner.invoke(app, ["scenario", "run"], env={"COLUMNS": "4096"})
+    assert result.exit_code == 0, result.output
+    assert "loadgen stats not attached" in result.stderr
+    assert not (session / "loadgen_stats.json").exists()
+    assert (session / "manifest.json").is_file()  # the audit still ran
+
+
 # --- unit: checkout backends guard ------------------------------------------
 
 
@@ -806,6 +835,23 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
     assert "app/bridge.jsonl" not in names
     assert "app/efficientserver_log_excerpt.txt" not in names
     assert "203.0.113.7" not in leaked and "Alice" not in leaked
+
+
+def test_export_survives_unparseable_meta_timestamp(tmp_path: Path) -> None:
+    # meta.json is untrusted (hand-edited, imported bundle): a utc the session
+    # cannot spell must not abort the export with a bare ValueError traceback
+    # after the evidence has already been written into the bundle.
+    import zipfile
+
+    session = tmp_path / "session_bad_utc"
+    session.mkdir()
+    atomic_json(session / "meta.json", {"pid": 42, "only": "all", "utc": "not-a-timestamp"})
+    bundle = tmp_path / "bundle_bad_utc.zip"
+    result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert result.exit_code == 0, result.output
+    with zipfile.ZipFile(bundle) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode())
+    assert manifest["target"]["pid"] == 42
 
 
 def test_export_unreadable_member_names_file_and_keeps_prior_bundle(
@@ -1575,6 +1621,76 @@ def test_audit_survives_torn_meta_json(tmp_path: Path) -> None:
     manifest, valid = audit_session(session)
     assert not valid
     assert any("meta.json" in e for e in manifest.errors)
+
+
+def test_audit_reports_unreadable_documents_instead_of_crashing(tmp_path: Path) -> None:
+    # A document that vanished or cannot be read (concurrent prune, perms) is an
+    # audit finding to record, never a traceback out of the audit whose job is to
+    # report exactly that.
+    session = _session(tmp_path / "session_unreadable")
+    denied = {"meta.json", "summary.json", "health.json"}
+    original = Path.open
+
+    def deny(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name in denied:
+            raise PermissionError(13, "Permission denied")
+        return original(self, *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "open", deny)
+        manifest, valid = audit_session(session)
+    assert not valid
+    assert any("summary.json" in e and "could not read" in e for e in manifest.errors)
+    assert any("meta.json" in e and "could not read" in e for e in manifest.errors)
+
+
+def test_audit_reports_unreadable_collector_result(tmp_path: Path) -> None:
+    session = _session(tmp_path / "session_unreadable_result")
+    (session / "sync").mkdir()
+    path = session / "sync/futex.result.json"
+    atomic_json(path, _result_json("ok", name="futex", layer="sync"))
+    path.chmod(0o000)
+    if os.access(path, os.R_OK):  # running as root: perms do not deny the read
+        path.chmod(0o600)
+        pytest.skip("cannot make a session file unreadable as this user")
+    try:
+        manifest, valid = audit_session(session)
+    finally:
+        path.chmod(0o600)
+    assert not valid
+    assert any("unreadable collector result" in e for e in manifest.errors)
+
+
+def test_app_scrape_with_only_failed_records_is_not_evidence(tmp_path: Path) -> None:
+    # app_scrape logs every attempt, so a full artifact can hold nothing but
+    # failures (telnet down, password rejected). The app_sim layer must read as
+    # unavailable then, not as collected with an empty payload.
+    from apm_suite.analysis.report import layer_scores
+
+    session = _session(tmp_path / "session_scrape_failed")
+    (session / "app").mkdir()
+    (session / "app/bridge.jsonl").write_text(
+        '{"t": 1.0, "ok": false, "error": "connection refused"}\n'
+        '{"t": 2.0, "ok": false, "error": "connection refused"}\n',
+        encoding="utf-8",
+    )
+    app = next(s for s in layer_scores(session, {}, {}) if s.layer == "app_sim")
+    assert app.state == "unavailable"
+    assert "detail" in app.signals
+
+
+def test_app_scrape_with_one_success_stays_collected(tmp_path: Path) -> None:
+    from apm_suite.analysis.report import layer_scores
+
+    session = _session(tmp_path / "session_scrape_ok")
+    (session / "app").mkdir()
+    (session / "app/bridge.jsonl").write_text(
+        '{"t": 1.0, "ok": false, "error": "connection refused"}\n'
+        '{"t": 2.0, "ok": true, "text": "apm status\\nTPS 20\\n"}\n',
+        encoding="utf-8",
+    )
+    app = next(s for s in layer_scores(session, {}, {}) if s.layer == "app_sim")
+    assert app.state == "collected"
 
 
 # --- unit: store restore verification -----------------------------------------

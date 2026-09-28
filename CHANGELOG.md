@@ -37,6 +37,17 @@ to 2.3.0 and 2.2.4 stays skipped.
   `Config/apmbridge.json` to `Mods/7dtd-server-apm-bridge-config.json` before
   removing the mod folder, instead of deleting settings that the release zip
   only ships as a `.example`.
+- Validity: a window whose app scrape only holds failed telnet records is
+  `app_sim unavailable` instead of a collected layer with no evidence. The
+  collector result, the summary state, and `audit` all name the cause.
+- Audit: an unreadable or vanished session document (`meta.json`,
+  `summary.json`, `health.json`, events, collector results, recorded manifest)
+  is reported as an audit error instead of raising out of the audit.
+- `export`: a hand-mangled `meta.json` timestamp no longer aborts the bundle
+  with a bare `ValueError`; the exported manifest falls back to the session's
+  own tolerant UTC parsing.
+- `scenario run`: an unattributable loadgen stats file is reported and the
+  session is still audited, instead of raising after a successful capture.
 - Packaging: the build backend is now bounded to one major
   (`hatchling>=1.27,<2`). It is the one dependency `uv.lock` cannot hash-pin,
   because PEP 517 build isolation resolves it outside the lock on every

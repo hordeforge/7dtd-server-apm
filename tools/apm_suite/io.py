@@ -118,6 +118,21 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                 yield _sans_surrogates(record)
 
 
+def scrape_succeeded(path: Path) -> bool:
+    """True when an app_scrape log holds at least one successful record.
+
+    The collector logs every attempt, so an unreachable telnet endpoint or a
+    rejected password fills the file with ok:false records while the collector
+    itself exits 0. Artifact presence alone would then read as collected
+    evidence. An unreadable file is not this predicate's call to make: the
+    caller decides on size and permissions, so a read failure reports True.
+    """
+    try:
+        return any(record.get("ok") is True for record in iter_jsonl(path))
+    except OSError:
+        return True
+
+
 def load_json(path: Path) -> dict[str, Any]:
     # Decode failures name the file: a bare "Expecting value" leaves the
     # operator guessing which session artifact was malformed. ValueError (not

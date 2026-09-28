@@ -35,7 +35,7 @@ from .collectors import (
     unknown_only_tokens,
     wanted,
 )
-from .io import atomic_json, claim_dir
+from .io import atomic_json, claim_dir, scrape_succeeded
 from .models import (
     SERVER_COMM,
     BridgeSnapshotV3,
@@ -818,6 +818,18 @@ def run_capture(
         rc = item.process.poll()
         duration = (item.finished or time.monotonic()) - item.started
         status, message = _classify(rc, _produced_bytes(session, item), outcome.interrupted)
+        if (
+            status == "ok"
+            and item.spec.name == "app"
+            and not scrape_succeeded(session / item.spec.artifact)
+        ):
+            # app_scrape logs every attempt, so a full artifact whose records are
+            # all failures is not evidence: report it so the audit warns and the
+            # operator sees why the app layer is empty.
+            status, message = (
+                "failed",
+                "every app scrape failed; see app/bridge.jsonl error records",
+            )
         result = _result(ctx, item.spec, status, exit_code=rc, duration=duration, message=message)
         print(f"   {item.spec.name}: {status} exit={rc} samples={result.sample_count}")
 
