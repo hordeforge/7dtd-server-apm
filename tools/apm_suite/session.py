@@ -175,7 +175,7 @@ def _requested(name: str, layer: str, requested_set: set[str]) -> bool:
     return spec.requested(requested_set)
 
 
-def _mtime(path: Path) -> float:
+def mtime_or_zero(path: Path) -> float:
     """Sort key tolerant of concurrent prune: a session removed by another
     process between glob and stat would otherwise crash every caller
     (auto-prune after a finished capture, CLI prune) with FileNotFoundError."""
@@ -193,7 +193,7 @@ def list_sessions(root: Path) -> list[Path]:
     """
     return sorted(
         (p for p in root.glob("session_*") if p.is_dir()),
-        key=lambda p: (_mtime(p), p.name),
+        key=lambda p: (mtime_or_zero(p), p.name),
         reverse=True,
     )
 
@@ -617,7 +617,7 @@ def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[Mani
             )
         except OSError:
             # A concurrent prune removed the file between glob and read: skip it
-            # (same contract as _mtime) instead of crashing every audit that
+            # (same contract as mtime_or_zero) instead of crashing every audit that
             # overlaps a prune.
             continue
     started_at, ended_at = capture_window(meta)

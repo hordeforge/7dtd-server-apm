@@ -20,11 +20,14 @@ from .analysis.bridge import analyze
 from .analysis.budget import check_budget
 from .analysis.compare import run_compare
 from .analysis.index import write_index
+from .analysis.scaling import analyze_scaling
 from .bundle import BundleError, export_bundle, import_bundle
 from .capture import (
     bridge_telemetry_file,
     find_server_pid,
+    rally_players,
     run_capture,
+    telnet_command,
     write_plan_text,
 )
 from .collectors import unknown_only_tokens
@@ -495,8 +498,6 @@ def scaling(
     ranks by exponent (O(N^exp), worst first). Needs 3+ finalized sessions at
     distinct load levels.
     """
-    from .analysis.scaling import analyze_scaling
-
     usable = [s for s in sessions if (s / "summary.json").is_file()]
     if len(usable) < 3:
         _fail("need >= 3 finalized sessions (different load levels) to fit scaling", 2)
@@ -1028,8 +1029,6 @@ def scenario_run(
             console.print(f"warmup: waiting {warmup}s for join + spawn steady state")
             time.sleep(warmup)
         if rally or rally_at:
-            from .capture import rally_players
-
             moved = rally_players("127.0.0.1", 8081, telnet_password, at=coordinates)
             console.print(f"rally: teleported {moved} players into one cluster")
             time.sleep(15 if rally_at else 10)  # let teleport chunk churn settle
@@ -1193,8 +1192,6 @@ def scenario_matrix(
     ] = "killall",
 ) -> None:
     """Run a labeled experiment sequence from a JSON plan (list of scenario kwargs)."""
-    from .capture import telnet_command
-
     # Secret via environment only (same contract as capture): no argv flag.
     telnet_password = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
     if not plan.is_file():

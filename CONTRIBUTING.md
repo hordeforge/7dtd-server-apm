@@ -42,14 +42,16 @@ uv run --locked pytest tools/apm_suite/tests/test_core.py -k test_list_sessions
 
 `uv run` is enough: it syncs the project environment on demand. The `Makefile`
 targets add `--locked --project .` and a repo-local UV cache, so prefer them
-for the gates. Tests live in `tools/apm_suite/tests/`; the suite takes about a
-minute, so select by file or `-k` name while iterating and run everything
+for the gates. Tests live in `tools/apm_suite/tests/` (package behavior) and in
+`tests/` (repo-level gates: bridge sources, packaging, CI pins); the suite takes
+about a minute, so select by file or `-k` name while iterating and run everything
 before opening a change.
 
 New tests go next to the code they cover, in the file whose subject they
-exercise (`test_core.py`, `test_fuzz_parsers.py`, `test_bridge_build_surface.py`,
-`test_dependency_surface.py`). A test drives the real entry point and asserts
-the shipped result, not a re-implementation of the logic.
+exercise (`tools/apm_suite/tests/test_core.py`,
+`tools/apm_suite/tests/test_fuzz_parsers.py`, `tests/test_bridge_build_surface.py`,
+`tests/test_dependency_surface.py`). A test drives the real entry point and
+asserts the shipped result, not a re-implementation of the logic.
 
 ## Gate
 

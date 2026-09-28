@@ -21,6 +21,7 @@ from pathlib import Path
 # from the repository checkout instead of duplicating defaults.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from apm_suite.paths import REPO, apm_root, bridge_mod_dir
+from apm_suite.session import mtime_or_zero
 
 HOST, PORT = "127.0.0.1", 8081
 PASSWORD = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
@@ -107,16 +108,6 @@ def spawn_to(target: int) -> int | None:
     return current
 
 
-def _mtime(path: Path) -> float:
-    """Sort key tolerant of concurrent prune (same contract as
-    apm_suite.session._mtime): a session removed between glob and stat must
-    not crash this ladder after its capture already completed."""
-    try:
-        return path.stat().st_mtime
-    except OSError:
-        return 0.0
-
-
 def newest_session(since_epoch: float) -> Path | None:
     """Newest session directory created at/after `since_epoch`, or None.
 
@@ -124,8 +115,10 @@ def newest_session(since_epoch: float) -> Path | None:
     session this run did not create must never come back: writing into an
     unrelated older session rewrites foreign evidence and breaks its recorded
     manifest hashes (the audit then reports the session INVALID)."""
-    fresh = [p for p in apm_root().glob("session_*") if p.is_dir() and _mtime(p) >= since_epoch]
-    return max(fresh, key=_mtime, default=None)
+    fresh = [
+        p for p in apm_root().glob("session_*") if p.is_dir() and mtime_or_zero(p) >= since_epoch
+    ]
+    return max(fresh, key=mtime_or_zero, default=None)
 
 
 def main() -> int:

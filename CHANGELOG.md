@@ -52,6 +52,14 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
   prose.
 - Tooling: mypy gained `mutable-override`, `narrowed-type-not-subtype`, and
   `unused-awaitable`, all clean across `tools/`, `scripts/`, and `plans/`.
+- Tooling: the repo-level gates that assert on the bridge sources, the
+  packaging config, and the CI pins moved out of `tools/apm_suite/tests/`
+  into `tests/`. They never exercised `apm_suite` code; they sat in the
+  package's test directory only because `testpaths` pointed there. `pytest`,
+  `ruff`, and mypy cover both roots.
+- Tooling: `apm_suite.session.mtime_or_zero` replaces the private `_mtime`
+  helper, which `plans/scale_ladder.py` had to copy because the original was
+  not importable. The ladder now calls the one implementation.
 
 ## 2.3.0 - host CLI - 2026-09-28
 

@@ -116,18 +116,21 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Test-only rules, scoped to the suite instead of switched off repo-wide.
+# Test-only rules, scoped to the two test roots instead of switched off
+# repo-wide: tools/apm_suite/tests covers the package, tests covers the
+# repo-level gates (bridge sources, packaging, CI pins).
 "tools/apm_suite/tests/*" = ["S101", "S106"] # assert statements, and the fake telnet password the password-leak test asserts on.
+"tests/*" = ["S101"]
 
 
 [tool.mypy]
 python_version = "3.11"
 strict = true
 mypy_path = "tools"
-# Whole roots instead of a file allowlist: every Python file under these three
+# Whole roots instead of a file allowlist: every Python file under these four
 # trees is type-checked, so a new module is covered by default rather than
 # silently escaping the gate until someone remembers to list it.
-files = ["tools", "scripts", "plans"]
+files = ["tools", "scripts", "plans", "tests"]
 # Beyond strict: an unreachable branch usually means dead code or a type lie,
 # and these error codes are not part of strict. All four pass the tree clean
 # as of 2026-08-25; bare ignores were already banned de facto (every existing
@@ -158,5 +161,5 @@ enable_error_code = [
 
 [tool.pytest.ini_options]
 pythonpath = ["tools"]
-testpaths = ["tools/apm_suite/tests"]
+testpaths = ["tools/apm_suite/tests", "tests"]
 addopts = "-q"

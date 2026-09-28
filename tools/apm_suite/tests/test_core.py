@@ -5511,12 +5511,12 @@ def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
     .is_dir() does not go through Path.stat (it uses os.stat), so the sort-key
     stat is the only Path.stat call on a listed session and that is where the
     race has to be provoked; the explicit mtimes below keep the expected order
-    identical either way, and the _mtime assertion above covers the tolerance
-    itself.
+    identical either way, and the mtime_or_zero assertion above covers the
+    tolerance itself.
     """
-    from apm_suite.session import _mtime, list_sessions
+    from apm_suite.session import list_sessions, mtime_or_zero
 
-    assert _mtime(tmp_path / "never-existed") == 0.0
+    assert mtime_or_zero(tmp_path / "never-existed") == 0.0
 
     (tmp_path / "session_a").mkdir()
     (tmp_path / "session_b").mkdir()

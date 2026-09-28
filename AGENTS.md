@@ -90,6 +90,7 @@ tools/host_profiler/   perf/bpftrace helpers and flame conversion
 bridge/ApmBridge/      Optional managed timing DLL
 docs/                  APM model, bridge correlation, compatibility
 scripts/               bridge build/install, checks
+tests/                 repo-level gates (bridge sources, packaging, CI pins)
 plans/                 load-profile and campaign manifests consumed by scenario runs
 ```
 

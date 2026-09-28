@@ -111,7 +111,7 @@ removed: no `/api/perf` handler and no `Perf` class exist anywhere under
 - Elevation: the REST endpoint relies wholly on stock dashboard auth;
   `DefaultMethodPermissionLevels()` returns admin-only zeros for every verb and
   the handler reads no request data (`WebApi.cs:18-41`). No mutating verb is
-  overridden, so the base handler answers 405. `tools/apm_suite/tests/test_bridge_build_surface.py:71-80`
+  overridden, so the base handler answers 405. `tests/test_bridge_build_surface.py:71-80`
   pins the all-zero array.
 - The console path is the exception: the bridge authorizes nothing itself, takes
   `CommandSenderInfo` and never inspects it (`BridgeMod.cs:285`). `apm reload`
