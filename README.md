@@ -29,8 +29,9 @@ The `forensic` preset (`scenario run --preset forensic`) attributes it:
    thread (including the main tick thread) for a single collection; captured
    freezes up to **321 ms** (6+ missed ticks). Driven by gross allocation
    churn, **~12.5 MB/s**, while the heap size is stable (net growth ~0). The
-   older net-heap metric read ~0 and masked this entirely; gross is measured
-   via the `mono_alloc` probe (Boehm `GC_malloc`), and the freeze itself via
+   older net-heap metric read ~0 and masked this entirely; gross comes from the
+   bridge's P/Invoke of Boehm `GC_get_total_bytes` (the `mono_alloc` probe is
+   the opt-in fallback when the bridge is absent), and the freeze itself via
    `GC_stop_world`/`GC_start_world` timing.
 2. **Two GC drains from the same churn:** rare big STW freezes at high load,
    and constant incremental `collect_a_little` (~300/s) nibbling the main
@@ -92,9 +93,10 @@ Delete it to re-seed the shipped `.example`.
 tool automatically on the stock phase of every comparison scenario:
 `COMPARE_APM=1` runs `7dtd-server-apm capture --seconds N --no-app` over the
 connected window, finalizes the session under `stock/apm/session_*/`, and
-summarizes it into the comparison surface (layer scores, IPC, GC alloc rate,
-lag verdict). The bridge must be installed in the stock dedicated server (the
-`make bridge-install` step above). `COMPARE_APM=0` disables; see
+summarizes it into the comparison surface (layer scores, IPC, lag verdict).
+`--no-app` skips the bridge snapshot, so the managed-layer numbers (`frame`,
+`gc`, bridge-attributed lag) are absent from that stock capture and the
+process-only ones are all it carries. `COMPARE_APM=0` disables; see
 `../7dtd-loadgen/docs/SUT_COMPARE.md` for the full picture.
 
 ## Capture presets
@@ -102,7 +104,7 @@ lag verdict). The bridge must be installed in the stock dedicated server (the
 | Preset | Purpose | Expected observer overhead |
 |---|---|---|
 | `standard` | Bridge, threads, memory counters, CPU sampling | Low to moderate |
-| `deep` | All collectors and sampled deep managed hooks | Moderate |
+| `deep` | Every non-opt-in collector and sampled deep managed hooks | Moderate |
 | `forensic` | All available raw evidence for short investigations | Highest |
 
 `--preset` is a `scenario run` option; it selects the `capture --only` collector
@@ -135,8 +137,9 @@ while barely using CPU. The bridge counts late ticks (>60 ms) and cumulative
 overage per window (`app_sim.late_ticks` is the lag headline). The off-CPU
 probe tracks the main thread and splits blocked time by state, but note that
 most main-thread off-CPU time is the *healthy* frame-pacing sleep (the server
-sleeps between ticks when under budget), so the scheduler layer scores only
-D-state (disk) blocks; `SLOW_VFS_MAIN` marks main-thread file IO.
+sleeps between ticks when under budget), so the scheduler layer scores D-state
+(disk) blocks, off-CPU blocks of about a millisecond or more, preemption, and
+main-thread run-queue stall; `SLOW_VFS_MAIN` marks main-thread file IO.
 The analyzer's `stall_correlation` pairs each worst frame spike with the events
 within +/-2 s and, by duration match, with Mono stop-the-world GC pauses
 (`cause: gc_pause`) - the most common "laggy without CPU" culprit - rendered on
@@ -166,9 +169,10 @@ Flamegraph symbolization: Unity's embedded Mono ignores
 (`apm jitmap [full]`, sent by every `scenario run` capture and by bare
 `capture --symbolize`; the latter defaults OFF because the
 JIT burst runs on the server's main thread and can stall a loaded server,
-so pass it only for bench/flamegraph runs). The map
-lives in the mod's disk-backed telemetry directory; only a symlink is placed
-at the tmpfs path perf hardcodes (`/tmp/perf-<pid>.map`). Recording uses
+so pass it only for bench/flamegraph runs). The map is copied into the
+session's `runtime/` directory and only a symlink is placed at the tmpfs path
+perf hardcodes (`/tmp/perf-<pid>.map`), pointing at that session copy rather
+than the mod's telemetry directory. Recording uses
 frame-pointer unwinding (measured ~40x more resolvable frames than dwarf on
 Mono, at ~1% of the perf.data size); unresolved anonymous-exec frames are
 labeled `[jit]` (mostly Burst-compiled code and Mono trampolines) and

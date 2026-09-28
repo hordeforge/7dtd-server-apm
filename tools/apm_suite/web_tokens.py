@@ -8,7 +8,7 @@ WebMod had picked up two extra grays of its own. One source, rendered into every
 page, is what keeps a reader from seeing four different products.
 
 The look is deliberately plain: hairline rules separate, surfaces stay flat, and
-the only saturated color is the amber accent and the ok/warn/bad status trio. This
+the only saturated colors are the amber accent and the ok/bad status pair. This
 is an evidence tool; a value you can read at a glance beats decoration, and
 nothing here trades contrast for style.
 """
@@ -23,9 +23,8 @@ TOKENS: dict[str, str] = {
     "outline": "#2a2f3a",
     "rule": "#303642",
     # Text: primary, secondary, and the amber accent that marks a budgeted
-    # number. Status: green within budget, amber near it, red past it. The
-    # accent and the warn tone are deliberately the same hue so a bar and the
-    # number beside it never disagree.
+    # number. Status: green within budget, red past it. There is no separate
+    # near-limit tone, so a bar and the number beside it cannot disagree.
     "text": "#e8eaed",
     "muted": "#9aa0a6",
     "link": "#8ab4f8",
@@ -35,8 +34,9 @@ TOKENS: dict[str, str] = {
 }
 
 # One scale, used by every page: body, code, section heading, page heading, and
-# the one display figure (the health grade). The ratios are ~1.2 apart, so no
-# two levels are close enough to read as the same thing.
+# the one display figure (the health grade). The steps are deliberately close
+# (1.5px from body to code) so inline text never breaks the page rhythm, and
+# the two display sizes are far enough out to read as headings on sight.
 SCALE: dict[str, str] = {
     "body": "14px",
     "code": "12.5px",

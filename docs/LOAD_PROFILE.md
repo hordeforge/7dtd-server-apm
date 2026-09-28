@@ -164,10 +164,13 @@ Everything else is fully automated.
 
 ## Scaling and the wall
 
-`plans/profile.scale-ladder.json` runs the same profile at 25/50/100 players
-(same seed) to measure per-player cost and find the tick-budget wall. The steps
-hold the profile constant and scale players, keeping entity density per player
-roughly constant. Read `grossAllocMBPerSecond`, `stw_pause_worst_ms`,
+`plans/profile.scale-ladder.json` scales players at 25/50/100 to measure
+per-player cost and find the tick-budget wall. It holds the seed and the bot
+mix constant, but the entity knobs differ per step (`spawn_per_player` 4/4/3,
+`horde_every_ms` 45000/45000/40000, `warmup` 75/90/120), so it is
+not a like-for-like repetition of `profile.canonical.json`: read each step
+against the knobs it actually ran. Read `grossAllocMBPerSecond`,
+`stw_pause_worst_ms`,
 `lateTicks`, and the per-subsystem `attribution` across steps: per-entity tick
 cost is linear (~0.08 ms/entity/tick), so the late-tick and STW curves show
 where the tick budget breaks. Note the engine caps active AI (excess spawns get

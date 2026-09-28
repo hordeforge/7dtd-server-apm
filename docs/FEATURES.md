@@ -29,7 +29,7 @@ Lag diagnosis covers GC gross-allocation churn, stop-the-world pause timing, all
 | Automatic Harmony patch generation | Removed (unsafe) |
 | Raw eBPF/perf scripts as public API | Private collector backends |
 
-Collector stderr, exit status, capture duration, and artifacts are represented in the session manifest. Optional collector failure preserves other usable evidence (layer becomes `unavailable`, never a healthy zero).
+Collector exit status, tool version, sample count, capture duration, and artifacts are represented in the session manifest; stderr goes to a sibling `<name>.err` file beside the artifact rather than into the manifest. Optional collector failure preserves other usable evidence (layer becomes `unavailable`, never a healthy zero).
 
 ## Related docs
 

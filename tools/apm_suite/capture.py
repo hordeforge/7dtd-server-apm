@@ -95,10 +95,11 @@ _TOOL_VERSIONS: dict[str, str] = {}
 def tool_version(binary: str) -> str:
     """Version line for a collector tool, probed at most once per binary.
 
-    _result() records a version for every collector spec (skipped ones included),
-    so an uncached probe would spawn the same --version subprocess up to twice
-    per spec each capture. Caching also bounds a hung probe: without it a single
-    wedged `bpftrace --version` costs its full timeout once PER result record,
+    _result() records a version for every collector spec (skipped ones included)
+    and the manifest probes the same three binaries, so an uncached probe would
+    spawn the same --version subprocess once per spec on top of that.
+    Caching also bounds a hung probe: without it a single wedged
+    `bpftrace --version` costs its full timeout once PER result record,
     not once per capture.
     """
     cached = _TOOL_VERSIONS.get(binary)

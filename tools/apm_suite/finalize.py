@@ -1,9 +1,10 @@
 """In-process session finalization pipeline.
 
 Order matters: jitsym annotation → summary → health → events → managed bridge
-→ budget → HTML → index. Each stage is typed and failures are collected, never
-swallowed; the integrity audit runs separately, after every session file is
-closed.
+→ budget → HTML → manifest → index. Each stage is typed and failures are
+collected, never swallowed. The manifest stage is the integrity audit, and it
+runs after the other stages because re-finalizing rewrites artifacts an earlier
+audit recorded.
 """
 
 from __future__ import annotations

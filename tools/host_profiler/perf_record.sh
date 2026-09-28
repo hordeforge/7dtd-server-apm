@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# perf record/report for 7DTD dedicated (user stacks; no root required for :u events often).
+# perf record/report for 7DTD dedicated. No :u event modifier: the default event
+# samples kernel too, so this needs perf_event_paranoid <= 2 (see doctor).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck disable=SC1091

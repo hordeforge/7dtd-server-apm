@@ -52,7 +52,8 @@ def scan(root: Path) -> list[dict[str, Any]]:
             with contextlib.suppress(ValueError, OSError):
                 health = load_json(health_path)
         if not health:
-            # sessions finalized before v2.2
+            # Health lives in its own file, but an imported or hand-written
+            # summary.json may inline it instead.
             health = as_mapping(summary.get("health"))
         entries = summary.get("layers")
         layers = {

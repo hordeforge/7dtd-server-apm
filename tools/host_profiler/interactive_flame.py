@@ -23,6 +23,7 @@ from pathlib import Path
 # necessarily this interpreter.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.io import force_utf8_stdio
+from apm_suite.web_tokens import base_css
 
 # reuse converters
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -35,35 +36,34 @@ HTML = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>__TITLE__</title>
 <style>
-  /* Shared APM web tokens (report + dashboard + session index + flame pages). */
-  :root { --bg:#0f1115; --panel:#161a22; --fg:#e8eaed; --muted:#9aa0a6; --accent:#8ab4f8; --hi:#fdd663; --rule:#303642; }
+__BASE_CSS__
   * { box-sizing: border-box; }
-  body { margin:0; font-family: system-ui, sans-serif; background:var(--bg); color:var(--fg); }
-  header { padding:12px 16px; background:var(--panel); display:flex; flex-wrap:wrap; gap:12px; align-items:center; border-bottom:1px solid var(--rule); }
+  body { margin:0; font-family: system-ui, sans-serif; background:var(--apm-bg); color:var(--apm-text); }
+  header { padding:12px 16px; background:var(--apm-surface); display:flex; flex-wrap:wrap; gap:12px; align-items:center; border-bottom:1px solid var(--apm-rule); }
   header h1 { font-size:16px; margin:0; font-weight:600; }
-  header .muted { color:var(--muted); font-size:13px; }
+  header .muted { color:var(--apm-muted); font-size:13px; }
   #controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-left:auto; }
-  input[type=search] { background:var(--bg); border:1px solid var(--rule); color:var(--fg); padding:6px 10px; border-radius:6px; min-width:200px; }
-  button { background:#2a2f3a; border:1px solid var(--rule); color:var(--fg); padding:6px 12px; border-radius:6px; cursor:pointer; }
-  button:hover { border-color:var(--accent); }
-  #breadcrumb { padding:8px 16px; font-size:12px; color:var(--muted); word-break:break-all; min-height:1.5em; }
-  #breadcrumb a { color:var(--accent); cursor:pointer; text-decoration:underline; margin-right:4px; }
+  input[type=search] { background:var(--apm-bg); border:1px solid var(--apm-rule); color:var(--apm-text); padding:6px 10px; border-radius:6px; min-width:200px; }
+  button { background:var(--apm-outline); border:1px solid var(--apm-rule); color:var(--apm-text); padding:6px 12px; border-radius:6px; cursor:pointer; }
+  button:hover { border-color:var(--apm-link); }
+  #breadcrumb { padding:8px 16px; font-size:12px; color:var(--apm-muted); word-break:break-all; min-height:1.5em; }
+  #breadcrumb a { color:var(--apm-link); cursor:pointer; text-decoration:underline; margin-right:4px; }
   #breadcrumb a:hover, #breadcrumb a:focus-visible { text-decoration:none; }
   #chart { width:100%; overflow:hidden; }
   svg { display:block; width:100%; }
-  .frame rect { stroke:var(--bg); stroke-width:0.5; cursor:pointer; }
+  .frame rect { stroke:var(--apm-bg); stroke-width:0.5; cursor:pointer; }
   .frame text { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:11px; fill:#111; pointer-events:none; }
   .frame.dim rect { opacity:0.25; }
-  .frame.hit rect { stroke:var(--hi); stroke-width:1.5; }
+  .frame.hit rect { stroke:var(--apm-accent); stroke-width:1.5; }
   #tip {
-    display:none; position:fixed; z-index:10; background:var(--panel); border:1px solid var(--rule);
+    display:none; position:fixed; z-index:10; background:var(--apm-surface); border:1px solid var(--apm-rule);
     padding:8px 10px; border-radius:6px; font-size:12px; max-width:480px; pointer-events:none;
     box-shadow:0 4px 16px rgba(0,0,0,.4);
   }
-  #tip b { color:var(--hi); }
+  #tip b { color:var(--apm-accent); }
   .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; clip-path:inset(50%); overflow:hidden; white-space:nowrap; }
-  footer { padding:8px 16px; font-size:12px; color:var(--muted); }
-  footer a { color:var(--accent); }
+  footer { padding:8px 16px; font-size:12px; color:var(--apm-muted); }
+  footer a { color:var(--apm-link); }
 </style>
 </head>
 <body>
@@ -333,7 +333,8 @@ def main() -> int:
         dumps_deep(tree).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     )
     page = (
-        HTML.replace("__TITLE__", html.escape(args.title))
+        HTML.replace("__BASE_CSS__", base_css())
+        .replace("__TITLE__", html.escape(args.title))
         .replace("__TREE_JSON__", tree_json)
         .replace("__SPEEDSCOPE_NAME__", html.escape(args.speedscope_name))
     )

@@ -56,9 +56,9 @@ def proc_jsonl(capture: Path) -> Path:
 def near_spike(spike_ts: list[float], t: float, window: float = 5.0) -> bool:
     """True when a spike stamp falls in [t - window, t + window).
 
-    The window is anchored on the sample and half-open at the far end, so a
-    sample 5s after a spike counts and one 5s before it does not.
-    `spike_ts` must be sorted ascending.
+    The window is anchored on the sample, half-open at the far end: a spike
+    exactly `window` before the sample counts, one exactly `window` after it
+    does not. `spike_ts` must be sorted ascending.
     """
     index = bisect_left(spike_ts, t - window)
     return index < len(spike_ts) and spike_ts[index] < t + window

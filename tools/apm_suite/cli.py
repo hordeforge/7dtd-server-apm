@@ -199,8 +199,9 @@ def doctor(
     ] = None,
 ) -> None:
     """Check host readiness for each APM capture layer."""
-    # Lazy like the other command-scoped imports: doctor is the only psutil
-    # consumer, and a module-level import would tax every CLI invocation.
+    # Lazy like the other command-scoped imports: `inspect` pulls in psutil,
+    # which `doctor` shares with `capture`, and a module-level import would tax
+    # every CLI invocation that never touches it.
     from .doctor import inspect
 
     result = inspect(pid, telnet_host, telnet_port)
@@ -1211,8 +1212,8 @@ def scenario_matrix(
     for position, entry in enumerate(entries, 1):
         if not isinstance(entry, dict):
             _fail(f"plan entry {position} is not a JSON object", 2)
-        # `_`-prefixed keys are plan commentary (the shipped plans document each
-        # experiment with one) and carry no runner meaning.
+        # `_`-prefixed keys are plan commentary (the canonical and tier plans
+        # use them) and carry no runner meaning.
         unknown = {key for key in set(entry) - allowed if not key.startswith("_")}
         if unknown:
             # Plan keys are attacker-controlled in imported plans; _fail escapes.

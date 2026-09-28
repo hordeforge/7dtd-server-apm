@@ -121,8 +121,8 @@ def _mono_gc_probe(pid: int | None) -> dict[str, Any]:
 
 
 def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
-    # Imported here, not at module level, so every non-doctor CLI command skips
-    # the ~70ms psutil import on startup.
+    # Imported here, not at module level, so the CLI commands that never reach
+    # this function skip the ~70ms psutil import on startup.
     import psutil
 
     candidates: list[dict[str, Any]] = []
