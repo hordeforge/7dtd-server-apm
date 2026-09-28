@@ -4,11 +4,12 @@ import hashlib
 import json
 import os
 import re
+import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import suppress
 from pathlib import Path, PurePosixPath
-from typing import Any
+from typing import IO, Any
 
 # Lone surrogates (JSON "\ud800" escapes; a pair decodes to two lone halves)
 # cannot be encoded to UTF-8, so any survivor would crash os.stat joins and
@@ -31,6 +32,73 @@ def _sans_surrogates(value: Any) -> Any:
     if isinstance(value, dict):
         return {_clean_str(key): _sans_surrogates(item) for key, item in value.items()}
     return value
+
+
+def force_utf8_stdio() -> None:
+    """Pin stdout and stderr to UTF-8 whatever the process locale says.
+
+    Under LANG=C (a bare systemd unit, cron, `env -i`, `sudo` without
+    -E) both streams are ASCII, and the first non-ASCII character a command
+    prints raises UnicodeEncodeError instead of being reported: a session
+    path under a non-ASCII home directory, a hostname quoted inside an
+    OSError, a localized tool version. Rich writes straight to the text
+    stream and does not guard, so the traceback lands where the report
+    should be. Every file this tool writes is already UTF-8; these two
+    streams were the last boundary inheriting the environment.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            # Not a TextIOWrapper: a test harness' or a wrapper's stand-in
+            # that owns its own encoding. There is nothing to reconfigure.
+            continue
+        try:
+            reconfigure(encoding="utf-8", errors="replace")
+        except ValueError as error:
+            # Already-detached or already-read stream: reconfigure refuses.
+            # Its own encoding still applies, and a warning written through
+            # that same stream could raise again, so it goes out as bytes.
+            _write_bytes(
+                getattr(sys.stderr, "buffer", sys.stderr),
+                f"WARNING: cannot pin stdio to UTF-8: {error}\n".encode(),
+            )
+
+
+def _write_bytes(buffer: Any, payload: bytes) -> None:
+    sys.stdout.flush()
+    buffer.write(payload)
+    buffer.flush()
+
+
+def write_stdout(text: str) -> None:
+    """Emit UTF-8 on stdout whatever the process locale says.
+
+    The machine-readable `--json -` output is a document a caller pipes into
+    another tool: it must be UTF-8 like every file this tool writes, not
+    whatever `LANG` happens to be on the host that produced it.
+    """
+    buffer = getattr(sys.stdout, "buffer", None)
+    if buffer is None:
+        sys.stdout.write(text)
+        return
+    sys.stdout.flush()
+    _write_bytes(buffer, text.encode("utf-8", "replace"))
+
+
+def read_stdin_text(stream: IO[str] | None = None) -> Iterator[str]:
+    """Iterate stdin as UTF-8 with undecodable bytes replaced.
+
+    sys.stdin follows the locale too, and its default error handler is
+    surrogateescape, so under LANG=C the same bytes read from a pipe take a
+    different path than the identical bytes read from a file: they survive as
+    lone surrogates that a later UTF-8 writer cannot encode. Reconfiguring
+    pins the pipe to the file policy.
+    """
+    source = sys.stdin if stream is None else stream
+    reconfigure = getattr(source, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(encoding="utf-8", errors="replace")
+    return source
 
 
 def member_is_safe(name: str) -> bool:

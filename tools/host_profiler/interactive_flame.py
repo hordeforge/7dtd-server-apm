@@ -17,6 +17,11 @@ import json
 import sys
 from pathlib import Path
 
+# apm_suite is resolved from the repository checkout, not the interpreter's
+# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from apm_suite.io import force_utf8_stdio
+
 # reuse converters
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from folded_to_speedscope import dumps_deep, load_folded, to_d3_tree
@@ -299,6 +304,7 @@ render();
 
 
 def main() -> int:
+    force_utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("input", type=Path, nargs="?", help="stacks.folded")
     ap.add_argument("--tree", type=Path, help="d3 tree JSON instead of folded")

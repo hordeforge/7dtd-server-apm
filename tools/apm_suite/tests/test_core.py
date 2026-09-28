@@ -25,9 +25,9 @@ from apm_suite.analysis.events import PER_SOURCE_MAX, build_timeline
 from apm_suite.analysis.health import build_health
 from apm_suite.analysis.report import parse_perf_stat, top_alloc_sites
 from apm_suite.capture import CaptureContext, CollectorSpec
-from apm_suite.cli import app
+from apm_suite.cli import app, console
 from apm_suite.finalize import finalize
-from apm_suite.io import atomic_json, load_json, load_jsonc
+from apm_suite.io import atomic_json, force_utf8_stdio, load_json, load_jsonc, write_stdout
 from apm_suite.models import Artifact, EventsV2, LayerScore, ManifestV2, Target, schema_dict
 from apm_suite.paths import REPO
 from apm_suite.reporting import render_session
@@ -623,6 +623,34 @@ def test_flame_build_reports_missing_backends_cleanly(
     result = runner.invoke(app, ["flame", "build", str(tmp_path)])
     assert result.exit_code == 2
     assert "collector backends missing" in result.stderr
+
+
+def test_stdout_stays_utf8_under_a_c_locale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A C locale must not turn a non-ASCII path or hostname into a crash.
+
+    Rich writes straight to the text stream and does not guard, so without
+    the CLI's encoding pin the first non-ASCII character a command prints
+    raises UnicodeEncodeError and the operator sees a traceback instead of
+    the report. Both streams are pinned at the command entry point.
+    """
+    out_buffer = io.BytesIO()
+    err_buffer = io.BytesIO()
+    out = io.TextIOWrapper(out_buffer, encoding="ascii", errors="strict")
+    err = io.TextIOWrapper(err_buffer, encoding="ascii", errors="strict")
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+
+    force_utf8_stdio()
+    session = tmp_path / "seßion_1"
+    console.print(f"session: {session}")
+    write_stdout("café\n")
+    out.flush()
+
+    written = out_buffer.getvalue().decode("utf-8")
+    assert f"{session}\n" in written
+    assert written.endswith("café\n")
 
 
 def test_doctor_json_stdout_is_machine_readable() -> None:
@@ -1888,6 +1916,54 @@ def test_stackcollapse_keeps_module_for_unknown_frames() -> None:
     )
     counts = module.collapse(perf_script)
     assert counts == {"[jit];GameManager.gmUpdate;[libmonobdwgc-2.0.so]": 1}
+
+
+def _stackcollapse_run(argument: str, stdin: bytes) -> subprocess.CompletedProcess[bytes]:
+    # LANG=C plus -X utf8=0 forces the pre-3.15 default: stdio follows the
+    # locale, so an ASCII stdin/stdout is what this collector really sees when
+    # it runs under a bare systemd unit or cron.
+    env = {**os.environ, "LANG": "C", "LC_ALL": "C", "PYTHONUTF8": "0"}
+    return subprocess.run(
+        [
+            sys.executable,
+            "-X",
+            "utf8=0",
+            str(REPO / "tools/host_profiler/stackcollapse_perf.py"),
+            argument,
+        ],
+        input=stdin,
+        capture_output=True,
+        env=env,
+        check=False,
+    )
+
+
+def test_stackcollapse_io_is_utf8_under_a_c_locale(tmp_path: Path) -> None:
+    """Non-ASCII frame names must survive both ends, from either input path.
+
+    Under LANG=C the default stdio encoding is ASCII: printing a folded key
+    holding a non-ASCII character raised UnicodeEncodeError and lost the whole
+    stacks.folded, and reading the same bytes from stdin (sys.stdin's locale
+    encoding plus surrogateescape) took a different invalid-byte policy than
+    the file path. Both now pin UTF-8 with U+FFFD replacement.
+    """
+    non_ascii = b"srv 1/1 [000] 1.0: cycles:\n\t7f01 caf\xc3\xa9+0x42 (/tmp/perf-1.map)\n\n"
+    script = tmp_path / "perf.script"
+    script.write_bytes(non_ascii)
+
+    from_path = _stackcollapse_run(str(script), b"")
+    piped = _stackcollapse_run("-", non_ascii)
+    for label, result in (("file", from_path), ("stdin", piped)):
+        assert result.returncode == 0, f"{label}: {result.stderr!r}"
+        assert result.stdout == b"caf\xc3\xa9 1\n", f"{label}: {result.stdout!r}"
+
+    undecodable = b"srv 1/1 [000] 1.0: cycles:\n\t7f01 ab\xff\xfe+0x42 (/t)\n\n"
+    invalid = _stackcollapse_run("-", undecodable)
+    assert invalid.returncode == 0
+    # U+FFFD, and no lone surrogate: the consumer re-reads this file as UTF-8
+    # and would crash on a surrogate that only survived via surrogateescape.
+    assert invalid.stdout.decode("utf-8") == "ab�� 1\n"
+    assert b"\xed" not in invalid.stdout
 
 
 def test_bridge_rules_require_thresholded_evidence() -> None:

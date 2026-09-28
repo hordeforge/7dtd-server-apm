@@ -21,6 +21,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# apm_suite is resolved from the repository checkout, not the interpreter's
+# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from apm_suite.io import force_utf8_stdio
+
 # Order matters: first match wins (more specific first).
 TAG_RULES: list[tuple[str, re.Pattern[str]]] = [
     ("GC", re.compile(r"mono_gc|GC_gcollect|GC_try_to_collect|GC_dirty|libmonobdwgc|sgen_", re.I)),
@@ -115,6 +120,7 @@ def annotate_file(src: Path, dst: Path) -> dict[str, Any]:
 
 
 def main() -> int:
+    force_utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("folded", type=Path)
     ap.add_argument("-o", "--output", type=Path, required=True)

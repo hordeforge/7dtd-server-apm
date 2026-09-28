@@ -65,6 +65,19 @@ to 2.3.0 and 2.2.4 stays skipped.
   own tolerant UTC parsing.
 - `scenario run`: an unattributable loadgen stats file is reported and the
   session is still audited, instead of raising after a successful capture.
+- Text encoding: stdout and stderr are now pinned to UTF-8 for every command
+  and every helper under `tools/host_profiler/`, so a `LANG=C` environment (a
+  bare systemd unit, cron, `sudo` without `-E`) no longer turns the first
+  non-ASCII character a report prints into a `UnicodeEncodeError` traceback
+  where the report should be. A session path under a non-ASCII home directory
+  or a hostname quoted inside an OS error was enough to trigger it.
+- Text encoding: `stackcollapse_perf.py` reads a piped `perf script` as UTF-8
+  with undecodable bytes replaced, the same policy it already applied to the
+  file path, and writes UTF-8. `sys.stdin` had been using the locale encoding
+  with `surrogateescape`, so the same bytes took a different path depending on
+  how they arrived, and a non-ASCII frame name lost the whole `stacks.folded`.
+- Text encoding: `doctor --json -` emits UTF-8 bytes directly, matching the
+  encoding of the same report written with `--json <file>`.
 - Packaging: the build backend is now bounded to one major
   (`hatchling>=1.27,<2`). It is the one dependency `uv.lock` cannot hash-pin,
   because PEP 517 build isolation resolves it outside the lock on every

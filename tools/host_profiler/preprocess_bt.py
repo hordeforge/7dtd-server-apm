@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import argparse
 import re
+import sys
 from pathlib import Path
+
+# apm_suite is resolved from the repository checkout, not the interpreter's
+# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from apm_suite.io import force_utf8_stdio
 
 
 def _drop_mono_blocks(text: str) -> str:
@@ -33,6 +39,7 @@ def _drop_mono_blocks(text: str) -> str:
 
 
 def main() -> int:
+    force_utf8_stdio()
     ap = argparse.ArgumentParser()
     ap.add_argument("script", type=Path)
     ap.add_argument("-o", "--output", type=Path, required=True)

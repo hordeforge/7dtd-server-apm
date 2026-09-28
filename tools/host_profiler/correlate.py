@@ -21,6 +21,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+# apm_suite is resolved from the repository checkout, not the interpreter's
+# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from apm_suite.io import force_utf8_stdio
+
 RE_SPIKE = re.compile(
     r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}).*\[EfficientServer\]\s+SPIKE\s+"
     r"(?P<utc>\S+)\s+frame=(?P<frame>[\d.]+)ms.*zed=(?P<zed>-?\d+).*\|\s+(?P<top>.*)"
@@ -93,6 +98,7 @@ def nearest_proc(times: list[float], rows: list[dict[str, Any]], t: float) -> di
 
 
 def main() -> int:
+    force_utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--capture", type=Path, required=True)
     ap.add_argument("--game-log", type=Path, required=True)

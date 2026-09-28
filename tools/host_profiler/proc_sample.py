@@ -21,6 +21,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import IO, Any
 
+# apm_suite is resolved from the repository checkout, not the interpreter's
+# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from apm_suite.io import force_utf8_stdio
+
 
 @dataclass
 class Sample:
@@ -161,6 +166,7 @@ def sample(pid: int) -> Sample:
 
 
 def main() -> int:
+    force_utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--pid", type=int, default=0)
     ap.add_argument("--seconds", type=float, default=60.0)

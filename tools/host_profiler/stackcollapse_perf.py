@@ -11,9 +11,13 @@ from __future__ import annotations
 import re
 import sys
 from collections import Counter
-from contextlib import nullcontext
-from pathlib import PurePath
-from typing import IO
+from collections.abc import Iterable
+from pathlib import Path, PurePath
+
+# apm_suite is resolved from the repository checkout, not the interpreter's
+# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from apm_suite.io import force_utf8_stdio, read_stdin_text, write_stdout
 
 # sample header: "comm pid/tid [cpu] timestamp: ..."
 HEADER = re.compile(r"^(\S+)\s+(\d+)(?:/(\d+))?\s+")
@@ -44,7 +48,7 @@ def frame_name(raw: str) -> str | None:
     return symbol.replace(";", ":")
 
 
-def collapse(stream: IO[str]) -> Counter[str]:
+def collapse(stream: Iterable[str]) -> Counter[str]:
     counts: Counter[str] = Counter()
     stack: list[str] = []
     in_stack = False
@@ -82,13 +86,14 @@ def collapse(stream: IO[str]) -> Counter[str]:
 
 
 def main() -> int:
+    force_utf8_stdio()
     path = sys.argv[1] if len(sys.argv) > 1 else "-"
-    with (
-        open(path, encoding="utf-8", errors="replace") if path != "-" else nullcontext(sys.stdin)
-    ) as fh:
-        counts = collapse(fh)
-    for key, value in counts.most_common():
-        print(f"{key} {value}")
+    if path == "-":
+        counts = collapse(read_stdin_text())
+    else:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            counts = collapse(fh)
+    write_stdout("".join(f"{key} {value}\n" for key, value in counts.most_common()))
     return 0
 
 

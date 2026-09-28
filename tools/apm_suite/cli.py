@@ -27,7 +27,13 @@ from .capture import (
     unknown_only_tokens,
     write_plan_text,
 )
-from .io import atomic_json, claim_file, load_jsonc
+from .io import (
+    atomic_json,
+    claim_file,
+    force_utf8_stdio,
+    load_jsonc,
+    write_stdout,
+)
 from .models import as_number
 from .paths import REPO, apm_root, require_backends
 from .prometheus import MetricError, export_metrics
@@ -54,6 +60,19 @@ scenario_app = typer.Typer(
 )
 app.add_typer(flame_app, name="flame")
 app.add_typer(scenario_app, name="scenario")
+
+
+@app.callback()
+def _pin_stdio_encoding() -> None:
+    """Every command runs with UTF-8 stdout/stderr, whatever LANG says.
+
+    Runs before the command body so a path, hostname, or tool version with a
+    non-ASCII character is printed rather than raising UnicodeEncodeError out
+    of the printer. See apm_suite.io.force_utf8_stdio.
+    """
+    force_utf8_stdio()
+
+
 console = Console()
 err_console = Console(stderr=True)
 
@@ -161,7 +180,7 @@ def doctor(
 
     result = inspect(pid, telnet_host, telnet_port)
     if json_output == Path("-"):
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+        write_stdout(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
         return
     if json_output:
         atomic_json(json_output, result)

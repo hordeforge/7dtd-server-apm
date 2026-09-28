@@ -10,11 +10,11 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Every script in this directory runs under a bare python3 (make_flames.sh,
-# perf_record.sh); keep that contract here by resolving apm_suite from the
-# repository checkout when it is not installed in the interpreter's venv.
+# apm_suite is resolved from the repository checkout, not the interpreter's
+# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.analysis.flame_delta import delta, folded_stack_path, load_weights
+from apm_suite.io import force_utf8_stdio
 
 
 def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
@@ -62,6 +62,7 @@ def _esc(s: str) -> str:
 
 
 def main() -> int:
+    force_utf8_stdio()
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("session_a", type=Path)
     ap.add_argument("session_b", type=Path)
