@@ -27,6 +27,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          # .python-version is the one interpreter pin (3.12); naming the file
+          # keeps the runner from silently falling back to whatever the image
+          # ships while a local `uv run` already uses the pin.
+          python-version-file: .python-version
           # The Makefile pins UV_CACHE_DIR to the repo-local .uv-cache, so the
           # cache has to be restored at that same path to have any effect.
           enable-cache: true
@@ -63,6 +67,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          # Same interpreter pin as the python job, so the badge it publishes
+          # comes from the version the gate runs under.
+          python-version-file: .python-version
           enable-cache: true
           cache-local-path: .uv-cache
           cache-dependency-glob: "uv.lock"

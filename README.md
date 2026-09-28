@@ -66,7 +66,7 @@ dedicated `GC.Collect`), then entity-tick striding for scale. Full evidence:
 ## Quick start
 
 ```bash
-uv sync
+uv sync --locked
 uv run 7dtd-server-apm doctor
 make bridge-build
 make bridge-install DS="/path/to/7 Days to Die Dedicated Server"

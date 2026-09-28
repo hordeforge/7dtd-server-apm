@@ -51,6 +51,8 @@ jobs:
       # instead of trusting the tag check alone.
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
+          # Same interpreter pin the local gate resolves from .python-version.
+          python-version-file: .python-version
           enable-cache: true
           cache-local-path: .uv-cache
           cache-dependency-glob: "uv.lock"

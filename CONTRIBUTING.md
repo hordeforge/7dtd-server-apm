@@ -7,8 +7,11 @@ measures, see [`README.md`](README.md) and [`docs/APM.md`](docs/APM.md).
 
 ## Prerequisites
 
-Linux, Python 3.11 or newer, and [`uv`](https://docs.astral.sh/uv/). Nothing
-else is needed to run the host CLI or the test suite.
+Linux, [`uv`](https://docs.astral.sh/uv/), and the Python the repo pins in
+`.python-version` (currently 3.12; `uv` provisions it, no system interpreter
+needed). `pyproject.toml` still accepts `>=3.11`, so the pin is what a local
+run and a CI run both resolve; nothing else is needed to run the host CLI or
+the test suite.
 
 The full gate additionally needs `shellcheck`, `bun` (for `bunx`; the tsc,
 oxlint, vnu, and shellcheck versions are pinned in
@@ -29,9 +32,14 @@ warns on a mismatch; install the pinned SDK, or change the pin on purpose.
 ## Setup
 
 ```bash
-uv sync
+uv sync --locked
 uv run 7dtd-server-apm doctor
 ```
+
+`--locked` is the same flag the Makefile targets and CI use: a plain `uv sync`
+re-resolves and rewrites `uv.lock` when `pyproject.toml` has drifted, which
+hides the drift the gate is supposed to report. Dependency changes go through
+`uv lock` on purpose.
 
 `doctor` reports the resolved paths, which layers can run, and any missing
 credential. It is the first command to run on a new machine, and the fastest
@@ -53,8 +61,9 @@ before opening a change.
 New tests go next to the code they cover, in the file whose subject they
 exercise (`tools/apm_suite/tests/test_core.py`,
 `tools/apm_suite/tests/test_fuzz_parsers.py`, `tests/test_bridge_build_surface.py`,
-`tests/test_dependency_surface.py`). A test drives the real entry point and
-asserts the shipped result, not a re-implementation of the logic.
+`tests/test_dependency_surface.py`, `tests/test_packaging_surface.py`). A test
+drives the real entry point and asserts the shipped result, not a
+re-implementation of the logic.
 
 ## Gate
 
@@ -64,7 +73,10 @@ make check-ci     # the same minus check-bt, which is exactly what CI runs
 ```
 
 CI runs `make check-ci` on every push and pull request, so a green
-`make check-ci` locally is the same verdict the pull request gets.
+`make check-ci` locally is the same verdict the pull request gets. `make
+coverage` is the one CI target with no local gate behind it: it re-runs the
+suite under coverage and writes the `.coverage` data the README badge is
+rendered from.
 
 If a version needs bumping, `scripts/check_version.py` (wired into `make test`)
 enforces the two independent version pairs: `pyproject.toml` and

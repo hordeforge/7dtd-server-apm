@@ -14,6 +14,7 @@ UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --locked --project $(ROOT)
 help:
 	@echo "7dtd-server-apm contributor targets (requires: Python 3.11+, uv, Linux):"
 	@echo "  make test           pytest suite + version gate (~1min)"
+	@echo "  make coverage       same suite under coverage; the number behind the README badge"
 	@echo "                      single test: uv run pytest tools/apm_suite/tests/test_core.py -k name"
 	@echo "  make lint           ruff over tools/, scripts/, plans/, tests/"
 	@echo "  make lint-shell     shellcheck (needs the shellcheck binary)"
