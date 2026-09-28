@@ -138,7 +138,14 @@ make bridge-install
 
 `make bridge-install` upgrades in place: shipped files that a later release
 dropped are removed from the mod folder, and `Config/apmbridge.json` is never
-overwritten. `make bridge-uninstall` removes the mod folder but moves that
+overwritten. Every file the build staged is installed, not a fixed list, so a
+new WebMod asset reaches the server without a second edit. If any file fails to
+install, the previous release is restored from a pre-install backup (taken
+before the prune, so a dropped file is put back) and the command exits nonzero;
+operator settings under `Config/` are never touched by a rollback. A build that
+staged nothing is refused before the mod folder is modified at all.
+
+`make bridge-uninstall` removes the mod folder but moves that
 config to `Mods/7dtd-server-apm-bridge-config.json` first, since the release
 zip ships only the `.example` and the tuned settings cannot be regenerated.
 A reinstall seeds a fresh factory config, so a second uninstall writes to

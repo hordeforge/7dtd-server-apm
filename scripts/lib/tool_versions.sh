@@ -25,3 +25,13 @@ export ANTI_SLOP_SHA ANTI_SLOP_SHA256
 # Nu HTML Checker (vnu-jar) used by scripts/lint-html.sh.
 : "${VNU_VERSION:=26.8.20}"
 export VNU_VERSION
+
+# The linter used by `make lint-shell`. It has no pinned-distribution step the
+# way the bunx tools do (CI installs the distro package), so this records the
+# version the gate is written against. scripts/lib/check_shellcheck_version.sh
+# prints the installed version and warns on a mismatch: a distro bump can add
+# or drop findings with no commit involved, and that must be visible in the log
+# rather than silently change the verdict.
+# Override: SHELLCHECK_VERSION=0.11.0
+: "${SHELLCHECK_VERSION:=0.11.0}"
+export SHELLCHECK_VERSION

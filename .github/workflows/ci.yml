@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   python:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # Same cache directory the Makefile pins, so the explicit `uv sync` below
     # and every make target share one restored cache instead of two cold ones.
@@ -32,6 +32,10 @@ jobs:
           enable-cache: true
           cache-local-path: .uv-cache
           cache-dependency-glob: "uv.lock"
+      # The runner image is pinned (ubuntu-24.04) so the distro shellcheck does
+      # not move under the gate; `make lint-shell` prints the installed version
+      # and warns on a mismatch with scripts/lib/tool_versions.sh, so a bump is
+      # visible in the log instead of silently changing the verdict.
       - run: sudo apt-get update && sudo apt-get install -y shellcheck
       - run: uv sync --locked
       # The lint scripts run oxlint, tsc and vnu through bunx at pinned
@@ -47,7 +51,7 @@ jobs:
     # needs.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: python
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
       UV_CACHE_DIR: ${{ github.workspace }}/.uv-cache

@@ -11,9 +11,12 @@ Linux, Python 3.11 or newer, and [`uv`](https://docs.astral.sh/uv/). Nothing
 else is needed to run the host CLI or the test suite.
 
 The full gate additionally needs `shellcheck`, `bun` (for `bunx`; the tsc,
-oxlint, and vnu versions are pinned in `scripts/lib/tool_versions.sh`), and a
-Java runtime for `vnu-jar`. Each check names the tool it cannot find instead
-of failing mid-gate.
+oxlint, vnu, and shellcheck versions are pinned in
+`scripts/lib/tool_versions.sh`), and a Java runtime for `vnu-jar`. Each check
+names the tool it cannot find instead of failing mid-gate. `make lint-shell`
+prints the installed shellcheck version and warns when it differs from the pin,
+because a distro package can change findings with no commit involved; update
+`SHELLCHECK_VERSION` when the new findings are the ones you want.
 
 `bpftrace` and narrowly configured non-interactive privileges are optional and
 only for `make check-bt`; GitHub Actions runners cannot validate the probes,

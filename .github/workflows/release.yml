@@ -3,7 +3,9 @@ name: release
 # Tag-driven releases (hordeforge/.github REPOSITORY_STANDARDS.md, §8): a
 # vX.Y.Z tag must agree with the version this repository actually ships, so a
 # mistyped or forgotten bump is rejected instead of becoming a release nobody
-# can reproduce.
+# can reproduce. The tag check and the repo's own version gate
+# (scripts/check_version.py, also run by `make test`) both run here, so a tag
+# that disagrees with any of the five version sources is rejected.
 #
 # The mod archive is deliberately NOT built here. `make package` compiles
 # against the dedicated server's own assemblies, which a hosted runner does
@@ -20,7 +22,7 @@ permissions:
 
 jobs:
   verify-tag:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       # Actions pinned by full commit SHA (tag in comment) so a moved tag or a
@@ -42,3 +44,18 @@ jobs:
             exit 1
           fi
           echo "ok: tag $TAG matches $MANIFEST ($SHIPPED)"
+      # The manifest is one of five version sources. A tag that agrees with it
+      # while BridgeMod.cs, bridge/README.md, pyproject.toml or the CHANGELOG
+      # disagree would ship a mod that fails the repo's own gate (make test
+      # runs this), so the release runs the same script the local gate does
+      # instead of trusting the tag check alone.
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+          cache-local-path: .uv-cache
+          cache-dependency-glob: "uv.lock"
+      - name: Run the version gate over every version source
+        run: |
+          set -euo pipefail
+          export UV_CACHE_DIR="$PWD/.uv-cache"
+          uv run --locked --project . python scripts/check_version.py
