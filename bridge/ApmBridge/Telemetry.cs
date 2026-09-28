@@ -361,11 +361,17 @@ namespace DtdApmBridge
             lock (Gate)
             {
                 if (_windowStartTicks != 0) return;
-                _gc0Base = GC.CollectionCount(0); _gc1Base = GC.CollectionCount(1);
-                _gc2Base = GC.CollectionCount(2); _heapBase = GC.GetTotalMemory(false);
-                _allocBase = TotalAllocatedBytes();
-                _windowStartTicks = Stopwatch.GetTimestamp();
+                CaptureWindowBaseline();
             }
+        }
+        // Caller holds Gate; the start stamp is written last so the unlocked
+        // check in EnsureBaselines never sees a tick without its bases.
+        static void CaptureWindowBaseline()
+        {
+            _gc0Base = GC.CollectionCount(0); _gc1Base = GC.CollectionCount(1);
+            _gc2Base = GC.CollectionCount(2); _heapBase = GC.GetTotalMemory(false);
+            _allocBase = TotalAllocatedBytes();
+            _windowStartTicks = Stopwatch.GetTimestamp();
         }
         static object GcWindow()
         {
@@ -545,10 +551,7 @@ namespace DtdApmBridge
                 _updateTotal = _updateMax = _lastUpdate = _tickTotal = _tickMax = _lastTick = 0;
                 _nextExport = 0;
                 _lateTicks = 0; _tickStallMs = 0; _lastExportError = "";
-                _gc0Base = GC.CollectionCount(0); _gc1Base = GC.CollectionCount(1);
-                _gc2Base = GC.CollectionCount(2); _heapBase = GC.GetTotalMemory(false);
-                _allocBase = TotalAllocatedBytes();
-                _windowStartTicks = Stopwatch.GetTimestamp();
+                CaptureWindowBaseline();
                 Transfers.Clear();
             }
         }

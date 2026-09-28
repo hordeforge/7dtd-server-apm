@@ -55,8 +55,8 @@ def read_tid(pid: int, tid: int) -> ThreadRow | None:
         state = fields[0]
         utime = int(fields[11])
         stime = int(fields[12])
-        # processor field index 36 in man proc (0-based after state fields...):
-        # after comm: 0 state, 1 ppid, ... 11 utime, 12 stime, 36 processor = fields[36]
+        # stat field 36 (0-based after comm: 0 state, 11 utime, 12 stime) is the
+        # last CPU the thread ran on.
         processor = int(fields[36]) if len(fields) > 36 else -1
     except (OSError, IndexError, ValueError):
         return None
@@ -152,7 +152,6 @@ def main() -> int:
                 }
                 deltas.append(delta)
             deltas.sort(key=lambda x: x["cpu_pct"], reverse=True)
-            # wchan histogram
             wchan: dict[str, int] = {}
             states: dict[str, int] = {}
             for r in rows:
@@ -176,7 +175,6 @@ def main() -> int:
             fh.write(json.dumps(rec) + "\n")
             fh.flush()
 
-            # console line
             top3 = ", ".join(f"{x['comm'][:16]}@{x['cpu_pct']:.0f}%" for x in deltas[:3])
             blocked = states.get("D", 0) + states.get("S", 0)
             print(

@@ -694,6 +694,11 @@ def match_rules(
 
 def build_playbook(hits: list[dict[str, Any]], top_sections: list[dict[str, Any]]) -> list[str]:
     lines = []
+
+    def section(label: str, values: list[Any]) -> None:
+        lines.append(f"{label}:")
+        lines.extend(f"  - {value}" for value in values)
+
     if not hits:
         lines.append(
             "No evidence cleared the bridge thresholds. Install the standalone APM bridge, set "
@@ -734,15 +739,11 @@ def build_playbook(hits: list[dict[str, Any]], top_sections: list[dict[str, Any]
                     for s in evidence["managed_sections"]
                 )
             )
-        lines.append("C# surface:")
-        for surface in inference["csharp"]:
-            lines.append(f"  - {surface}")
-        lines.append("Harmony targets (start here):")
-        for target in hit["experiment"]["harmony_targets"]:
-            lines.append(f"  - `{target}`")
-        lines.append("Mod / config levers:")
-        for lever in hit["experiment"]["mod_apis"]:
-            lines.append(f"  - {lever}")
+        section("C# surface", inference["csharp"])
+        section(
+            "Harmony targets (start here)", [f"`{t}`" for t in hit["experiment"]["harmony_targets"]]
+        )
+        section("Mod / config levers", hit["experiment"]["mod_apis"])
         lines.append(f"Experiment: {hit['experiment']['suggestion']}")
     return lines
 

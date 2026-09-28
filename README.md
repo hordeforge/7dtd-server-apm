@@ -162,7 +162,9 @@ one line. The verdict is also exported to Prometheus
 (`sevendtd_apm_lag_cause_severity{cause=...}`, alertable) and shown per-session
 in the index for triage across many captures. The load
 generator reports client-perceived latency (LiteNetLib RTT p50/p95/max and
-spike counts) in `loadgen_stats.json`, separating wire lag from sim stall.
+spike counts) in `loadgen_stats.json`, separating wire lag from sim stall. The
+evidence behind each cause, including the GC allocation-churn and
+allocation-site story, is in [`docs/APM.md`](docs/APM.md) under "Lag diagnosis".
 
 Flamegraph symbolization: Unity's embedded Mono ignores
 `MONO_ENV_OPTIONS=--jitmap`, so the bridge exports the perf map itself
