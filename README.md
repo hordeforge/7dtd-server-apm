@@ -230,6 +230,7 @@ appears only as set/unset). An exported-but-empty variable is treated as unset.
 - [`docs/FEATURES.md`](docs/FEATURES.md) - supported capabilities and project boundaries
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) - prioritized improvement backlog
 - [`tools/README.md`](tools/README.md) - private backend ownership
+- [`CONTRIBUTING.md`](CONTRIBUTING.md) - setup, edit-test loop, and the full local gate
 - [`TODO.md`](TODO.md) - phased implementation and verification log
 
 Python 3.11+, `uv`, and Linux are required. `make check` additionally shells
