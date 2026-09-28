@@ -45,7 +45,15 @@ MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * 1024**3
 # PII by content (player names, connect IPs), and an operator attaching a
 # slice of it under any name must be excluded the same way bridge.jsonl is,
 # not merely home-scrubbed.
-EXCLUDED_MEMBER_NAMES = frozenset({"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json"})
+# capture bind-mounts the target process's Mono runtime onto this empty
+# placeholder so the GC uprobes have a space-free path. What the mount shows is
+# the game's own several-MB libmonobdwgc (a third-party binary carrying its own
+# license, not evidence this tool produced), and a bundle is written to be
+# handed to a stranger, so it stays on the host.
+MONO_BIND_MOUNT_NAME = "libmonobdwgc-2.0.so"
+EXCLUDED_MEMBER_NAMES = frozenset(
+    {"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json", MONO_BIND_MOUNT_NAME}
+)
 # Membership is tested against the lowercased member name, so the set is
 # lowercased once here: a "Bridge.jsonl" or "PERF.DATA" must be excluded
 # exactly like the lowercase spellings the tool writes itself.

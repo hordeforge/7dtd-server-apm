@@ -969,6 +969,12 @@ def scenario_run(
         run_dir.mkdir(parents=True, exist_ok=True)
     except OSError as error:
         _fail(f"cannot create {run_dir}: {error}", 1)
+    # Same owner-only contract capture applies to the store it shares: this path
+    # can be what creates the root, and a umask-default store would leave every
+    # session, index, and loadgen manifest inside it world-readable.
+    with suppress(OSError):
+        run_dir.parent.chmod(0o700)
+        run_dir.chmod(0o700)
     stamp = int(time.time())
     # Exclusive-create claim: a same-second duplicate invocation must not point
     # both loadgen runs at one manifest path.

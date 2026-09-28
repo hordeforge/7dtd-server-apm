@@ -4820,6 +4820,39 @@ def test_claim_file_creates_exclusive_empty_marker(tmp_path: Path) -> None:
     assert claim_file(blocked) == tmp_path / "nested" / f"{blocked.name}_1"
 
 
+def test_claim_creates_owner_only(tmp_path: Path) -> None:
+    """Both claims are created owner-only in the creating syscall. A session or
+    a loadgen manifest must not be group/world-readable for the window between
+    creation and a later chmod, on a host with other local accounts."""
+    from apm_suite.io import claim_dir, claim_file
+
+    session = claim_dir(tmp_path / "session_20260101_000000_pid1")
+    assert stat.S_IMODE(session.stat().st_mode) == 0o700
+    manifest = claim_file(tmp_path / "nested" / "loadgen_123.json")
+    assert stat.S_IMODE(manifest.stat().st_mode) == 0o600
+
+
+def test_export_bundle_excludes_mono_bind_mount(tmp_path: Path) -> None:
+    """The GC uprobes bind-mount the game's own Mono runtime onto an empty
+    placeholder in runtime/. A bundle is written to be handed to a stranger, so
+    that several-MB third-party binary stays on the host."""
+    import zipfile
+
+    session = tmp_path / "session_mono_mount"
+    (session / "runtime").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "runtime/libmonobdwgc-2.0.so").write_bytes(b"\x7fELF not evidence\n")
+    (session / "runtime/mono_gc.bt.out").write_text("probe hit\n")
+
+    bundle = tmp_path / "bundle_mono.zip"
+    result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert result.exit_code == 0, result.output
+    with zipfile.ZipFile(bundle) as archive:
+        names = set(archive.namelist())
+    assert "runtime/libmonobdwgc-2.0.so" not in names
+    assert "runtime/mono_gc.bt.out" in names
+
+
 def test_retention_policy_shared_by_prune_and_auto_prune(tmp_path: Path) -> None:
     """One retention implementation feeds the CLI prune command and post-capture
     auto-prune: keep-N ordering and the size budget must behave identically."""

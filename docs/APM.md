@@ -119,19 +119,22 @@ prefix from JSON, JSONL, bpftrace output, flamegraph SVG, and other text
 artifacts. Event timelines carry only extracted bridge metrics, never raw
 console text (the telnet stream can contain player names, IPs, and Steam IDs).
 Exclusion is by file name, not by extension: `app/bridge.jsonl`, `perf.data`,
-any `*.err`, and the source `manifest.json` all stay out of bundles, as does any
-file whose name contains `efficientserver` or `output_log`, so an
-operator-attached slice of the server log (`app/efficientserver_log_excerpt.txt`
-or `OutputLog_2026-09-28.txt`) is dropped whichever name it carries. Symlinks
-are skipped rather than followed. The excerpt's section timings survive in
-`csharp_bridge.json`. Any other text file an operator drops into a session is
-bundled, so check the archive before sharing.
+any `*.err`, the source `manifest.json`, and the
+`runtime/libmonobdwgc-2.0.so` bind-mount placeholder the GC uprobes use all stay
+out of bundles, as does any file whose name contains `efficientserver` or
+`output_log`, so an operator-attached slice of the server log
+(`app/efficientserver_log_excerpt.txt` or `OutputLog_2026-09-28.txt`) is dropped
+whichever name it carries. Symlinks are skipped rather than followed. The
+excerpt's section timings survive in `csharp_bridge.json`. Any other text file
+an operator drops into a session is bundled, so check the archive before
+sharing.
 Inspect a bundle before sharing because game-derived artifacts may still
 contain player or world data.
 
 Raw sessions keep the full telnet drain in `app/bridge.jsonl` as owner-only
-evidence (captured and `import`-restored sessions are chmod 0700, store root
-included); raw evidence never enters export bundles. The scrape discards the
+evidence (captured, scenario-run, and `import`-restored sessions are 0700 from
+the creating syscall, store root included); raw evidence never enters export
+bundles. The scrape discards the
 telnet banner and post-logon reply, and persists only the requested `apm`
 command responses. A streamed console-log line is cut at its timestamp
 wherever that timestamp falls in the received line, not only when the line

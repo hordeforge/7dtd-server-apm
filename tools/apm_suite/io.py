@@ -292,7 +292,10 @@ def claim_dir(base: Path) -> Path:
     suffix = 1
     while True:
         try:
-            candidate.mkdir(parents=True)
+            # Owner-only from the creating syscall: a chmod after mkdir would
+            # leave the directory group/world-readable for as long as the
+            # umask-default mode stands, and a session holds raw host evidence.
+            candidate.mkdir(parents=True, mode=0o700)
             return candidate
         except FileExistsError:
             candidate, suffix = _next_candidate(base, suffix)
@@ -303,14 +306,16 @@ def claim_file(base: Path) -> Path:
 
     The returned path exists as an empty file the moment this returns, so a
     duplicate run of the same second is assigned a different name instead of
-    silently sharing one output path.
+    silently sharing one output path. It is created owner-only: a loadgen
+    manifest names the experiment and the store it ran against, and the
+    umask-default mode would leave it readable to every local account.
     """
     base.parent.mkdir(parents=True, exist_ok=True)
     candidate = base
     suffix = 1
     while True:
         try:
-            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            fd = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
             candidate, suffix = _next_candidate(base, suffix)
         else:
