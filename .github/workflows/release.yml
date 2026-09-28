@@ -49,7 +49,7 @@ jobs:
       # disagree would ship a mod that fails the repo's own gate (make test
       # runs this), so the release runs the same script the local gate does
       # instead of trusting the tag check alone.
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # Same interpreter pin the local gate resolves from .python-version.
           python-version-file: .python-version
