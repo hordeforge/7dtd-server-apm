@@ -195,7 +195,7 @@ handler and no `Perf` class exist anywhere under `bridge/`.
 | Monitor sample log rotation at 64 MiB, one generation kept | local disk exhaustion from a 24/7 run | `cli.py:89-110` |
 | Prune trash grace window (`APM_PRUNE_GRACE_HOURS`) | accidental destruction | `session.py`, `docs/APM.md` |
 | Server-streamed telnet log lines dropped before persistence | PII in the store | `app_scrape.py:34,44-56` |
-| `lint-webui.sh` pins the fetched anti-slop tarball by SHA-256 | supply chain for the lint tool | `scripts/lint-webui.sh:60-67` |
+| `lint-webui.sh` pins the fetched anti-slop tarball by SHA-256, and caches the extracted source under that commit so a pin bump re-verifies | supply chain for the lint tool | `scripts/lint-webui.sh:37-40,62-84` |
 
 ## Gaps (ranked; fixes belong to sec-review)
 

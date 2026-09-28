@@ -29,7 +29,7 @@ from pydantic import ValidationError
 
 from .io import claim_dir, load_json, member_is_safe
 from .models import SERVER_COMM, Artifact, ManifestV2, Target, as_number, schema_dict
-from .session import audit_session
+from .session import audit_session, parse_stamp
 
 # Decompression-bomb guard for imported evidence bundles (they arrive from
 # other people): CPython's extractall caps each member at its declared
@@ -155,11 +155,12 @@ def _bundle_manifest(session: Path, artifacts: list[Artifact]) -> ManifestV2:
     with suppress(ValueError, OSError):
         meta = load_json(session / "meta.json")
     only = str(meta.get("only") or "all")
+    # meta.json is as untrusted here as it is in the audit: a hand-edited utc
+    # must degrade to a null stamp, not raise a bare ValueError out of the
+    # manifest write that closes the export (parse_stamp owns that contract).
     return ManifestV2(
         session_id=session.name,
-        started_at=datetime.fromisoformat(str(meta["utc"]))
-        if meta.get("utc")
-        else datetime.now(UTC),
+        started_at=parse_stamp(meta.get("utc")),
         ended_at=datetime.now(UTC),
         target=Target(
             pid=int(as_number(meta.get("pid")) or 1),
@@ -189,6 +190,12 @@ def export_bundle(session: Path, output: Path) -> Path:
     # manifest.json is excluded too: it describes the source session, and the
     # bundle carries its own manifest describing the bundle (below).
     excluded = {"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json"}
+    # Exclusion is by what a file holds, not by extension: an operator-attached
+    # slice of the server log (any efficientserver_log*.txt) is the same telnet
+    # PII bridge.jsonl is (player names, IPs, Steam IDs), so it stays out by
+    # family rather than by one exact name. Its section timings survive in
+    # csharp_bridge.json.
+    server_log_marker = "efficientserver"
     output.parent.mkdir(parents=True, exist_ok=True)
     # An output inside the session would otherwise be swept up by the walk below
     # (a truncated copy of the archive being written, or a prior export of it).
@@ -220,6 +227,7 @@ def export_bundle(session: Path, output: Path) -> Path:
                     not source.is_file()
                     or source.is_symlink()
                     or source.name in excluded
+                    or server_log_marker in source.name.lower()
                     or source.suffix == ".err"
                     or source.resolve() in self_output
                 ):

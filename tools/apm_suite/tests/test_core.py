@@ -3782,6 +3782,35 @@ def test_annotate_stacks_leaves_non_finite_count_lines_untouched() -> None:
     assert module.annotate_folded_line(line) == line
 
 
+def test_annotate_stacks_tag_cache_is_bounded() -> None:
+    # The tag memo keys on frame names, and a full-mode perf map contributes
+    # hundreds of thousands of distinct ones. Left unbounded it grew with the
+    # input for the whole pass; the memo must evict instead, and a name must
+    # still get the same tag after it has been evicted.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "annotate_stacks_bounded", REPO / "tools/host_profiler/annotate_stacks.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.TAG_CACHE_MAX > 0
+    before = module._tag_once.cache_info()
+    for i in range(module.TAG_CACHE_MAX + 32):
+        module.tag_frame(f"futex_wait_{i}")
+    after = module._tag_once.cache_info()
+    assert after.currsize <= module.TAG_CACHE_MAX, "the tag memo must be bounded"
+    assert after.currsize > before.currsize
+    # Eviction is a memory policy, not a result change: the same name still
+    # tags the same way once it has left the cache.
+    assert module.tag_frame("futex_wait_0") == "[LOCK] futex_wait_0"
+    assert module.tag_frame("mono_gc_collect") == "[GC] mono_gc_collect"
+    assert module.tag_frame("SomeUnmatched") == "SomeUnmatched"
+    assert module.tag_frame("[GC] mono_gc_collect") == "[GC] mono_gc_collect"
+
+
 def test_correlate_parse_ts_converts_log_stamps_via_local_zone_rules() -> None:
     """Server log stamps carry no offset field, so parse_ts must resolve them
     with this host's zone rules (DST included); stamping them as UTC shifts

@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -51,25 +52,26 @@ TAG_RULES: list[tuple[str, re.Pattern[str]]] = [
 ]
 
 
-_TAG_CACHE: dict[str, str] = {}
+# Frame names repeat across thousands of folded lines; run each name's rule
+# regexes once instead of once per occurrence. Bounded: a full-mode perf map
+# alone carries hundreds of thousands of distinct symbols, so an unbounded
+# name->result dict grew with the input for the life of the pass. lru_cache
+# caps residency without changing which tag a name gets.
+TAG_CACHE_MAX = 65_536
+
+
+@lru_cache(maxsize=TAG_CACHE_MAX)
+def _tag_once(name: str) -> str:
+    for tag, pat in TAG_RULES:
+        if pat.search(name):
+            return f"[{tag}] {name}"
+    return name
 
 
 def tag_frame(name: str) -> str:
     if name.startswith("["):
         return name  # already tagged
-    # Frame names repeat across thousands of folded lines; run each name's rule
-    # regexes once instead of once per occurrence.
-    cached = _TAG_CACHE.get(name)
-    if cached is not None:
-        return cached
-    for tag, pat in TAG_RULES:
-        if pat.search(name):
-            result = f"[{tag}] {name}"
-            break
-    else:
-        result = name
-    _TAG_CACHE[name] = result
-    return result
+    return _tag_once(name)
 
 
 def annotate_folded_line(line: str) -> str:

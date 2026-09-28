@@ -32,7 +32,6 @@ from .collectors import (
     CaptureContext,
     CollectorSpec,
     planned_layers,
-    unknown_only_tokens,
     wanted,
 )
 from .io import atomic_json, claim_dir, scrape_succeeded

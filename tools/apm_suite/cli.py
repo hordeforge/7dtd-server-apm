@@ -24,9 +24,9 @@ from .capture import (
     bridge_telemetry_file,
     find_server_pid,
     run_capture,
-    unknown_only_tokens,
     write_plan_text,
 )
+from .collectors import unknown_only_tokens
 from .io import (
     atomic_json,
     claim_file,

@@ -34,6 +34,11 @@ oxlint_plugins_version="$OXLINT_PLUGINS_VERSION"
 anti_slop_sha="$ANTI_SLOP_SHA"
 anti_slop_sha256="$ANTI_SLOP_SHA256"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-server-apm/oxlint-standards"
+# The extracted plugin source is keyed by the pinned commit, not just by its
+# name: ANTI_SLOP_SHA is meant to be bumped, and a cache keyed without it
+# serves the previous commit's rules forever and skips the SHA256 check on
+# every later run, so a pin bump would silently not take effect.
+anti_slop_dir="$cache_dir/anti-slop-$anti_slop_sha"
 webmod_dir="$root/bridge/ApmBridge/WebMod"
 
 command -v bunx >/dev/null 2>&1 || {
@@ -55,7 +60,7 @@ bunx -p "typescript@$TSC_VERSION" tsc -p "$webmod_dir/tsconfig.json" --noEmit
 #    installed. @oxlint/plugins is the plugin API the anti-slop source
 #    imports; without it the plugin cannot load.
 mkdir -p "$cache_dir"
-if [ ! -d "$cache_dir/anti-slop-src" ]; then
+if [ ! -d "$anti_slop_dir" ]; then
   curl -fsSL "https://github.com/dmmulroy/anti-slop/archive/$anti_slop_sha.tar.gz" -o "$cache_dir/anti-slop.tar.gz"
   if ! printf '%s  %s\n' "$anti_slop_sha256" "$cache_dir/anti-slop.tar.gz" | sha256sum --check --status; then
     rm -f "$cache_dir/anti-slop.tar.gz"
@@ -63,10 +68,10 @@ if [ ! -d "$cache_dir/anti-slop-src" ]; then
     exit 1
   fi
   # Extract into a staging dir and rename it into place: `set -e` aborts a
-  # half-extracted source tree inside anti-slop-src, and the guard above would
+  # half-extracted source tree inside the cache dir, and the guard above would
   # then treat that debris as a populated cache on every later run, so a retry
   # could never converge and oxlint would fail on a missing plugin file.
-  staging="$cache_dir/anti-slop-src.$$"
+  staging="$anti_slop_dir.staging.$$"
   rm -rf "$staging"
   mkdir -p "$staging"
   if ! tar xzf "$cache_dir/anti-slop.tar.gz" -C "$staging" --strip-components=2 "anti-slop-$anti_slop_sha/src"; then
@@ -74,7 +79,7 @@ if [ ! -d "$cache_dir/anti-slop-src" ]; then
     echo "7dtd-server-apm: lint-webui: could not extract anti-slop $anti_slop_sha; cache left clean for the next run" >&2
     exit 1
   fi
-  mv "$staging" "$cache_dir/anti-slop-src"
+  mv "$staging" "$anti_slop_dir"
 fi
 # type module: the vendored anti-slop plugin source is ESM; without the field
 # node reparses it with a MODULE_TYPELESS_PACKAGE_JSON warning.

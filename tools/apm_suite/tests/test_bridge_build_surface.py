@@ -81,19 +81,29 @@ def test_bridge_uninstall_keeps_every_config_it_ever_saved() -> None:
 
 def test_lint_webui_extraction_leaves_no_half_populated_cache() -> None:
     # Same rerun property for the vendored plugin cache: the fetch is guarded
-    # by `[ ! -d anti-slop-src ]`, so an extraction that dies midway (disk
+    # by `[ ! -d "$anti_slop_dir" ]`, so an extraction that dies midway (disk
     # full, interrupted tar) would leave a directory every later run accepts as
     # a populated cache and never retries. The rename-into-place keeps a failed
     # run leaving no such directory behind.
     script = (REPO / "scripts" / "lint-webui.sh").read_text(encoding="utf-8")
-    bootstrap = script.split('if [ ! -d "$cache_dir/anti-slop-src" ]; then', 1)[1]
+    bootstrap = script.split('if [ ! -d "$anti_slop_dir" ]; then', 1)[1]
     extract = bootstrap.split("tar xzf", 1)[1].split("\nfi", 1)[0]
-    assert 'mv "$staging" "$cache_dir/anti-slop-src"' in extract, (
-        "anti-slop-src must be created by renaming a completed extraction"
+    assert 'mv "$staging" "$anti_slop_dir"' in extract, (
+        "the cache dir must be created by renaming a completed extraction"
     )
-    assert 'mkdir -p "$cache_dir/anti-slop-src"\n' not in bootstrap, (
-        "anti-slop-src must not be created in place before the extract succeeds"
+    assert 'mkdir -p "$anti_slop_dir"\n' not in bootstrap, (
+        "the cache dir must not be created in place before the extract succeeds"
     )
+
+
+def test_lint_webui_plugin_cache_is_keyed_by_the_pinned_commit() -> None:
+    # ANTI_SLOP_SHA is meant to be bumped. A cache dir named only for the
+    # package would then serve the previous commit's rules forever and skip
+    # ANTI_SLOP_SHA256 verification on every later run, so the bump would
+    # silently not take effect.
+    script = (REPO / "scripts" / "lint-webui.sh").read_text(encoding="utf-8")
+    assert 'anti_slop_dir="$cache_dir/anti-slop-$anti_slop_sha"' in script
+    assert "anti-slop-src" not in script, "the unversioned cache name must be gone"
 
 
 def test_every_bridge_rest_endpoint_declares_admin_only_permissions() -> None:

@@ -58,8 +58,14 @@ to 2.3.0 and 2.2.4 stays skipped.
   next free `.1`, `.2`, name.
 - Tooling: the lint-webui vendored plugin cache is extracted into a staging
   directory and renamed into place, so an interrupted extraction no longer
-  leaves a half-populated `anti-slop-src` that every later run accepts as a
+  leaves a half-populated `anti-slop-<sha>` that every later run accepts as a
   populated cache and never retries.
+- Tooling: that cache directory is keyed by `ANTI_SLOP_SHA`. It was keyed by
+  name alone, so bumping the pin kept serving the previous commit's rules and
+  skipped the `ANTI_SLOP_SHA256` check on every later run.
+- Tooling: the folded-stack tag memo is bounded (`lru_cache`, 65536 entries).
+  A full-mode perf map contributes hundreds of thousands of distinct frame
+  names, so the old unbounded dict grew with the input for the whole pass.
 - Validity: a window whose app scrape only holds failed telnet records is
   `app_sim unavailable` instead of a collected layer with no evidence. The
   collector result, the summary state, and `audit` all name the cause.
@@ -69,6 +75,11 @@ to 2.3.0 and 2.2.4 stays skipped.
 - `export`: a hand-mangled `meta.json` timestamp no longer aborts the bundle
   with a bare `ValueError`; the exported manifest falls back to the session's
   own tolerant UTC parsing.
+- `export`: an operator-attached slice of the server log stays out of the
+  bundle. Exclusion is by what a file holds, not by extension, so
+  `app/efficientserver_log_excerpt.txt` (and any other `efficientserver*` file
+  in the session) is dropped for the same reason `app/bridge.jsonl` is. Its
+  section timings survive in `csharp_bridge.json`.
 - `scenario run`: an unattributable loadgen stats file is reported and the
   session is still audited, instead of raising after a successful capture.
 - Text encoding: stdout and stderr are now pinned to UTF-8 for every command
@@ -169,6 +180,8 @@ to 2.3.0 and 2.2.4 stays skipped.
   SHA-256 work over every collected artifact at the end of a run.
 
 ## Unreleased - bridge mod
+
+## 3.0.0 - bridge mod - 2026-09-28
 
 - Config (breaking, 3.0.0): `Config/apmbridge.json` no longer accepts an
   unknown key. A misspelled `DeepMode` used to load as the default and leave
