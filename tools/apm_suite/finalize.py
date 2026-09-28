@@ -88,8 +88,13 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
 
     # Every session ships an integrity manifest (docs/APM.md "Validity"), and a
     # re-finalize rewrites artifacts a previous audit recorded: re-stamp last so
-    # the manifest describes the session as it stands after this run.
-    stage("manifest", record_manifest, required=False)
+    # the manifest describes the session as it stands after this run. Required,
+    # not optional: a session left with no manifest is one whose hashes were
+    # never baselined, and the next audit would record whatever it finds as the
+    # baseline, absorbing exactly the drift the manifest exists to catch. The
+    # run must say the write failed instead of exiting 0 over a session that
+    # cannot be verified.
+    stage("manifest", record_manifest, required=True)
     stage("index", lambda: write_index(), required=False)
 
     if result.failed_stages:

@@ -791,11 +791,24 @@ def test_bridge_status_tolerates_non_object_config(
     # from the working tree; this test pins the malformed-config posture, not
     # the stale-DLL verdict.
     monkeypatch.setattr(doctor, "REPO", tmp_path)
-    for body in ("[1, 2]", '"DeepMode"', "42", "null", ""):
+    for body in ("[1, 2]", '"DeepMode"', "42", "null"):
         (mods / "Config/apmbridge.json").write_text(body)
         status = doctor._bridge_status()
         assert status["ok"] is True
         assert "deep_mode" not in status
+        # The mod's own reader rejects a non-object document and falls back to
+        # built-in defaults; doctor reports the same rejection rather than
+        # passing a config that is not in force as a clean install.
+        assert "built-in defaults" in (status["fix"] or "")
+    # A document the mod cannot parse at all (an empty or hand-mangled file)
+    # leaves the installed DLL verdict unable to stand on its own: the settings
+    # the operator wrote are ignored, so the check fails with the reason.
+    for body in ("", "{ this is not json }"):
+        (mods / "Config/apmbridge.json").write_text(body)
+        status = doctor._bridge_status()
+        assert status["ok"] is False
+        assert "built-in defaults" in (status["fix"] or "")
+        assert str(mods / "Config/apmbridge.json") in (status["fix"] or "")
 
 
 def test_doctor_prints_deepmode_advisory_for_healthy_bridge(
@@ -4132,6 +4145,36 @@ def test_finalize_required_stage_failure_fails_run_optional_does_not(
     assert "required finalization stages failed: render" in capsys.readouterr().err
 
 
+def test_finalize_manifest_stage_failure_fails_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session left with no manifest has no integrity baseline.
+
+    The next audit records whatever it finds as that baseline, absorbing the
+    drift the manifest exists to catch, so a manifest write that fails has to
+    reach the exit code rather than being treated as optional enrichment.
+    """
+    import apm_suite.finalize as finalize_module
+    import apm_suite.session as session_module
+
+    session = tmp_path / "session_no_manifest"
+    session.mkdir()
+    atomic_json(session / "meta.json", _meta())
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(tmp_path))
+
+    def crash(_session: Path) -> bool:
+        raise OSError(28, "No space left on device")
+
+    # _record_manifest imports audit_session from the session module, so that
+    # is the boundary the write failure has to be injected at.
+    monkeypatch.setattr(session_module, "audit_session", crash)
+    result = finalize_module.finalize(session)
+
+    assert result.failed_stages == ["manifest"]
+    assert result.exit_code == 1
+    assert result.audit_valid is None
+
+
 def test_compare_rejects_different_layer_coverage(tmp_path: Path) -> None:
     before = tmp_path / "before"
     after = tmp_path / "after"
@@ -5872,6 +5915,53 @@ def test_monitor_samples_process_and_coerces_corrupt_bridge_snapshot(
     assert "cpu=" in squashed and "tps=60.2" in squashed
     # age ~120 > 30 * 1.5: every read is flagged stale on both samples.
     assert len(re.findall(r"\[bridge\d\d+\.\dsold\]", squashed)) == 2
+
+
+def test_monitor_names_an_unreadable_bridge_snapshot_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A snapshot this tool cannot parse is not a server publishing no data.
+
+    The bridge fields simply stop appearing on the console line and in
+    --output, so the cause has to be named: the file and the reason, once per
+    distinct reason, without ending the sampling run.
+    """
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir()
+    latest = telemetry / "apm_app_latest.json"
+    latest.write_text("{ this is not json", encoding="utf-8")
+    config = tmp_path / "Config"
+    config.mkdir()
+    atomic_json(config / "apmbridge.json", {"PeriodicExportSeconds": 30})
+    monkeypatch.setattr("apm_suite.cli.bridge_telemetry_file", lambda _pid, name: telemetry / name)
+
+    output = tmp_path / "monitor.jsonl"
+    result = runner.invoke(
+        app,
+        [
+            "monitor",
+            "--pid",
+            str(os.getpid()),
+            "--count",
+            "2",
+            "--interval",
+            "0.5",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    reported = _squashed(result.stderr)
+    assert "bridgesnapshotunreadable" in reported
+    assert _squashed(str(latest)) in reported
+    # One line for the whole run, not one per sample.
+    assert reported.count("bridgesnapshotunreadable") == 1
+    # The host samples are still evidence and keep being recorded.
+    rows = [json.loads(line) for line in output.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 2
+    assert all(row["pid"] == os.getpid() for row in rows)
+    assert all("late_ticks" not in row for row in rows)
 
 
 def _boom_spec() -> CollectorSpec:

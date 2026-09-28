@@ -1421,7 +1421,7 @@ def build_summary(session: Path) -> SummaryV2:
     if not attribution:
         prior_bridge = session / "csharp_bridge.json"
         if prior_bridge.is_file():
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(ValueError, OSError, AttributeError):
                 attribution = (
                     json_loads(read_text(prior_bridge), prior_bridge).get("attribution") or {}
                 )

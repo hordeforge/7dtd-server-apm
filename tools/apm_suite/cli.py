@@ -715,6 +715,9 @@ def monitor(
     taken = 0
     previous_late: int | None = None
     previous_gc: int | None = None
+    # Last bridge-snapshot read failure already reported, so a per-sample loop
+    # surfaces the cause once and again only when it changes.
+    bridge_error: str | None = None
     # Read once, not per sample: a config re-read every interval would let an
     # edit mid-run flip-flop the stale threshold between consecutive samples.
     export_period = bridge_export_period(bridge_latest.parent)
@@ -772,8 +775,21 @@ def monitor(
                     # flag samples older than that so stale reads are not mistaken
                     # for live data.
                     sample["bridge_age_s"] = round(time.time() - bridge_latest.stat().st_mtime, 1)
-                except (ValueError, OSError):
-                    pass
+                except (ValueError, OSError) as error:
+                    # A snapshot this tool cannot read is not the same as a
+                    # server publishing no data: the bridge fields simply stop
+                    # appearing on the console line and in --output, with
+                    # nothing to say why. Keep sampling (the host numbers are
+                    # still evidence) but name the file and the cause, once per
+                    # distinct reason, so a torn or hand-edited snapshot is not
+                    # read as a server that stopped reporting.
+                    reason = f"{bridge_latest}: {error}"
+                    if reason != bridge_error:
+                        bridge_error = reason
+                        err_console.print(
+                            f"[yellow]bridge snapshot unreadable: {escape(reason)}; "
+                            "bridge fields are omitted from this and later samples[/yellow]"
+                        )
             current_late = sample.get("late_ticks")
             late_delta = _delta_str(current_late, previous_late, "late")
             if isinstance(current_late, int):

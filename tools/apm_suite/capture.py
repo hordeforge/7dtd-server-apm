@@ -865,11 +865,11 @@ def run_capture(
     # every step in it is another full pass over a tens-of-MB artifact for
     # byte-identical output. The marker separates a finished build from one
     # that died partway.
-    if (
-        folded.is_file()
-        and folded.stat().st_size
-        and not (session / "cpu/perf/flames.done").exists()
-    ):
+    # regular_file_size is one stat answering "carries data", and unlike
+    # is_file() + stat() it cannot raise: this runs after the whole window was
+    # collected, and an artifact that vanished under a concurrent prune must
+    # cost the flame build, not abort finalize and auto-prune for the session.
+    if regular_file_size(folded) and not (session / "cpu/perf/flames.done").exists():
         # A hung flame build must not block finalize.
         _build_flames(session, pid)
 

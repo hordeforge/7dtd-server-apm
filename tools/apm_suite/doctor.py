@@ -99,18 +99,47 @@ def _bridge_status() -> dict[str, Any]:
                 "fix": "installed bridge differs from dist build; make bridge-install + restart server",
             }
     config = bridge_mod_dir() / "Config/apmbridge.json"
-    settings: Any = None
-    with suppress(OSError, ValueError):
+    # The mod's own reader (BridgeConfigReader.Load) rejects the same file and
+    # falls back to built-in defaults, logging the reason: a bad config must not
+    # be silent there either. Reading it here under suppress() while the mod
+    # refuses it is the one place doctor would report a clean install over
+    # settings that are not in force, so the rejection is reported instead.
+    try:
         settings = load_jsonc(config)
-    # Valid JSON that is not an object (a hand-edited "[1,2]") has no .get;
-    # like every other malformed config read here it is a diagnosable
-    # condition, not a reason to crash the whole doctor report.
+    except FileNotFoundError:
+        # No Config/apmbridge.json is a normal install: the mod runs on
+        # built-in defaults and says so in its own log. Nothing to report.
+        return result
+    except (OSError, ValueError) as error:
+        result["ok"] = False
+        result["fix"] = (
+            f"bridge config {config} is unreadable or malformed ({error}); "
+            "the mod runs on built-in defaults, ignoring every setting in it"
+        )
+        return result
+    # Valid JSON that is not a settings object (a hand-edited "[1,2]", or the
+    # bare "null" the mod rejects too) has no .get, and the mod falls back to
+    # defaults: report the same rejection without failing the DLL verdict, which
+    # is what an unreadable-DeepMode config does not affect.
     if isinstance(settings, dict):
         result["deep_mode"] = bool(settings.get("DeepMode"))
         if not settings.get("DeepMode"):
             result["fix"] = (
                 result["fix"] or "DeepMode off: per-entity AI/path sections will not be measured"
             )
+    else:
+        result["fix"] = "; ".join(
+            filter(
+                None,
+                (
+                    result["fix"],
+                    (
+                        f"bridge config {config} holds JSON that is not a settings "
+                        "object; the mod runs on built-in defaults"
+                    ),
+                ),
+            )
+        )
     return result
 
 

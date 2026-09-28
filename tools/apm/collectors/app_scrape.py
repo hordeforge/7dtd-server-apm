@@ -117,7 +117,16 @@ def main() -> int:
     # wire. chmod after the open so a re-run over an existing file tightens it
     # too; os.open's mode alone would only apply at creation.
     descriptor = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+    try:
+        # fdopen is the one step between os.open handing back a live descriptor
+        # and the `with` owning it; a failure here would leak the descriptor and
+        # leave a truncated, empty --out file that reads as a collected layer.
+        fh = os.fdopen(descriptor, "w", encoding="utf-8")
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.close(descriptor)
+        raise
+    with fh:
         with contextlib.suppress(OSError):
             os.chmod(args.out, 0o600)
         while time.monotonic() < end:
