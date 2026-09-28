@@ -173,7 +173,13 @@ namespace DtdApmBridge
         // windowSeconds (the denominator of every reported rate) drifts with
         // it. Stopwatch ticks are integer, monotonic, and readable off the
         // main thread, so no main-thread timestamp has to be cached.
-        static long Seconds(double seconds) => (long)(seconds * Stopwatch.Frequency);
+        // Ceiling, not truncation: the deadline is in whole Stopwatch ticks, and
+        // a truncating cast turns any positive interval under one tick into 0.
+        // _nextExport = now + 0 leaves the deadline in the past, so BeginFrame
+        // re-arms and exports on EVERY frame (each one a Process-handle walk
+        // and a GC-window snapshot on the sim thread).
+        static long Seconds(double seconds) =>
+            (long)Math.Ceiling(seconds * Stopwatch.Frequency);
         public static long Start() => Stopwatch.GetTimestamp();
         public static void Record(int id, long start)
         {
@@ -338,13 +344,34 @@ namespace DtdApmBridge
                 sections, spikes = spikes.ToArray()
             };
         }
+        /// <summary>Open the measurement window on first read if nothing has yet.</summary>
+        /// The bases are otherwise written only by Reset (apm reset), which leaves
+        /// them at 0 on a server that was never reset. Then heapDeltaBytes is the
+        /// whole live heap and windowSeconds the process uptime, and the host
+        /// divides one by the other into a fabricated ~20 MB/s of net heap growth
+        /// for a window that grew by a few MB. Reset() still re-baselines exactly
+        /// as before; this only covers the never-reset default (--reset-bridge
+        /// defaults to false), where the window starts when the bridge loads.
+        static void EnsureBaselines()
+        {
+            if (_windowStartTicks != 0) return;
+            lock (Gate)
+            {
+                if (_windowStartTicks != 0) return;
+                _gc0Base = GC.CollectionCount(0); _gc1Base = GC.CollectionCount(1);
+                _gc2Base = GC.CollectionCount(2); _heapBase = GC.GetTotalMemory(false);
+                _allocBase = TotalAllocatedBytes();
+                _windowStartTicks = Stopwatch.GetTimestamp();
+            }
+        }
         static object GcWindow()
         {
             // Window-relative GC churn: gen0 collections/sec is the allocation
             // pressure that produces the stop-the-world pauses seen as frame
-            // spikes. Baseline captured at Reset (window start). The Stopwatch
-            // read is thread-safe, so this runs unchanged on the export
-            // ThreadPool thread.
+            // spikes. Baseline captured at the window start (Reset, or first
+            // read). The Stopwatch read is thread-safe, so this runs unchanged
+            // on the export ThreadPool thread.
+            EnsureBaselines();
             double elapsed = (Stopwatch.GetTimestamp() - _windowStartTicks) / (double)Stopwatch.Frequency;
             int g0 = GC.CollectionCount(0) - _gc0Base;
             int g1 = GC.CollectionCount(1) - _gc1Base;

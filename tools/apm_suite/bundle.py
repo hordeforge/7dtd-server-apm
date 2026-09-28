@@ -40,6 +40,21 @@ from .session import audit_session, parse_stamp
 MAX_IMPORT_MEMBERS = 20_000
 MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * 1024**3
 
+# Members that must not leave the host whatever they are named. Matched
+# case-insensitively on the file name, not on an exact set: the server log is
+# PII by content (player names, connect IPs), and an operator attaching a
+# slice of it under any name must be excluded the same way bridge.jsonl is,
+# not merely home-scrubbed.
+EXCLUDED_MEMBER_NAMES = frozenset({"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json"})
+SERVER_LOG_NAME_MARKERS = ("efficientserver", "output_log")
+
+
+def _excluded_member(name: str) -> bool:
+    lowered = name.lower()
+    return name in EXCLUDED_MEMBER_NAMES or any(
+        marker in lowered for marker in SERVER_LOG_NAME_MARKERS
+    )
+
 
 class BundleError(Exception):
     """A bundle cannot be written, or one offered for import is not safe."""
@@ -189,13 +204,6 @@ def export_bundle(session: Path, output: Path) -> Path:
         raise BundleError("session directory does not exist")
     # manifest.json is excluded too: it describes the source session, and the
     # bundle carries its own manifest describing the bundle (below).
-    excluded = {"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json"}
-    # Exclusion is by what a file holds, not by extension: an operator-attached
-    # slice of the server log (any efficientserver_log*.txt) is the same telnet
-    # PII bridge.jsonl is (player names, IPs, Steam IDs), so it stays out by
-    # family rather than by one exact name. Its section timings survive in
-    # csharp_bridge.json.
-    server_log_marker = "efficientserver"
     output.parent.mkdir(parents=True, exist_ok=True)
     # An output inside the session would otherwise be swept up by the walk below
     # (a truncated copy of the archive being written, or a prior export of it).
@@ -226,8 +234,7 @@ def export_bundle(session: Path, output: Path) -> Path:
                 if (
                     not source.is_file()
                     or source.is_symlink()
-                    or source.name in excluded
-                    or server_log_marker in source.name.lower()
+                    or _excluded_member(source.name)
                     or source.suffix == ".err"
                     or source.resolve() in self_output
                 ):

@@ -245,7 +245,13 @@ def _sample_loop(
             break
         mono_after = time.monotonic()
         if prev is not None and prev_mono is not None:
-            dt = max(mono_after - prev_mono, 1e-3)
+            # Both stamps bracket the /proc read, so dt measures the same
+            # window the tick counters cover. Pairing the tick delta with a
+            # different sample's post-read stamp inflates dt by the pass that
+            # took longest: with --threads (the /proc/<pid>/task walk) an 80 ms
+            # pass followed by a 5 ms pass understates that sample's cpu_pct
+            # by ~7%. collectors/threads.py stamps both sides the same way.
+            dt = max(mono_before - prev_mono, 1e-3)
             user_hz = os.sysconf("SC_CLK_TCK")
             d_ticks = (s.utime + s.stime) - (prev.utime + prev.stime)
             s.cpu_pct = 100.0 * (d_ticks / user_hz) / dt
@@ -279,7 +285,7 @@ def _sample_loop(
             cpu_max = max(cpu_max, s.cpu_pct)
         last = s
         prev = s
-        prev_mono = mono_after
+        prev_mono = mono_before
         time.sleep(max(0.0, args.interval - (time.monotonic() - mono_before)))
 
     if last is not None:

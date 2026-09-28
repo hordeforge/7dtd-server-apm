@@ -181,6 +181,8 @@ to 2.3.0 and 2.2.4 stays skipped.
 
 ## Unreleased - bridge mod
 
+- (pending)
+
 ## 3.0.0 - bridge mod - 2026-09-28
 
 - Config (breaking, 3.0.0): `Config/apmbridge.json` no longer accepts an
@@ -221,6 +223,17 @@ to 2.3.0 and 2.2.4 stays skipped.
   longer looks like a successful call. `apm benchmark <non-number>` reports
   the bad argument instead of quietly benchmarking the default iteration
   count, and `apm jitmap FULL` matches its case-insensitive verb.
+- Correctness: the GC window baseline is now captured on first read, not only
+  by `apm reset`. On a server that was never reset (the default:
+  `--reset-bridge` is off) the heap and collection bases stayed at 0, so
+  `heapDeltaBytes` was the entire live heap and `windowSeconds` the process
+  uptime. The host divides one by the other and reported the live heap as
+  ~20 MB/s of net heap growth for a window that grew by a few MB. The window
+  now starts when the bridge loads; `apm reset` still re-baselines as before.
+- Correctness: the export deadline now rounds up to the next whole
+  `Stopwatch` tick instead of truncating toward zero, so a positive
+  `PeriodicExportSeconds` under one tick no longer arms a deadline in the past
+  and exports on every frame.
 - Correctness: the export and GC window deadlines are now scheduled on the
   monotonic `Stopwatch` rather than cached `Time.realtimeSinceStartup` values.
   `realtimeSinceStartup` is a float whose resolution degrades to 2 s once the

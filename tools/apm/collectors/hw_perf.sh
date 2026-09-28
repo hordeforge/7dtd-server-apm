@@ -5,6 +5,14 @@ set -euo pipefail
 PID="${1:?pid}"
 SECS="${2:-30}"
 OUT="${3:?outdir}"
+# SECS reaches $(( )) below, where a fractional or non-numeric value is a
+# fatal bash arithmetic error that aborts the script before perf ever runs
+# (and is then masked by the unconditional exit 0, leaving a zero-byte
+# hw_stat.txt that the capture records as a complete artifact).
+if [[ ! "$SECS" =~ ^[0-9]+$ ]] || ((SECS < 1)); then
+  echo "hw_perf: SECS must be a positive integer, got '$SECS'" >&2
+  exit 2
+fi
 mkdir -p "$OUT"
 
 EVENTS=(

@@ -60,23 +60,31 @@ def player_ids() -> list[int]:
     return [int(m) for m in re.findall(r"\d+\. id=(\d+),", telnet(["listplayers"]))]
 
 
-def alive() -> int:
+def alive() -> int | None:
+    """Live entity count, or None when the snapshot could not be read.
+
+    Unavailable is not a count. A sentinel -1 fed back into spawn_to's
+    `while current < target` never reaches the target, so the tier burns all
+    40 rounds and returns -1, which was then persisted as
+    zombieAliveAtStart and plotted as an entity count.
+    """
     telnet(["apm dump"])
     time.sleep(2)
     try:
-        return int(
-            (json.loads(SNAPSHOT.read_text(encoding="utf-8")).get("world") or {}).get(
-                "entityAlives"
-            )
-            or 0
+        raw = (json.loads(SNAPSHOT.read_text(encoding="utf-8")).get("world") or {}).get(
+            "entityAlives"
         )
     except (json.JSONDecodeError, OSError, ValueError):
-        return -1
+        return None
+    return int(raw) if isinstance(raw, (int, float)) and not isinstance(raw, bool) else None
 
 
-def spawn_to(target: int) -> int:
+def spawn_to(target: int) -> int | None:
     current = alive()
     rounds = 0
+    if current is None:
+        print(f"    tier {target}: snapshot unreadable, cannot reach target", flush=True)
+        return None
     while current < target and rounds < 40:
         ids = player_ids()
         if len(ids) < 5:
@@ -92,6 +100,9 @@ def spawn_to(target: int) -> int:
         rounds += 1
         time.sleep(8)
         current = alive()
+        if current is None:
+            print(f"    tier {target}: snapshot unreadable, aborting tier", flush=True)
+            return None
         print(f"    tier {target}: alive={current} round={rounds}", flush=True)
     return current
 

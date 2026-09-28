@@ -65,15 +65,23 @@ uprobe:MONO_SO:GC_stop_world
     @stw_n = count();
 }
 
+/* Same target filter as the setter: a second Mono process on the host
+ * linking this libmonobdwgc would otherwise read and zero the target's
+ * @stw_start, banking its own pause into the target's histogram and
+ * dropping the target's real pause (GC_start_world sees @stw_start == 0).
+ * bpftrace predicates cannot combine && with a map lookup, so the guard is
+ * an if in the action block. */
 uprobe:MONO_SO:GC_start_world
-/@stw_start/
+/pid == TARGET_PID || comm == TARGET_COMM/
 {
-    $us = (nsecs - @stw_start) / 1000;
-    @stw_start = 0;
-    @stw_us = hist($us);
-    @stw_sum = sum($us);
-    if ($us > 3000) {
-        printf("STW_PAUSE %d us\n", $us);
+    if (@stw_start) {
+        $us = (nsecs - @stw_start) / 1000;
+        @stw_start = 0;
+        @stw_us = hist($us);
+        @stw_sum = sum($us);
+        if ($us > 3000) {
+            printf("STW_PAUSE %d us\n", $us);
+        }
     }
 }
 
