@@ -1216,11 +1216,15 @@ def test_compare_tolerates_malformed_numbers_in_both_sessions(tmp_path: Path) ->
     cmp_doc = load_json(after / "compare.json")
     assert cmp_doc["late_ticks_a"] == 0 and cmp_doc["alloc_mb_s_a"] == 0.0
     assert cmp_doc["stw_worst_ms_a"] == 0.0
-    # Junk section/attribution heat degrades to 0.0 ties, never a bogus winner
-    # and never a conversion crash.
-    for delta in cmp_doc["section_deltas"] + cmp_doc["attribution_deltas"]:
-        assert delta["a_heat" if "a_heat" in delta else "a_ms"] == 0.0
-        assert delta["better"] in ("tie", "not_comparable")
+    # A junk section duration stays present-at-0, so it is a tie and never a
+    # bogus winner. A junk attribution total has no placeable duration at all,
+    # so that subsystem is left out of the pairing entirely.
+    sections = {d["section"]: d for d in cmp_doc["section_deltas"]}
+    assert set(sections) == {"World.TickEntities"}, cmp_doc["section_deltas"]
+    assert sections["World.TickEntities"]["a_heat"] == 0.0
+    assert sections["World.TickEntities"]["b_heat"] == 0.0
+    assert sections["World.TickEntities"]["better"] == "tie"
+    assert [d["subsystem"] for d in cmp_doc["attribution_deltas"]] == []
 
 
 def test_models_emit_v2_schema() -> None:
@@ -1918,8 +1922,17 @@ def test_attribute_document_matches_attribute_snapshot(tmp_path: Path) -> None:
     }
     atomic_json(session / "app/apm_app.json", doc)
     # The doc-level helper (used by build_summary to avoid a re-read) must apply
-    # the identical deep-sample scaling as the session-level entry point.
-    assert attribute_document(doc) == attribute_snapshot(session)
+    # the identical deep-sample scaling as the session-level entry point:
+    # 100ms sampled 1-in-16 reads as 1600ms, the always-sampled 400ms as-is.
+    snapshot = attribute_snapshot(session)
+    assert snapshot == attribute_document(doc)
+    assert snapshot is not None
+    assert snapshot["deep_sample_rate"] == 16
+    drill = {d["level"]: d["scaled_total_ms"] for d in snapshot["entity_drilldown"]["levels"]}
+    assert drill["tick_entity"] == 1600.0
+    subsystems = {s["subsystem"]: s["scaled_total_ms"] for s in snapshot["subsystems"]}
+    assert subsystems == {"deco_world": 400.0}
+    assert snapshot["measured_ms"] == 400.0  # additive buckets only, not the chain
 
 
 def test_build_summary_lag_attribution_uses_snapshot(tmp_path: Path) -> None:
@@ -2121,8 +2134,18 @@ def test_alloc_site_rankings_equal_with_preloaded_text(tmp_path: Path) -> None:
         "        EntityAlive.updateTasks+0x1\n"
         "]: 12345678\n"
     )
+    # The annotated twin wins over the raw probe output it was derived from.
+    (runtime / "mono_alloc.bt.out").write_text(
+        "=== top sampled (1/4096, all sizes) (top 20) ===\n"
+        "@alloc_bytes[\n"
+        "        GC_malloc+0\n"
+        "        Raw.Unannotated+0x1\n"
+        "]: 12345678\n"
+    )
+    assert top_churn_sites(tmp_path) == ["EntityAlive.updateTasks"]
     text = _alloc_source_text(tmp_path)
     assert top_churn_sites(tmp_path, text=text) == top_churn_sites(tmp_path)
+    assert "EntityAlive" in text and "Raw.Unannotated" not in text
 
 
 def test_jitsym_annotates_hex_against_map(tmp_path: Path) -> None:
@@ -2346,21 +2369,33 @@ def test_gc_layer_takes_last_cumulative_little_n_and_stw() -> None:
 
 
 @pytest.mark.parametrize(
-    "text",
+    "text,little,stw_total,stw_count,stw_worst",
     [
-        "",  # probe produced nothing (attach failed / server down)
-        "garbage line\nno markers here\n",
-        "@little_n:\nSTW_PAUSE us\n@stw_sum: notanumber\n",  # truncated / malformed
-        "STW_PAUSE 999",  # missing unit suffix
-        "@little_n: 5" * 5000,  # pathological repetition, no newlines
+        ("", None, 0.0, 0, 0.0),  # probe produced nothing (attach failed / server down)
+        ("garbage line\nno markers here\n", None, 0.0, 0, 0.0),
+        # Truncated / malformed markers: the token is counted, the number is
+        # never invented from it.
+        ("@little_n:\nSTW_PAUSE us\n@stw_sum: notanumber\n", None, 0.0, 1, 0.0),
+        ("STW_PAUSE 999", None, 0.0, 1, 0.0),  # missing unit suffix
+        ("@little_n: 5" * 5000, 5, 0.0, 0, 0.0),  # pathological repetition
     ],
 )
-def test_gc_layer_survives_malformed_probe_output(text: str) -> None:
+def test_gc_layer_survives_malformed_probe_output(
+    text: str, little: int | None, stw_total: float, stw_count: int, stw_worst: float
+) -> None:
     from apm_suite.analysis.report import _gc_layer
 
     layer = _gc_layer({"mono_gc": text})  # must not raise
     assert layer.layer == "runtime_gc"
-    assert isinstance(layer.signals["stw_pause_total_ms"], float)
+    assert layer.signals == {
+        "slow_gc_lines": 0,
+        "collect_a_little_hits": little,
+        "stw_pause_total_ms": stw_total,
+        "stw_pause_count": stw_count,
+        "stw_pause_worst_ms": stw_worst,
+    }
+    # Unparseable probe output is UNKNOWN, never pressure.
+    assert layer.score == 0
 
 
 @pytest.mark.parametrize(
@@ -2516,27 +2551,66 @@ def test_layer_requested_shared_alias_table() -> None:
     assert not layer_requested("io", {"cpu"})
 
 
-def test_only_tokens_resolve_identically_for_planning_and_audit() -> None:
-    """The capture plan and the audit must agree on every (token, collector)
-    pair: a disagreement surfaces as false "requested collector produced no
-    usable evidence" warnings (or silently missing ones) in every manifest."""
+@pytest.mark.parametrize(
+    "token,expected",
+    [
+        (
+            "all",
+            {
+                "app",
+                "threads",
+                "proc",
+                "hw",
+                "perf",
+                "oncpu",
+                "runqlat",
+                "offcpu",
+                "states",
+                "futex",
+                "vfs",
+                "block",
+                "io_net",
+                "mono_gc",
+            },
+        ),
+        ("app", {"app"}),
+        ("app_sim", {"app"}),
+        ("threads", {"threads", "proc"}),
+        ("memory", {"proc", "hw"}),
+        ("hw", {"proc", "hw"}),
+        ("cache", {"proc", "hw"}),
+        ("proc", {"proc", "hw"}),
+        ("cpu", {"perf", "oncpu"}),
+        ("sched", {"runqlat", "offcpu", "states"}),
+        ("locks", {"futex"}),
+        ("sync", {"futex"}),
+        ("futex", {"futex"}),
+        ("net", {"vfs", "block", "io_net"}),
+        ("io", {"vfs", "block", "io_net"}),
+        ("gc", {"mono_gc"}),
+        ("runtime", {"mono_gc"}),
+        ("alloc", {"mono_alloc"}),
+        ("allocsites", {"mono_alloc"}),
+        ("mono_alloc", {"mono_alloc"}),
+        ("nonsense", set()),
+    ],
+)
+def test_only_token_resolves_to_the_expected_collector_plan(token: str, expected: set[str]) -> None:
+    """--only token -> planned collector set, pinned explicitly. Both the
+    capture plan and the session audit resolve tokens, and a disagreement
+    surfaces as false "requested collector produced no usable evidence"
+    warnings (or silently missing ones) in every manifest, so both sides are
+    held to the same expected set rather than to each other."""
     from apm_suite.capture import SPECS, wanted
-    from apm_suite.models import LAYER_ALIASES
     from apm_suite.session import _requested
 
-    tokens = [
-        "all",
-        *(spec.name for spec in SPECS),
-        *(alias for aliases in LAYER_ALIASES.values() for alias in aliases),
-        "alloc",
-        "allocsites",
-        "nonsense",
-    ]
-    for token in tokens:
-        for spec in SPECS:
-            assert wanted(spec, token) == _requested(spec.name, spec.layer, {token}), (
-                f"plan/audit drift for --only {token!r} on collector {spec.name!r}"
-            )
+    assert {spec.name for spec in SPECS if wanted(spec, token)} == expected, "capture plan"
+    audited = {
+        name
+        for name, layer in ((s.name, s.layer) for s in SPECS)
+        if _requested(name, layer, {token})
+    }
+    assert audited == expected, "session audit"
 
 
 def test_optin_collector_is_not_flagged_by_audit_under_all(tmp_path: Path) -> None:
@@ -2613,7 +2687,8 @@ def test_build_summary_marks_only_requested_layers_collected(tmp_path: Path) -> 
     summary = build_summary(session)
     by_layer = {layer.layer: layer for layer in summary.layers}
     assert by_layer["sync_locks"].state == "collected"
-    assert by_layer["sync_locks"].score is not None
+    assert by_layer["sync_locks"].score == 35.0  # one 5ms+ wait over 10s
+    assert by_layer["sync_locks"].signals["slow_futex_lines"] == 1
     assert by_layer["cpu"].state == "skipped"  # not requested -> no fake zero
     assert by_layer["cpu"].score is None
 
@@ -2630,7 +2705,8 @@ def test_build_summary_counts_offcpu_evidence_for_scheduler(tmp_path: Path) -> N
     summary = build_summary(session)
     scheduler = next(layer for layer in summary.layers if layer.layer == "scheduler")
     assert scheduler.state == "collected"
-    assert scheduler.score is not None
+    assert scheduler.signals["main_thread_offcpu_ms"] == 60.0
+    assert scheduler.score == 0.0  # pacing sleep is not lag on its own
 
 
 # --- session index page --------------------------------------------------------
@@ -3127,17 +3203,20 @@ def test_bridge_exports_off_update_thread_and_uses_v3_schema() -> None:
 
 
 @pytest.mark.parametrize(
-    "record",
+    "record,expected",
     [
-        {"t": 1.0, "cpu_pct": "999", "rss_mb": 100.0},  # string cpu (coerced)
-        {"t": 1.0, "cpu_pct": None, "rss_mb": 100.0},  # null cpu
-        {"t": 1.0, "rss_mb": 100.0},  # missing cpu
-        {"t": 1.0, "cpu_pct": 200.0, "rss_mb": "big"},  # string rss
-        {"t": 1.0, "cpu_pct": 200.0, "rss_mb": None},  # null rss
+        # A numeric string coerces, so a genuinely high sample still spikes.
+        ({"t": 1.0, "cpu_pct": "999", "rss_mb": 100.0}, [("cpu_spike", 999.0)]),
+        ({"t": 1.0, "cpu_pct": None, "rss_mb": 100.0}, []),
+        ({"t": 1.0, "rss_mb": 100.0}, []),
+        ({"t": 1.0, "cpu_pct": 200.0, "rss_mb": "big"}, [("cpu_spike", 200.0)]),
+        ({"t": 1.0, "cpu_pct": 200.0, "rss_mb": None}, [("cpu_spike", 200.0)]),
+        # Below the spike threshold: no event, not a zero-valued one.
+        ({"t": 1.0, "cpu_pct": 12.5, "rss_mb": 100.0}, []),
     ],
 )
 def test_parse_proc_jsonl_survives_non_numeric_fields(
-    tmp_path: Path, record: dict[str, object]
+    tmp_path: Path, record: dict[str, object], expected: list[tuple[str, float]]
 ) -> None:
     from apm_suite.analysis.events import EventSink, parse_proc_jsonl
 
@@ -3146,7 +3225,7 @@ def test_parse_proc_jsonl_survives_non_numeric_fields(
     (session / "memory/proc.jsonl").write_text(json.dumps(record) + "\n")
     sink = EventSink()
     parse_proc_jsonl(sink, session / "memory/proc.jsonl")  # must not raise
-    assert all(isinstance(e["value"], (int, float)) for e in sink.events)
+    assert [(e["kind"], e["value"]) for e in sink.events] == expected
 
 
 def _write_proc_jsonl(session: Path, records: list[dict[str, object]]) -> None:
@@ -3219,16 +3298,18 @@ def test_memory_trend_ignores_wall_clock_step_when_mono_present(
 
 
 @pytest.mark.parametrize(
-    "wchan_top",
+    "wchan_top,expected",
     [
-        {"futex_wait": "5"},  # string count (coerced -> emits)
-        {"futex_wait": None},  # null count (skipped)
-        {"futex_wait": 4},  # numeric passes through
-        {},  # empty
+        ({"futex_wait": "5"}, [("wchan", 5)]),  # string count (coerced -> emits)
+        ({"futex_wait": None}, []),  # null count (skipped)
+        ({"futex_wait": 4}, [("wchan", 4)]),  # numeric passes through
+        ({}, []),  # empty
+        ({"futex_wait": 2}, []),  # below the waiter threshold
+        ("not-a-dict", []),  # truthy non-dict degrades to "no wchan data"
     ],
 )
 def test_parse_threads_jsonl_survives_non_numeric_waiters(
-    tmp_path: Path, wchan_top: dict[str, object]
+    tmp_path: Path, wchan_top: object, expected: list[tuple[str, int]]
 ) -> None:
     from apm_suite.analysis.events import EventSink, parse_threads_jsonl
 
@@ -3239,7 +3320,7 @@ def test_parse_threads_jsonl_survives_non_numeric_waiters(
     )
     sink = EventSink()
     parse_threads_jsonl(sink, session / "threads/threads.jsonl")  # must not raise
-    assert all(isinstance(e["value"], int) for e in sink.events)
+    assert [(e["kind"], e["value"]) for e in sink.events] == expected
 
 
 # --- flame delta -----------------------------------------------------------------
@@ -3461,16 +3542,15 @@ def test_correlate_nearest_proc_binary_search_matches_linear_scan() -> None:
         assert module.nearest_proc(times, rows, query) == expected, query
     assert module.nearest_proc([], [], 1.0) is None
 
-    # Window membership: exactly 5s away is outside (< 5), just inside counts.
+    # Window membership is [t-5, t+5) anchored on the sample: a sample 5s
+    # before a spike is outside, one 5s after it is inside, and an empty
+    # spike list never matches.
     spike_ts = sorted(s for s in (12.0, 34.0))
-    inside = [8.0, 16.99, 29.01, 38.99]
-    outside = [6.99, 17.01, 23.0, 39.01]
-    for t in inside:
-        index = module.bisect_left(spike_ts, t - 5)
-        assert index < len(spike_ts) and spike_ts[index] < t + 5, t
-    for t in outside:
-        index = module.bisect_left(spike_ts, t - 5)
-        assert not (index < len(spike_ts) and spike_ts[index] < t + 5), t
+    for t in (8.0, 16.99, 29.01, 38.99, 17.0, 39.0):
+        assert module.near_spike(spike_ts, t), t
+    for t in (6.99, 17.01, 23.0, 39.01, 22.0, 2.0, 7.0, 29.0):
+        assert not module.near_spike(spike_ts, t), t
+    assert not module.near_spike([], 12.0)
 
 
 def test_correlate_load_proc_skips_torn_and_non_object_lines(tmp_path: Path) -> None:
@@ -5532,13 +5612,13 @@ def test_audit_manifest_walk_skips_file_gone_mid_walk(
     be skipped (same contract as _mtime), not crash every overlapping audit."""
     from apm_suite.io import file_sha256 as real_sha256
 
-    seen = {"first": True}
+    hashed: list[Path] = []
 
     def vanishing_after_first(path: Path) -> str:
-        if seen["first"]:
-            seen["first"] = False
-            return real_sha256(path)
-        raise FileNotFoundError(2, "No such file or directory", str(path))
+        if hashed:
+            raise FileNotFoundError(2, "No such file or directory", str(path))
+        hashed.append(path)
+        return real_sha256(path)
 
     monkeypatch.setattr("apm_suite.session.file_sha256", vanishing_after_first)
     session = tmp_path / "session_race"
@@ -5549,10 +5629,15 @@ def test_audit_manifest_walk_skips_file_gone_mid_walk(
 
     manifest, _valid = audit_session(session)
 
+    # Only the artifact hashed before the race is recorded; the rest are
+    # skipped, not fatal, and never recorded with a fabricated hash. The
+    # remaining manifest errors are the fixture's own absent files, none of
+    # them a hashing failure.
+    assert len(hashed) == 1
     recorded = {artifact.path for artifact in manifest.artifacts}
-    # The vanished file was skipped, not fatal; the survivor is recorded.
-    assert "io/a.txt" in recorded
-    assert not any("crash" in error for error in manifest.errors)
+    assert recorded == {hashed[0].relative_to(session).as_posix()}
+    assert "io/b.txt" not in recorded
+    assert not any("FileNotFound" in error for error in manifest.errors)
 
 
 def test_doctor_bridge_hash_failure_reports_check(

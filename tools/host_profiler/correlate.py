@@ -62,6 +62,17 @@ def load_proc(capture: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def near_spike(spike_ts: list[float], t: float, window: float = 5.0) -> bool:
+    """True when a spike stamp falls in [t - window, t + window).
+
+    The window is anchored on the sample and half-open at the far end, so a
+    sample 5s after a spike counts and one 5s before it does not.
+    `spike_ts` must be sorted ascending.
+    """
+    index = bisect_left(spike_ts, t - window)
+    return index < len(spike_ts) and spike_ts[index] < t + window
+
+
 def nearest_proc(times: list[float], rows: list[dict[str, Any]], t: float) -> dict[str, Any] | None:
     """Sample with the smallest |t - stamp|; ties prefer the EARLIER sample.
 
@@ -145,11 +156,10 @@ def main() -> int:
         for r in proc:
             if r["cpu_pct"] < 150:
                 continue
-            # Any spike in [t-5, t+5]: binary search the first candidate at or
+            # Any spike in [t-5, t+5): binary search the first candidate at or
             # after t-5 and compare it against t+5, instead of scanning every
             # spike per sample.
-            index = bisect_left(spike_ts, r["t"] - 5)
-            if index < len(spike_ts) and spike_ts[index] < r["t"] + 5:
+            if near_spike(spike_ts, r["t"]):
                 print(
                     f"  t={r['t']:.0f} cpu={r['cpu_pct']:.0f}% rss={r['rss_mb']:.0f} thr={r['num_threads']}"
                 )
