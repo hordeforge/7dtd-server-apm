@@ -29,7 +29,12 @@ def render_session(session: Path) -> None:
     health = _load(session / "health.json") or summary.get("health") or {}
     events_doc = _load(session / "events.json")
     bridge_doc = _load(session / "csharp_bridge.json")
-    meta = summary.get("meta") or summary.get("metadata") or _load(session / "meta.json")
+    # meta.json is the source of truth for session metadata; summary.json only
+    # carries an embedded copy. The copy is the fallback, never `metadata`:
+    # that key is the ANALYSIS block (lag_diagnosis, net, frame, ...), a
+    # different shape that would silently feed the templates a dict of
+    # diagnoses where pid/utc are expected.
+    meta = _load(session / "meta.json") or summary.get("meta") or {}
     candidates = [
         ("Interactive flame", "cpu/perf/flame.html"),
         ("Speedscope", "cpu/perf/profile.speedscope.json"),

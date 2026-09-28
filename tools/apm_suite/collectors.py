@@ -296,6 +296,23 @@ def wanted(spec: CollectorSpec, only: str) -> bool:
     return spec.requested({token.strip() for token in only.split(",") if token.strip()})
 
 
+def planned_layers(only: str, *, no_app: bool = False) -> list[str]:
+    """Catalog layer names a --only plan will actually cover, sorted.
+
+    The plan's layer set is a property of the catalog plus the requested
+    tokens, so it is derived here instead of being spelled out as a literal
+    list in the capture metadata: a hand-maintained list drifts from the
+    catalog (it named layers that do not exist and missed the ones that do)
+    and it never reflected --only, so every partial capture recorded the same
+    full-session layer set. Collectors that later fail to start still count:
+    meta.json records the plan, and per-collector outcomes live in
+    manifest.json.
+    """
+    return sorted(
+        {spec.layer for spec in SPECS if wanted(spec, only) and not (no_app and spec.name == "app")}
+    )
+
+
 def unknown_only_tokens(only: str) -> list[str]:
     """--only tokens that match no collector name, layer, or alias (typos would
     otherwise silently resolve to an empty plan). Empty tokens ("a,,b") and
@@ -313,6 +330,7 @@ __all__ = [
     "SPEC_BY_NAME",
     "CaptureContext",
     "CollectorSpec",
+    "planned_layers",
     "unknown_only_tokens",
     "wanted",
 ]

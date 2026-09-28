@@ -2562,6 +2562,27 @@ def test_optin_collector_is_not_flagged_by_audit_under_all(tmp_path: Path) -> No
     assert valid
 
 
+def test_planned_layers_derive_from_the_catalog_and_the_requested_tokens() -> None:
+    """meta.json records the plan's real layers, not a hand-written list: a
+    literal drifts from the catalog and cannot reflect --only, so every
+    partial capture used to claim the same full-session layer set."""
+    from apm_suite.capture import SPECS
+    from apm_suite.collectors import planned_layers
+
+    catalog_layers = sorted({spec.layer for spec in SPECS})
+    assert planned_layers("all") == catalog_layers
+    assert planned_layers("cpu,sched") == ["cpu", "scheduler"]
+    assert planned_layers("net") == ["io"]
+    # no-app drops the bridge-backed layer, not every layer that owns "app"
+    # in its name.
+    assert "app_sim" in planned_layers("all")
+    assert "app_sim" not in planned_layers("all", no_app=True)
+    assert planned_layers("app", no_app=True) == []
+    # An opt-in collector counts once its own token is asked for.
+    assert "runtime_gc" not in planned_layers("sched")
+    assert "runtime_gc" in planned_layers("alloc")
+
+
 def test_layer_alias_token_selects_whole_layer_in_the_plan() -> None:
     """--only net means the io layer everywhere: plan, audit, and summary all
     treat it as requesting vfs/block/io_net, not io_net alone."""
@@ -2688,6 +2709,30 @@ def test_golden_report_render(tmp_path: Path) -> None:
     assert (session / "report.html").read_text() == golden
 
 
+def test_dashboard_session_metadata_never_comes_from_the_analysis_block(
+    tmp_path: Path,
+) -> None:
+    """summary.json carries two different untyped dicts: `meta` (a copy of
+    meta.json) and `metadata` (the analysis block). Falling back through
+    `metadata` hands the templates diagnoses where pid/utc are expected, and
+    nothing raises because both are dict[str, Any]."""
+    session = tmp_path / "session_meta_confusion"
+    session.mkdir()
+    atomic_json(session / "meta.json", _meta(pid=4242))
+    atomic_json(
+        session / "summary.json",
+        {
+            "schema": "7dtd.apm.summary.v2",
+            "session_id": session.name,
+            "metadata": {"lag_diagnosis": {"verdict": "spike-driven"}},
+            "layers": [],
+        },
+    )
+    render_session(session)
+    html = (session / "dashboard.html").read_text()
+    assert "pid 4242" in html
+
+
 def test_templates_escape_runtime_content(tmp_path: Path) -> None:
     session = tmp_path / "session_escape"
     session.mkdir()
@@ -2769,6 +2814,11 @@ def test_finalize_pipeline_end_to_end(tmp_path: Path) -> None:
     assert sync["signals"]["slow_futex_lines"] == 1
     health = load_json(session / "health.json")
     assert health["confidence"] == "insufficient"  # partial coverage never grades
+    # finalize owns manifest.json: the run_capture path reads the verdict from
+    # here rather than re-auditing (a second full SHA-256 pass over every
+    # artifact) just to learn it.
+    assert result.audit_valid is True
+    assert (session / "manifest.json").is_file()
 
 
 def test_finalize_required_stage_failure_fails_run_optional_does_not(
@@ -2833,9 +2883,13 @@ def _cmp_session(
     version: str = "2.1.0",
     layers: tuple[tuple[str, float], ...] = (("cpu", 40.0),),
     workload: dict[str, object] | None = None,
+    observed_seconds: float | None = None,
 ) -> Path:
     session = root / name
     session.mkdir()
+    meta: dict[str, object] = {"analyzer_version": version, "only": "all", "seconds": seconds}
+    if observed_seconds is not None:
+        meta["observed_seconds"] = observed_seconds
     atomic_json(
         session / "summary.json",
         {
@@ -2844,7 +2898,7 @@ def _cmp_session(
             "layers": [
                 {"layer": layer, "score": score, "state": "collected"} for layer, score in layers
             ],
-            "meta": {"analyzer_version": version, "only": "all", "seconds": seconds},
+            "meta": meta,
         },
     )
     if workload is not None:
@@ -2879,6 +2933,38 @@ def test_compare_rejects_mismatched_session_pairs(
     b = _cmp_session(tmp_path, "cmp_guard_b", **kwargs_b)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match=message):
         compare_sessions(a, b)
+
+
+def test_compare_rejects_a_truncated_capture_against_a_full_length_one(
+    tmp_path: Path,
+) -> None:
+    """A capture cut short still records the seconds it asked for. Gating on
+    that field alone lets a 6s baseline pass as a 30s one, so every rate in it
+    is understated and the deltas read as a regression that never happened."""
+    from apm_suite.analysis.compare import compare_sessions
+
+    a = _cmp_session(tmp_path, "cmp_short_a", observed_seconds=6.0)
+    b = _cmp_session(tmp_path, "cmp_full_b")
+    with pytest.raises(ValueError, match="durations differ by more than 10%"):
+        compare_sessions(a, b)
+    # Two captures that both ran the same (short) window still compare.
+    c = _cmp_session(tmp_path, "cmp_short_c", observed_seconds=6.0)
+    assert compare_sessions(a, c)["schema"] == "7dtd.apm.compare.v2"
+
+
+def test_effective_seconds_prefers_the_observed_window() -> None:
+    from apm_suite.models import effective_seconds
+
+    # Sessions written before observed_seconds existed keep the requested value.
+    assert effective_seconds({"seconds": 60}) == 60
+    # A full-length run that recorded its observed window is unchanged by it.
+    assert effective_seconds({"seconds": 60, "observed_seconds": 60.5}) == 60
+    assert effective_seconds({"seconds": 60, "observed_seconds": 12.5}) == 12.5
+    # Absent, unparseable, or nonsensical observations never override it.
+    assert effective_seconds({"seconds": 60, "observed_seconds": None}) == 60
+    assert effective_seconds({"seconds": 60, "observed_seconds": "junk"}) == 60
+    assert effective_seconds({"seconds": 60, "observed_seconds": 0}) == 60
+    assert effective_seconds({}) == 0.0
 
 
 def test_compare_marks_one_sided_section_not_comparable(tmp_path: Path) -> None:

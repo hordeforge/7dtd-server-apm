@@ -73,6 +73,18 @@ to 2.3.0 and 2.2.4 stays skipped.
   round trip) and for the budget gate (UNKNOWN on unparseable limits and
   evidence, never a pass it could not decide), plus regression cases for
   every wrongly typed container shape above.
+- An interrupted capture (`capture`, Ctrl-C) records `observed_seconds` in
+  `meta.json` next to the `seconds` it requested. Rates (futex stalls/s, net
+  MB/s) and the `compare` duration gate now read the window that actually ran,
+  so a capture cut short no longer passes as a full-length one and its
+  understated rates no longer read as a real regression.
+- `meta.json` `layers` is derived from the collector catalog for the requested
+  `--only` plan instead of a fixed list, and `capture_preset` holds the preset
+  name (`standard` / `deep` / `forensic`, from `scenario run`) instead of the
+  expanded `--only` string it duplicates in `only`.
+- One `manifest.json` write per capture: `finalize`'s manifest stage already
+  stamped the session, and `capture` no longer re-audits it, which halved the
+  SHA-256 work over every collected artifact at the end of a run.
 
 ## 2.2.0 - host CLI - 2026-08-26
 

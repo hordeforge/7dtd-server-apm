@@ -31,6 +31,7 @@ from .collectors import (
     SPECS,
     CaptureContext,
     CollectorSpec,
+    planned_layers,
     unknown_only_tokens,
     wanted,
 )
@@ -654,7 +655,12 @@ def run_capture(
     telnet_password: str,
     finalize: bool = True,
     reset_bridge: bool = False,
-    symbolize: bool = True,
+    # Off by default at the function boundary too, not only on the CLI flag:
+    # the JIT burst runs on the server's MAIN thread and can freeze a loaded
+    # server for tens of seconds, so a caller that forgets to pass it must not
+    # get the unsafe behavior. Bench callers (scenario run) opt in.
+    symbolize: bool = False,
+    preset: str = "",
 ) -> CaptureOutcome:
     require_backends()
     if pid is None:
@@ -712,8 +718,13 @@ def run_capture(
         threads=thread_count,
         uname=os.uname().release,
         analyzer_version=ANALYZER_VERSION,
-        capture_preset=only,
-        layers=["app", "runtime", "threads", "sync", "scheduler", "cpu", "memory", "io", "net"],
+        # The preset NAME, not the --only string it expanded to: the expanded
+        # token list is already recorded in `only`, so a field named
+        # capture_preset that held it recorded the same fact twice under a
+        # misleading name and lost the one fact only the caller knows (which
+        # preset was asked for). Empty for a plain `capture` run.
+        capture_preset=preset,
+        layers=planned_layers(only, no_app=no_app),
         tool_versions={name: tool_version(name) for name in ("perf", "bpftrace", "python3")},
     )
     atomic_json(session / "meta.json", schema_dict(meta))
@@ -741,6 +752,7 @@ def run_capture(
         sudo_ok=sudo_ok,
     )
     previous_sigterm = signal.signal(signal.SIGTERM, _sigterm)
+    window_started = time.monotonic()
     try:
         if symbolize:
             # Independent of reset_bridge: managed-frame resolution is what makes
@@ -787,6 +799,21 @@ def run_capture(
             "some root-owned collectors are still draining until their own timeout",
         )
 
+    if outcome.interrupted:
+        # Record the window that actually ran next to the one that was asked
+        # for. Every rate the session derives divides by this value, and
+        # `compare` gates on it: without it a 10s truncated capture is
+        # indistinguishable from the 60s one it requested, so its understated
+        # rates would read as a real regression. Rewritten before finalize, so
+        # the manifest hashes the corrected metadata.
+        meta.observed_seconds = round(max(0.0, time.monotonic() - window_started), 1)
+        atomic_json(session / "meta.json", schema_dict(meta))
+        _warn(
+            session,
+            f"capture interrupted after {meta.observed_seconds:.1f}s of the "
+            f"requested {seconds}s window",
+        )
+
     for item in running:
         rc = item.process.poll()
         duration = (item.finished or time.monotonic()) - item.started
@@ -813,11 +840,12 @@ def run_capture(
 
     if finalize:
         from .finalize import finalize as finalize_session
-        from .session import audit_session
 
+        # One manifest write per capture: finalize's manifest stage owns
+        # manifest.json and its verdict, so the capture does not re-audit
+        # (a second full SHA-256 pass over every artifact) just to learn it.
         finalize_result = finalize_session(session)
-        _, valid = audit_session(session)
-        outcome.exit_code = finalize_result.exit_code or (0 if valid else 1)
+        outcome.exit_code = finalize_result.exit_code or (0 if finalize_result.audit_valid else 1)
     if outcome.interrupted:
         outcome.exit_code = 130
     _auto_prune_sessions()

@@ -14,7 +14,15 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, iter_jsonl
-from ..models import LayerScore, SummaryV2, as_mapping, as_number, layer_requested, schema_dict
+from ..models import (
+    LayerScore,
+    SummaryV2,
+    as_mapping,
+    as_number,
+    effective_seconds,
+    layer_requested,
+    schema_dict,
+)
 from .bridge import attribute_document, attribute_snapshot
 
 
@@ -322,7 +330,7 @@ def _app_layer(texts: dict[str, str]) -> LayerScore:
 def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> list[LayerScore]:
     """Heuristic 0-100 severity scores (higher = more pressure), coverage-aware."""
     meta = _load_meta(session)
-    duration = max(1.0, float(meta.get("seconds") or 1))
+    duration = max(1.0, effective_seconds(meta))
     scores = [
         _cpu_layer(hw, texts),
         _cache_layer(hw),
@@ -1217,7 +1225,7 @@ def build_summary(session: Path) -> SummaryV2:
             # the same reason).
             pass
 
-    net_window = max(1.0, float(meta.get("seconds") or 1))
+    net_window = max(1.0, effective_seconds(meta))
     net = _net_rates(texts.get("io_net", ""), net_window)
     if net:
         metadata["net"] = net

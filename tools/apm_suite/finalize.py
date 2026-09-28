@@ -30,21 +30,32 @@ from .reporting import render_session
 class FinalizeResult:
     session: Path
     failed_stages: list[str] = field(default_factory=list)
+    # Verdict of the manifest stage (None when that stage did not run or
+    # raised). run_capture reads it from here instead of auditing the session
+    # a second time: the audit hashes every artifact in the session, and a
+    # second pass over a multi-hundred-MB capture after finalize already
+    # stamped it bought nothing but duplicate work and a second writer of
+    # manifest.json.
+    audit_valid: bool | None = None
 
     @property
     def exit_code(self) -> int:
         return 1 if self.failed_stages else 0
 
 
-def _record_manifest(session: Path) -> None:
-    """(Re)write manifest.json for the finalized session, reporting findings."""
+def _record_manifest(session: Path) -> bool:
+    """(Re)write manifest.json for the finalized session, reporting findings.
+
+    Returns the audit verdict so the caller does not have to re-audit.
+    """
     from .session import audit_session
 
-    manifest, _valid = audit_session(session)
+    manifest, valid = audit_session(session)
     for error in manifest.errors:
         print(f"finalize: audit error: {error}", file=sys.stderr)
     for warning in manifest.warnings:
         print(f"finalize: audit warning: {warning}", file=sys.stderr)
+    return valid
 
 
 def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
@@ -70,10 +81,14 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
     # `budget` command; finalize's exit code tracks failed stages only.
     stage("budget", lambda: check_budget(session), required=False)
     stage("render", lambda: render_session(session), required=True)
+
+    def record_manifest() -> None:
+        result.audit_valid = _record_manifest(session)
+
     # Every session ships an integrity manifest (README "Sessions"), and a
     # re-finalize rewrites artifacts a previous audit recorded: re-stamp last so
     # the manifest describes the session as it stands after this run.
-    stage("manifest", lambda: _record_manifest(session), required=False)
+    stage("manifest", record_manifest, required=False)
     stage("index", lambda: write_index(), required=False)
 
     if result.failed_stages:

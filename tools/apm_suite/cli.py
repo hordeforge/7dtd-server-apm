@@ -1362,6 +1362,11 @@ def scenario_run(
             telnet_port=8081,
             telnet_password=telnet_password,
             reset_bridge=reset_bridge,
+            # A scenario run is a bench capture, not a production one: the
+            # cohort is synthetic, so the MAIN-thread JIT burst is safe here
+            # and the managed frame attribution it buys is the point.
+            symbolize=True,
+            preset=str(chosen_preset),
         )
         session = outcome.session
         capture_rc = outcome.exit_code

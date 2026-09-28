@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import as_mapping, as_number, collected_layer_scores, first_present, layer_signals
+from ..models import (
+    as_mapping,
+    as_number,
+    collected_layer_scores,
+    effective_seconds,
+    first_present,
+    layer_signals,
+)
 from .bridge import ranked_section_heats
 from .flame_delta import delta, folded_stack_path, load_weights
 
@@ -118,8 +125,12 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
         raise ValueError("analyzer versions differ; re-finalize both sessions with one version")
     if str(meta_a.get("only") or "all") != str(meta_b.get("only") or "all"):
         raise ValueError("incompatible collector selection")
-    duration_a = as_number(meta_a.get("seconds")) or 0.0
-    duration_b = as_number(meta_b.get("seconds")) or 0.0
+    # The window the collectors actually ran, not the one they were asked
+    # for: an interrupted capture records the full requested seconds, so
+    # comparing the raw field would let a truncated baseline pass this gate
+    # against a full-length candidate.
+    duration_a = effective_seconds(meta_a)
+    duration_b = effective_seconds(meta_b)
     # A zero/near-zero window is a failed capture; comparing it to a real one
     # yields meaningless deltas. Reject before the 10% check (which is skipped
     # when a duration is falsy).

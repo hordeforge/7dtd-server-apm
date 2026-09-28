@@ -142,6 +142,11 @@ class MetaV2(StrictModel):
     pid: int = Field(gt=0)
     comm: str = SERVER_COMM
     seconds: int = Field(gt=0)
+    # The window the collectors actually ran, recorded only when the capture
+    # ended before `seconds` elapsed (Ctrl-C). `seconds` stays the requested
+    # window; readers that divide by time must use effective_seconds() so a
+    # truncated capture cannot pass as a full-length one.
+    observed_seconds: float | None = Field(default=None, ge=0)
     only: str = "all"
     no_app: bool = False
     exe: str = ""
@@ -276,6 +281,23 @@ def collector_requested(
     if optin:
         return bool(name in requested or extra_aliases & requested)
     return bool(layer_requested(layer, requested) or name in requested or extra_aliases & requested)
+
+
+def effective_seconds(meta: Mapping[str, Any]) -> float:
+    """The capture window the collectors actually ran, in seconds.
+
+    `seconds` is the REQUESTED window, and a capture cut short (Ctrl-C) still
+    records it. Dividing by it would understate every rate the window
+    produced (futex stalls/s, net MB/s) and let a 10s truncated capture pass
+    `compare`'s duration gate against a 60s one as if both ran 60s. The
+    observed window recorded at capture end wins whenever it is shorter;
+    older sessions have no such field and fall back to the requested value.
+    """
+    requested = as_number(meta.get("seconds")) or 0.0
+    observed = as_number(meta.get("observed_seconds"))
+    if observed is not None and 0.0 < observed < requested:
+        return observed
+    return requested
 
 
 def collected_layer_scores(summary: Mapping[str, Any]) -> dict[str, float]:
