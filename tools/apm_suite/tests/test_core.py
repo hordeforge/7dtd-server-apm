@@ -781,7 +781,7 @@ def test_rank_folded_skips_unicode_digit_counts(tmp_path: Path) -> None:
 
 
 def test_export_scrub_redacts_nested_cmdline_exe() -> None:
-    from apm_suite.cli import _scrub
+    from apm_suite.bundle import _scrub
 
     data = {"meta": {"cmdline": "-configfile=/secret", "exe": "/opt/7dtd", "pid": 42}}
     out = _scrub(data)
@@ -875,7 +875,7 @@ def test_export_unreadable_member_names_file_and_keeps_prior_bundle(
     # could not read the source (monkeypatched to False, its documented
     # "source could not be opened" signal), so export falls back to a raw
     # copy - which then fails with the same OS error and must be named.
-    monkeypatch.setattr("apm_suite.cli._stream_scrubbed_member", lambda *a, **k: False)
+    monkeypatch.setattr("apm_suite.bundle._stream_scrubbed_member", lambda *a, **k: False)
     monkeypatch.setattr(zipfile_module.ZipFile, "write", denied)
 
     prior = tmp_path / "bundle.zip"
@@ -897,7 +897,7 @@ def test_export_streamed_text_members_match_full_text_scrub_bytes(tmp_path: Path
     JSONL redaction, and the home prefix replaced everywhere."""
     import zipfile
 
-    from apm_suite.cli import _scrub_jsonl_line
+    from apm_suite.bundle import _scrub_jsonl_line
 
     home = str(Path.home())
     session = tmp_path / "session_stream"
@@ -1118,7 +1118,7 @@ def test_import_rejects_bundles_beyond_size_limits(
 ) -> None:
     """A decompression-bomb bundle (huge declared uncompressed size or member
     count) is refused before any extraction touches the session store."""
-    from apm_suite import cli as cli_module
+    from apm_suite import bundle as bundle_module
 
     session = tmp_path / "session_bomb"
     (session / "io").mkdir(parents=True)
@@ -1131,14 +1131,14 @@ def test_import_rejects_bundles_beyond_size_limits(
     store = tmp_path / "store"
     store.mkdir()
     monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
-    monkeypatch.setattr(cli_module, "MAX_IMPORT_UNCOMPRESSED_BYTES", 4)
+    monkeypatch.setattr(bundle_module, "MAX_IMPORT_UNCOMPRESSED_BYTES", 4)
     result = runner.invoke(app, ["import", str(bundle)])
     assert result.exit_code == 2
     assert "import limits" in result.output
     assert not list(store.glob("session_*"))
 
-    monkeypatch.setattr(cli_module, "MAX_IMPORT_UNCOMPRESSED_BYTES", 2**40)
-    monkeypatch.setattr(cli_module, "MAX_IMPORT_MEMBERS", 1)
+    monkeypatch.setattr(bundle_module, "MAX_IMPORT_UNCOMPRESSED_BYTES", 2**40)
+    monkeypatch.setattr(bundle_module, "MAX_IMPORT_MEMBERS", 1)
     result = runner.invoke(app, ["import", str(bundle)])
     assert result.exit_code == 2
     assert "import limits" in result.output
