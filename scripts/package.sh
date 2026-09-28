@@ -66,6 +66,13 @@ if [[ -z "$EPOCH" ]]; then
 fi
 [[ -n "$EPOCH" ]] || EPOCH="$(date +%s)"
 find "$STAGE" -exec touch -h -d "@$EPOCH" {} +
+# Normalize mode bits too: cp -a and mkdir carry the packager's umask into the
+# stored unix attributes, so a zip built under umask 022 and one built under
+# 0077 differ byte for byte. Nothing in the mod is executed, so 0644/0755 is
+# both the least-privilege mode and a host-independent one.
+find "$STAGE" -type f -exec chmod 644 {} +
+find "$STAGE" -type d -exec chmod 755 {} +
+command -v zip >/dev/null 2>&1 || { echo "package: zip not found; cannot build $OUT" >&2; exit 1; }
 # zip updates archives in place, so a rerun over an old zip would keep stale
 # members that vanished from dist; rebuild the artifact from scratch instead.
 rm -f "$OUT"

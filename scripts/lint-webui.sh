@@ -10,16 +10,15 @@
 #   3. Freshness: the committed bundle.js must equal a fresh compilation, so a
 #      .ts edit that was not compiled and committed fails the gate.
 #
-# tsc/oxlint run through bunx pinned by TSC_VERSION/OXLINT_VERSION. The repo
-# deliberately does not track package.json/node_modules (.gitignore), so the
-# versions live in scripts/lib/tool_versions.sh (TSC_VERSION, shared with the
-# release build) and here as their single sources of truth.
+# tsc/oxlint run through bunx pinned by the versions in
+# scripts/lib/tool_versions.sh (the single source of truth, shared with the
+# release build); the repo deliberately does not track package.json or
+# node_modules (.gitignore), so pins live there instead of a lockfile.
 # Override locally: TSC_VERSION=5.9.3 OXLINT_VERSION=1.79.0 bash scripts/lint-webui.sh
 #
 # The anti-slop plugin is vendored source fetched outside any registry, so its
 # tarball carries no publisher integrity metadata; ANTI_SLOP_SHA pins the
 # commit and ANTI_SLOP_SHA256 verifies the downloaded bytes before extraction.
-# Update both pins together after inspecting the new upstream source.
 #
 # Requires: bun (bunx).
 
@@ -28,12 +27,12 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$root/scripts/lib/tool_versions.sh"
-oxlint_version="${OXLINT_VERSION:-1.79.0}"
-oxlint_standards_version="${OXLINT_STANDARDS_VERSION:-0.8.1}"
-oxlint_tsgolint_version="${OXLINT_TSGOLINT_VERSION:-7.0.2001}"
-oxlint_plugins_version="${OXLINT_PLUGINS_VERSION:-1.79.0}"
-anti_slop_sha="${ANTI_SLOP_SHA:-6d538555cb151d4121ed51a27db81890eacf8ae9}"
-anti_slop_sha256="${ANTI_SLOP_SHA256:-a720663fd2562e22e3da670769faa88dc34c9a761fdd9a7d285e20d92871848e}"
+oxlint_version="$OXLINT_VERSION"
+oxlint_standards_version="$OXLINT_STANDARDS_VERSION"
+oxlint_tsgolint_version="$OXLINT_TSGOLINT_VERSION"
+oxlint_plugins_version="$OXLINT_PLUGINS_VERSION"
+anti_slop_sha="$ANTI_SLOP_SHA"
+anti_slop_sha256="$ANTI_SLOP_SHA256"
 cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-server-apm/oxlint-standards"
 webmod_dir="$root/bridge/ApmBridge/WebMod"
 

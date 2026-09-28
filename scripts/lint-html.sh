@@ -14,7 +14,12 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-vnu_version="${VNU_VERSION:-26.8.20}"
+# shellcheck disable=SC1091
+. "$root/scripts/lib/tool_versions.sh"
+vnu_version="$VNU_VERSION"
+# Same repo-local cache the Makefile pins, so a local `make lint-html` and a CI
+# run share one uv cache instead of a second cold one in $HOME.
+export UV_CACHE_DIR="$root/.uv-cache"
 
 command -v bunx >/dev/null 2>&1 || {
   echo "7dtd-server-apm: lint-html: bunx (bun) not found; vnu runs through pinned bunx packages" >&2

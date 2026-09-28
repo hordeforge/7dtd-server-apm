@@ -52,6 +52,19 @@ to 2.3.0 and 2.2.4 stays skipped.
   (`hatchling>=1.27,<2`). It is the one dependency `uv.lock` cannot hash-pin,
   because PEP 517 build isolation resolves it outside the lock on every
   `uv sync` of the editable install.
+- Build: every pinned tool version (tsc, the oxlint stack, the anti-slop
+  commit and its sha256, vnu) now lives in `scripts/lib/tool_versions.sh`, so
+  the release build and the lint gates cannot drift to different compilers.
+- Build: `global.json` pins the .NET SDK to `8.0.423` with `rollForward:
+  latestPatch`. `latestFeature` accepted any later 8.0 SDK a host happened to
+  have, so the shipped DLL's compiler was not the one the repo declared.
+- Build: `scripts/build_bridge.sh` pins `LC_ALL`/`TZ` and derives
+  `SOURCE_DATE_EPOCH` from the HEAD commit (overridable), matching what
+  `scripts/package.sh` already did for the archive.
+- Release: the release zip normalizes member mode bits (0644 files, 0755
+  directories) before archiving, so a package built under a restrictive umask
+  is byte-identical to one built under 022, and a missing `zip` fails with a
+  named tool instead of a mid-rule error.
 - Release: `make package` now writes `dist/sbom-python.txt` and
   `dist/sbom-python.cdx.json` next to the zip, so every release carries the
   production dependency inventory (name, version, artifact hashes, CycloneDX

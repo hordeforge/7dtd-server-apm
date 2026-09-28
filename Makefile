@@ -60,11 +60,11 @@ check: lint lint-shell lint-html lint-webui format-check typecheck test check-bt
 # CI variant: GitHub Actions runners cannot validate bpftrace probes (no host
 # kernel access), so check-bt stays a local gate.
 check-ci: lint lint-shell lint-html lint-webui format-check typecheck test
+# Every script these targets call is committed with its exec bit set (git mode
+# 100755), so a target never chmods the source tree on its way to building.
 bridge-build:
-	chmod +x scripts/build_bridge.sh
 	./scripts/build_bridge.sh
 bridge-install:
-	chmod +x scripts/build_bridge.sh scripts/install_bridge.sh
 	SEVENDTD_DS_DIR="$(DS)" ./scripts/install_bridge.sh
 bridge-uninstall:
 	@# The tuned config is the one file in the mod folder the operator cannot
@@ -79,7 +79,6 @@ bridge-uninstall:
 	rm -rf "$(DS)/Mods/7dtd-server-apm-bridge"
 	@echo "Uninstalled. Reinstall, then move the saved config back to Mods/7dtd-server-apm-bridge/Config/apmbridge.json to keep your settings."
 package:
-	chmod +x scripts/build_bridge.sh scripts/package.sh
 	./scripts/package.sh
 # Dependency inventory for releases and vuln scanners, production deps only
 # (no dev group). Two formats from the same locked resolution: the

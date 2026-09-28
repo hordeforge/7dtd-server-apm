@@ -1,6 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Pin locale and timezone so compiler diagnostics, resource ordering and any
+# tool that stamps dates cannot leak the build host's settings into the DLL or
+# the WebMod bundle.
+export LC_ALL=C
+export TZ=UTC
+# Roslyn's deterministic MVID and the SDK's generated obj/* inputs are derived
+# from source content and the source paths PathMap rewrites, not the clock, but
+# the SDK also honors SOURCE_DATE_EPOCH for the build stamp. Default it to the
+# HEAD commit time (two builds of one commit agree) and let a packager override.
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$(dirname "$0")/.." log -1 --format=%ct 2>/dev/null || true)}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+[[ -n "$SOURCE_DATE_EPOCH" ]] || unset SOURCE_DATE_EPOCH
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/tool_versions.sh"
 if [[ -n "${DOTNET_ROOT:-}" && -x "${DOTNET_ROOT}/dotnet" ]]; then

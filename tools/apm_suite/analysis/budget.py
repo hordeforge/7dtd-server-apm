@@ -88,17 +88,17 @@ def check(
             ok = False
             lines.append(f"UNKNOWN layer {name}: no usable evidence")
             continue
-        gate(f"layer {name}", layers[name], float(limit))
+        gate(f"layer {name}", layers[name], limit)
 
     max_sum = budget.get("max_sum_layer_score")
     if max_sum is not None:
-        gate("sum_layers", sum(layers.values()), float(max_sum))
+        gate("sum_layers", sum(layers.values()), max_sum)
 
     for name, limit in as_mapping(budget.get("max_section_heat")).items():
         if name not in sections:
             lines.append(f"skip section {name} (no heat data)")
             continue
-        gate(f"section {name}", sections[name], float(limit))
+        gate(f"section {name}", sections[name], limit)
 
     if baseline is not None:
         base_layers = load_layers(baseline)
