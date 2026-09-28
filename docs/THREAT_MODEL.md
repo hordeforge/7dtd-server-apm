@@ -10,7 +10,7 @@ sec-review; this document is the map that aims those passes.
   its stock WebDashboard implementation, and sibling projects
   (`7dtd-loadgen`, `7dtd-server-optimizer`) are outside this model; only the
   interfaces between them and this repo are modeled.
-- **Last reviewed:** 2026-09-28, against commit `b5afd97`. Owner and review
+- **Last reviewed:** 2026-09-28, against commit `a3210b7`. Owner and review
   cadence: not assigned.
 - **Disclosure path:** none documented. There is no SECURITY.md; until one
   exists there is no stated route from "vulnerability reported" to "fix
@@ -20,21 +20,22 @@ sec-review; this document is the map that aims those passes.
 
 | # | Risk | Boundary | Severity | Status |
 |---|---|---|---|---|
-| R1 | The telnet password is sent in cleartext to whatever answers `--telnet-port`, with no host identity check, so a rogue or redirected listener harvests full console control of the game server | B2 CLI -> telnet | Medium-High | Gap. Inherent to the stock plaintext telnet interface; not fixable in this repo. `capture.py:266-300`, `app_scrape.py:58` |
+| R1 | The telnet password is sent in cleartext to whatever answers `--telnet-port`, with no host identity check, so a rogue or redirected listener harvests full console control of the game server | B2 CLI -> telnet | Medium-High | Gap. Inherent to the stock plaintext telnet interface; not fixable in this repo. `capture.py:265-305`, `app_scrape.py:58` |
 | R2 | Root-adjacent collectors driven by operator input: every capture shells out to `sudo -n bpftrace`, `perf`, and `mount --bind` against an operator-chosen `--pid`, so anyone who can invoke the CLI with passwordless sudo can profile arbitrary processes | B5 CLI -> root | Medium | Gap; no sudoers policy ships with the repo to constrain it |
 | R3 | Session store leaks player PII (names, IPs, Steam IDs) if raw sessions leave the host | B3/B6 store -> other parties | Medium | Mitigated: owner-only perms on both captured and imported sessions, raw drain excluded from exports |
 | R4 | Evidence integrity: a writable store lets a local attacker forge measurements that feed baseline/candidate verdicts | B6 store -> analysis | Low-Medium | Partially mitigated. Manifest-recorded artifact paths are validated at read, and hashes are checked at finalize/import, but nothing is signed, so a local writer can re-hash |
-| R5 | Imported bundle restores attacker-supplied archives into the store where later audits, compares, and budgets trust them | B6 untrusted zip -> store | Low-Medium | Mitigated since the previous pass: zip-slip guard, member and uncompressed-size limits, chmod 0700 before extraction, partial-extraction cleanup, post-import audit |
-| R6 | A `scenario run` hands the sibling load generator a full copy of the operator environment, including `SEVENDTD_TELNET_PASSWORD` and every other secret in it | B6 CLI -> sibling process | Low-Medium | Gap; no allowlist on the child env |
-| R7 | The bridge console verbs `apm reload`, `apm reset`, and `apm dump` are reachable by any account with console access; the bridge performs no authorization of its own | B4 console user -> bridge | Low | Inherent to the game's single-tier console auth. `BridgeMod.cs:276-324` |
-| R8 | `/tmp/perf-<pid>.map` is a world-claimable name in a shared namespace | B5 CLI -> shared /tmp | Low | Mitigated: a foreign entry is refused before the atomic swap, and release is conditional on the link still pointing at this capture. `capture.py:502-557` |
+| R5 | Imported bundle restores attacker-supplied archives into the store where later audits, compares, and budgets trust them | B6 untrusted zip -> store | Low-Medium | Mitigated: zip-slip guard, member and uncompressed-size limits, chmod 0700 before extraction, partial-extraction cleanup, post-import audit. `bundle.py:286-344` |
+| R6 | A `scenario run` hands the sibling load generator a full copy of the operator environment, including `SEVENDTD_TELNET_PASSWORD` and every other secret in it | B6 CLI -> sibling process | Low-Medium | Gap; no allowlist on the child env. `cli.py:967-990` |
+| R7 | The bridge console verbs `apm reload`, `apm reset`, and `apm dump` are reachable by any account with console access; the bridge performs no authorization of its own | B4 console user -> bridge | Low | Inherent to the game's single-tier console auth. `BridgeMod.cs:280-330` |
+| R8 | `/tmp/perf-<pid>.map` is a world-claimable name in a shared namespace | B5 CLI -> shared /tmp | Low | Mitigated: a foreign entry is refused before the atomic swap, and release is conditional on the link still pointing at this capture. `capture.py:502-557,619` |
+| R9 | The `prometheus` command writes a metric file that an external scraper reads over a shared path, and every label in it comes from `summary.json`, which an imported bundle supplies | B6 store -> monitoring | Low | Mitigated: label values are escaped per the exposition spec and every number goes through a safe coercion, so a crafted summary degrades to a missing line instead of breaking the line format. `prometheus.py:22-26,29-148` |
 
 Closed in the interval since the previous review: the `--telnet-password` argv
 options (shell history and `/proc/<pid>/cmdline` exposure) are gone, so the
 secret is env-only end to end; import now enforces member and byte limits and
-chmods restored sessions 0700; `docs/APM.md:123` now states the import case.
-The former R1, the perf-config ops switch, stays removed: no `/api/perf`
-handler and no `Perf` class exist anywhere under `bridge/`.
+chmods restored sessions 0700. The former R1, the perf-config ops switch, stays
+removed: no `/api/perf` handler and no `Perf` class exist anywhere under
+`bridge/`.
 
 ## Assets
 
@@ -44,7 +45,8 @@ handler and no `Perf` class exist anywhere under `bridge/`.
 | Raw telnet drain `app/bridge.jsonl` | session store, owner-only | Player names, IPs, Steam IDs disclosed |
 | Server log excerpt `efficientserver_log_excerpt.txt` | session store, owner-only | Player identities; excluded from exports because it is PII by content, not by filename |
 | Host/user identifiers in perf artifacts | perf.script, folded stacks, flame SVGs | Username and host paths leaked on sharing (home prefix scrubbed at export) |
-| Session store evidence | `~/.local/share/7dtd-server-apm` (`SEVENDTD_APM_DIR`, `paths.py:54-56`) | Forged or destroyed measurement history |
+| Session store evidence | `~/.local/share/7dtd-server-apm` (`SEVENDTD_APM_DIR`, `paths.py:55-57`) | Forged or destroyed measurement history |
+| Exported metric line set | file written by `prometheus` (`prometheus.py:29-148`) | Layer, subsystem, and GC figures scraped into a shared monitoring stack; label values originate in an importable `summary.json` |
 | Bridge telemetry dir | `Mods/7dtd-server-apm-bridge/telemetry/` (`BridgeMod.cs:34`) | JIT map files and snapshots readable by anything with install-dir access |
 | `/tmp/perf-<pid>.map` | shared tmpfs (`capture.py:519-557`) | Symbol confusion for perf, or a local user's file unlinked by a root capture |
 
@@ -52,29 +54,30 @@ handler and no `Perf` class exist anywhere under `bridge/`.
 
 | ID | Boundary | Crossing point(s) in code |
 |---|---|---|
-| B1 | Operator -> CLI | Typer options and env wiring in `tools/apm_suite/cli.py`; env overrides `SEVENDTD_APM_DIR`, `SEVENDTD_DS_DIR` (`paths.py:30-40,54-56`), `SEVENDTD_DS_BIN` and `SEVENDTD_DS_DIR` (`tools/host_profiler/find_server.sh:8-11`), `SEVENDTD_APM_PYTHON` (`tools/host_profiler/perf_record.sh:72`) |
-| B2 | CLI -> game server telnet (outbound network) | `socket.create_connection` in `capture.py:279`, `collectors/app_scrape.py:58`, `doctor.py:46` |
+| B1 | Operator -> CLI | Typer options and env wiring in `tools/apm_suite/cli.py`; env overrides `SEVENDTD_APM_DIR`, `SEVENDTD_DS_DIR` (`paths.py:30-40,55-57`), `SEVENDTD_DS_BIN` and `SEVENDTD_DS_DIR` (`tools/host_profiler/find_server.sh:8-11`), `SEVENDTD_APM_PYTHON` (`tools/host_profiler/perf_record.sh:72`), `SEVENDTD_GAME_DIR` (`scripts/build_bridge.sh:30`) |
+| B2 | CLI -> game server telnet (outbound network) | `socket.create_connection` in `capture.py:278`, `collectors/app_scrape.py:58`, `doctor.py:45` |
 | B3 | Game server responses -> session store | Server-streamed console-log lines are cut at the first ISO timestamp before persistence (`app_scrape.py:34,44-56`); the `apm` command reply itself is persisted raw into `app/bridge.jsonl` |
-| B4 | Dashboard web user / console user -> bridge (in-process, on stock hosts) | `GET /api/apm` on the stock V3 WebAPI scanner (`WebApi.cs:14-41`); `apm` console verbs (`BridgeMod.cs:276-324`); panel caller `bridge/ApmBridge/WebMod/bundle.ts:902-906` |
-| B5 | CLI -> OS root, and CLI -> shared host namespaces | `sudo -n bpftrace` (`collectors.py:80-88`), `sudo -n mount --bind` / `umount` (`capture.py:189-193,213-238`), `sudo -n true` (`capture.py:493-496`, `doctor.py:28`); `/tmp/perf-<pid>.map` claim (`capture.py:519-557`); `scripts/check_bt.sh:49` |
-| B6 | Other parties -> store and -> child processes | Sanitized export zip (`cli.py:505-606`); untrusted import (`cli.py:619-700`); loadgen child inherits a full environment copy (`cli.py:1288-1331`) |
+| B4 | Dashboard web user / console user -> bridge (in-process, on stock hosts) | `GET /api/apm` on the stock V3 WebAPI scanner (`WebApi.cs:14-41`); `apm` console verbs (`BridgeMod.cs:280-330`); panel caller `bridge/ApmBridge/WebMod/bundle.ts:902-906` |
+| B5 | CLI -> OS root, and CLI -> shared host namespaces | `sudo -n bpftrace` (`collectors.py:81-88`), `sudo -n mount --bind` / `umount` (`capture.py:189-193,213-238`), `sudo -n true` (`capture.py:493`); `/tmp/perf-<pid>.map` claim (`capture.py:519-557,619`); `scripts/check_bt.sh:49` |
+| B6 | Other parties -> store and -> child processes | Sanitized export zip (`bundle.py:201-284`); untrusted import (`bundle.py:286-344`); metric file read by an external scraper (`prometheus.py:29-148`); loadgen child inherits a full environment copy (`cli.py:967-1010`) |
 
 ## Entry points
 
 | Entry point | Kind | File |
 |---|---|---|
-| `capture`, `finalize`, `audit`, `verify-store`, `index`, `export`, `import`, `scaling`, `prometheus`, `monitor`, `prune`, `compare`, `budget`, `bridge`, `doctor`, `scenario run`, `scenario matrix`, `flame build`, `flame diff` | CLI arguments | `tools/apm_suite/cli.py` |
-| `SEVENDTD_TELNET_PASSWORD`, `SEVENDTD_APM_DIR`, `SEVENDTD_DS_DIR`, `SEVENDTD_DS_BIN`, `SEVENDTD_APM_PYTHON`, `APM_KEEP_SESSIONS`, `APM_PRUNE_GRACE_HOURS`, `LOADGEN_*` (emitted, not read) | env input | `cli.py:224,1264,1511`, `paths.py:30-56`, `doctor.py:184-190` |
-| Telnet client actions (`apm dump/reset/jitmap/benchmark/reload`, rally, cleanup) | outbound network client | `capture.py:249-361`, `cli.py:1353,1545` |
+| `capture`, `finalize`, `audit`, `verify-store`, `index`, `export`, `import`, `scaling`, `prometheus`, `monitor`, `prune`, `compare`, `budget`, `bridge`, `doctor`, `scenario run`, `scenario matrix`, `flame build`, `flame diff` | CLI arguments | `tools/apm_suite/cli.py:185-1267` |
+| `SEVENDTD_TELNET_PASSWORD`, `SEVENDTD_APM_DIR`, `SEVENDTD_DS_DIR`, `SEVENDTD_DS_BIN`, `SEVENDTD_APM_PYTHON`, `SEVENDTD_GAME_DIR`, `APM_KEEP_SESSIONS`, `APM_PRUNE_GRACE_HOURS`, `LOADGEN_*` (emitted, not read) | env input | `cli.py:265,942,1194`, `paths.py:30-57`, `doctor.py:188`, `scripts/build_bridge.sh:30` |
+| Telnet client actions (`apm dump/reset/jitmap/benchmark/reload`, rally, cleanup) | outbound network client | `capture.py:248-361`, `cli.py:942,1194` |
 | Bridge `GET /api/apm` | HTTP GET, admin-gated, no request data read | `WebApi.cs:18-41` |
-| Bridge console verbs `apm status/dump/reset/reload/capabilities/jitmap/benchmark` | console command | `BridgeMod.cs:276-324` |
-| Zip bundle import | file parser (untrusted archive) | `cli.py:619-700`, guard `io.py:36-50` |
-| JSON/JSONL session parsing, incl. manifest-recorded artifact paths from an imported bundle | file parser (store-trusted, import-untrusted) | `io.py:17-33,36-50,99-134`; consumers in `analysis/` |
+| Bridge console verbs `apm status/dump/reset/reload/capabilities/jitmap/benchmark` | console command | `BridgeMod.cs:280-330` |
+| Zip bundle import | file parser (untrusted archive) | `bundle.py:286-344`, guard `io.py:105-120` |
+| JSON/JSONL session parsing, incl. manifest-recorded artifact paths from an imported bundle | file parser (store-trusted, import-untrusted) | `io.py:168-219,105-120`; consumers in `analysis/` |
 | `perf script` output, bpftrace maps, jit map | file parsers (host-produced) | `tools/host_profiler/stackcollapse_perf.py`, `analysis/report.py`, `analysis/jitsym.py`, `analysis/events.py`; fuzzed in `tools/apm_suite/tests/test_fuzz_parsers.py` |
 | Bridge config `Config/apmbridge.json` | file parser (operator-authored) | `BridgeConfig.cs:20-39` |
 | Collector subprocesses (bpftrace, perf via `hw_perf.sh` / `perf_record.sh`, `preprocess_bt.py`, `app_scrape.py`, `make_flames.sh`) | child processes from CLI-built argv | `collectors.py:62-195`, `capture.py:830-839` |
-| Sibling loadgen launcher | child process script | `cli.py:1277,1331` |
-| Generated HTML/SVG reports opened in a browser | artifact rendering | `tools/host_profiler/interactive_flame.py:155` |
+| Sibling loadgen launcher | child process script | `cli.py:1005-1010` |
+| Prometheus exposition file, read by an external scraper | artifact rendering (labels from an importable `summary.json`) | `prometheus.py:29-148`, CLI command `cli.py:539-559` |
+| Generated HTML/SVG reports opened in a browser | artifact rendering | `tools/host_profiler/interactive_flame.py:328-342` |
 
 ## Threats per boundary (STRIDE, concrete)
 
@@ -136,20 +139,29 @@ handler and no `Perf` class exist anywhere under `bridge/`.
 
 **B6 other parties -> store and -> child processes**
 - Tampering: forged evidence feeds `audit`/`compare`/`budget` verdicts. Manifest
-  hashes are checked at finalize and import (`io.py:181-186`, `session.py:517+`),
-  and a bundle can no longer plant a path that escapes its session directory
-  (`io.py:36-50`), but the store carries no signatures, so a local writer can
+  hashes are checked at finalize and import (`session.py:475-537`), and a
+  bundle can no longer plant a path that escapes its session directory
+  (`io.py:105-120`), but the store carries no signatures, so a local writer can
   re-hash. R4.
-- Import hardening, all in `cli.py:619-700`: member-count and declared-byte
-  ceilings (20k members, 2 GiB, `cli.py:615-616,641-648`), per-member path
-  validation, exclusive-create directory claim, chmod 0700 before extraction,
-  removal of a partial session on `BadZipFile`/`zlib.error`/`OSError`, and a
-  post-import audit. Attacker-controlled member names are HTML-escaped before
-  printing so a crafted string cannot rewrite console styling.
-- Information disclosure: restored sessions are owner-only, matching captured
-  ones, so `docs/APM.md:123` is accurate for both paths.
+- Import hardening, all in `bundle.py:286-344`: member-count and declared-byte
+  ceilings (20k members, 2 GiB, `bundle.py:40-41`), per-member path validation
+  (`bundle.py:305`), exclusive-create directory claim, chmod 0700 before
+  extraction (`bundle.py:322-323`), removal of a partial session on
+  `BadZipFile`/`zlib.error`/`OSError`, and a post-import audit. Attacker-controlled
+  member names are HTML-escaped before printing so a crafted string cannot
+  rewrite console styling.
+- Information disclosure on export: the bundle walk skips symlinks and any
+  member whose name matches the PII set or the `efficientserver` / `output_log`
+  content markers (`bundle.py:48-57,230-240`), and redacts `cmdline`, `exe`,
+  and the home prefix (`bundle.py:75-96`). Restored sessions are owner-only,
+  matching captured ones, so `docs/APM.md:130-132` is accurate for both paths.
+- Metric-file injection: `prometheus` reads layer, subsystem, and cause names
+  out of `summary.json` and the lag frame, so an imported bundle chooses them.
+  `_prom_label` escapes `\`, `"`, and newline, and every numeric field goes
+  through `as_number`, so a crafted summary drops a line instead of breaking
+  the exposition format (`prometheus.py:22-26,48-55,84-90`).
 - Child-process exposure: the loadgen subprocess receives `os.environ.copy()`
-  plus its 17 `LOADGEN_*` keys (`cli.py:1288-1312`), so it holds the telnet
+  plus its 17 `LOADGEN_*` keys (`cli.py:967-990`), so it holds the telnet
   password and anything else in the operator environment. R6.
 
 ## Abuse cases
@@ -165,37 +177,45 @@ handler and no `Perf` class exist anywhere under `bridge/`.
 - **PII harvesting via shared artifacts:** raw sessions hold the full telnet
   drain and the operator's log excerpt (`docs/APM.md:111-123`); anyone who can
   read the store, or a backup taken without the 0700 mode, gets it. Exported
-  bundles drop both classes (`cli.py:520-529,505-606`).
+  bundles drop both classes (`bundle.py:48-57,201-284`).
 - **Bundle-borne manifest paths:** an imported bundle supplies its own
   `manifest.json`, so its recorded artifact paths are attacker input joined onto
   a session directory. `member_is_safe` is the named validation point.
+- **Monitored-host fingerprinting through the metric file:** a `prometheus`
+  run over an imported bundle republishes that bundle's layer names, managed
+  subsystem names, GC pause worst case, and UDP send rate into whatever
+  monitoring stack scrapes the path. Those names and values are attacker-chosen
+  strings that survive into a system an operator trusts (`prometheus.py:48-141`).
 
 ## Mitigations that exist (with evidence)
 
 | Control | Covers | File |
 |---|---|---|
-| No `--telnet-password` flag anywhere; secret read from env at each call site | R1 | `cli.py:224,1264,1511`, `app_scrape.py:106` |
-| Password passed to the scrape child via env, never child argv | R1, R6 (child side) | `collectors.py:128`, `capture.py:898-900` |
-| Doctor reports the secret as a set/unset boolean, never its value | secret leakage into reports | `doctor.py:184-190` |
-| Loud warning when the app layer needs an unset password | misconfiguration | `capture.py:472-483`, called at `capture.py:689-690` |
-| Captured sessions chmod 0700 before any artifact lands | R3 | `capture.py:684-686` |
-| Import: member and byte ceilings, path validation, chmod 0700 pre-extract, partial-extraction cleanup, post-import audit | R5 | `cli.py:615-616,641-700` |
-| Shared path guard for zip members and manifest-recorded artifact paths | R5, B6 tampering | `io.py:36-50` |
-| Lone-surrogate scrubbing in every JSON/JSONL reader | parser crash on hostile store content | `io.py:17-33` |
+| No `--telnet-password` flag anywhere; secret read from env at each call site | R1 | `cli.py:265,942,1194`, `app_scrape.py:106` |
+| Password passed to the scrape child via env, never child argv | R1, R6 (child side) | `collectors.py:128` |
+| Doctor reports the secret as a set/unset boolean, never its value | secret leakage into reports | `doctor.py:188` |
+| Loud warning when the app layer needs an unset password | misconfiguration | `capture.py:471-483` |
+| Captured sessions chmod 0700 before any artifact lands | R3 | `capture.py:684` |
+| Import: member and byte ceilings, path validation, chmod 0700 pre-extract, partial-extraction cleanup, post-import audit | R5 | `bundle.py:40-41,286-344` |
+| Shared path guard for zip members and manifest-recorded artifact paths | R5, B6 tampering | `io.py:105-120`, used at `bundle.py:305` and `session.py:17` |
+| Lone-surrogate scrubbing in every JSON/JSONL reader | parser crash on hostile store content | `io.py:18-34`, `io.py:168-219` |
+| UTF-8 pinned on stdout, stderr, and stdin so a bare systemd or `sudo` environment cannot turn a reported path into a traceback | local DoS of the reporting path | `io.py:37-66` |
 | `/tmp/perf-<pid>.map` refuses foreign entries; conditional release; atomic swap | R8 | `capture.py:502-557` |
-| Export excludes the raw drain, server log excerpt, perf data, stderr, manifest; redacts cmdline, exe, home prefix; skips symlinks | R3 | `cli.py:520-529,557-563,505-606` |
+| Export excludes the raw drain, server log excerpt (by name or by `efficientserver` / `output_log` marker), perf data, stderr, manifest; redacts cmdline, exe, home prefix; skips symlinks; writes through a temp archive and `os.replace` | R3 | `bundle.py:48-57,75-96,201-284` |
+| Prometheus label escaping and numeric coercion, so a crafted `summary.json` drops a metric instead of breaking the exposition format | R9 | `prometheus.py:22-26,29-148` |
+| Interactive flame page escapes the embedded tree JSON (`<`, `>`, `&`) and html-escapes title and file name, so a hostile frame name cannot break out of `<script>` | stored XSS in a shared report | `interactive_flame.py:328-339` |
 | No `shell=True`, `os.system`, or command-string concatenation anywhere in `tools/`; every subprocess is an argv list | command injection | `collectors.py`, `capture.py`, `cli.py` |
-| bpftrace preprocessor validates `--comm` and `--mono-so` before generating a root-run script | root-program injection | `preprocess_bt.py:47-54,66-73` |
+| bpftrace preprocessor types `--pid` as `int` and validates `--comm` and `--mono-so` before generating a root-run script | root-program injection | `preprocess_bt.py:48-63,74-81` |
 | Bridge endpoint admin-only on every verb, GET-only, reads no request data | B4 web scope | `WebApi.cs:18-41` |
-| Bridge console verbs restricted by an allowlist with `int.TryParse` on the numeric arg | B4 console scope | `BridgeMod.cs:280-281,287-321` |
-| Bridge config values clamped on load; malformed config falls back to defaults | hostile config | `BridgeConfig.cs:26-39` |
+| Bridge console verbs restricted by an allowlist with `int.TryParse` on the numeric arg | B4 console scope | `BridgeMod.cs:283-285,290-330` |
+| Bridge config rejects unknown keys and clamps values on load; malformed config falls back to defaults | hostile config | `BridgeConfig.cs:50,98-110` |
 | Bridge writes are atomic (temp plus replace) with temp cleanup on failure | partial telemetry | `TempFiles.cs:34-46`, `Telemetry.cs:453-457` |
 | Every instrumentation hook swallows its own exceptions | bridge-caused server crash | `BridgeMod.cs:218-239` |
-| Crash-safe atomic writes plus parent directory fsync | evidence durability | `io.py:53-96` |
-| Monitor sample log rotation at 64 MiB, one generation kept | local disk exhaustion from a 24/7 run | `cli.py:89-110` |
+| Crash-safe atomic writes plus parent directory fsync; the `mkstemp` temp inherits 0600 and `replace` carries that mode over, so the metric file and the export archive land owner-only | local disclosure of the metric file or bundle | `io.py:138-161`, used at `prometheus.py:148` and `bundle.py:213,282` |
+| Monitor sample log rotation at 64 MiB, one generation kept | local disk exhaustion from a 24/7 run | `cli.py:103-130` |
 | Prune trash grace window (`APM_PRUNE_GRACE_HOURS`) | accidental destruction | `session.py`, `docs/APM.md` |
 | Server-streamed telnet log lines dropped before persistence | PII in the store | `app_scrape.py:34,44-56` |
-| `lint-webui.sh` pins the fetched anti-slop tarball by SHA-256, and caches the extracted source under that commit so a pin bump re-verifies | supply chain for the lint tool | `scripts/lint-webui.sh:37-40,62-84` |
+| `lint-webui.sh` pins the fetched anti-slop tarball by SHA-256, and caches the extracted source under that commit so a pin bump re-verifies | supply chain for the lint tool | `scripts/lint-webui.sh:21,35-39,65-67` |
 
 ## Gaps (ranked; fixes belong to sec-review)
 
@@ -204,7 +224,7 @@ handler and no `Perf` class exist anywhere under `bridge/`.
   the dependency but nothing pins it, so passwordless sudo plus this repo
   means profiling any pid (R2).
 - **G2:** The loadgen child inherits the entire operator environment rather
-  than an allowlist plus the 17 `LOADGEN_*` keys it needs (`cli.py:1288-1312`),
+  than an allowlist plus the 17 `LOADGEN_*` keys it needs (`cli.py:967-990`),
   handing it the telnet password and any other secret (R6).
 - **G3:** No SECURITY.md, so no disclosure contact, supported-version
   statement, or vulnerability-handling path exists anywhere in the repo.
@@ -222,10 +242,12 @@ handler and no `Perf` class exist anywhere under `bridge/`.
 - Forensic trail: each capture writes versioned metadata, collector results,
   and hash manifests under the session dir (`meta.json`, `finalize.py`),
   giving an investigator per-artifact integrity checks; `verify-store`
-  (`cli.py:305-362`) runs a read-only audit across a whole store for restore
-  drills. The bridge logs to the game log via `Log.Out` (`BridgeMod.cs:253`).
+  (`cli.py:344-402`) runs a read-only audit across a whole store for restore
+  drills. The bridge logs to the game log via `Log.Out` (`BridgeMod.cs:278`).
   o11y-review owns log structure. No central audit of CLI invocations exists:
-  who ran what, and under which environment, is not recorded anywhere.
+  who ran what, and under which environment, is not recorded anywhere. An
+  imported session is indistinguishable from a captured one in the store once
+  it passes the post-import audit, so the store records no provenance for it.
 - Vulnerability-to-fix path: undocumented (G3).
 
 ## Related

@@ -119,11 +119,13 @@ prefix from JSON, JSONL, bpftrace output, flamegraph SVG, and other text
 artifacts. Event timelines carry only extracted bridge metrics, never raw
 console text (the telnet stream can contain player names, IPs, and Steam IDs).
 Exclusion is by file name, not by extension: `app/bridge.jsonl`, `perf.data`,
-an operator-attached `app/efficientserver_log_excerpt.txt` (a slice of the same
-server log), and the source `manifest.json` all stay out of bundles. The
-excerpt's section timings survive in `csharp_bridge.json`. Any other text file
-an operator drops into a session is bundled, so check the archive before
-sharing.
+any `*.err`, and the source `manifest.json` all stay out of bundles, as does any
+file whose name contains `efficientserver` or `output_log`, so an
+operator-attached slice of the server log (`app/efficientserver_log_excerpt.txt`
+or `OutputLog_2026-09-28.txt`) is dropped whichever name it carries. Symlinks
+are skipped rather than followed. The excerpt's section timings survive in
+`csharp_bridge.json`. Any other text file an operator drops into a session is
+bundled, so check the archive before sharing.
 Inspect a bundle before sharing because game-derived artifacts may still
 contain player or world data.
 
