@@ -896,11 +896,26 @@ def _auto_prune_sessions() -> None:
     doomed = sessions_beyond_budget(list_sessions(apm_root()), keep)
     # One shared pass with the CLI prune: same sessions, same trash and
     # scenario purge phases, so the two entry points cannot drift.
+    removed = False
     for kind, entry, error in prune_store(apm_root(), doomed):
         if error is not None:
             print(f"WARNING: {kind} prune failed for {entry.name}: {error}", file=sys.stderr)
         elif kind == "session":
+            removed = True
             print(f"pruned old session {entry.name} (APM_KEEP_SESSIONS={keep})", file=sys.stderr)
+    # finalize's index stage ran before this pass, so the index it wrote still
+    # lists every session this one just retired. Same reason the CLI prune
+    # rewrites it: the index is the store's listing of what exists, and an
+    # entry for a pruned session is a link to evidence that is gone. A failed
+    # refresh is reported, never raised: this runs after the evidence is
+    # written, and the next capture or `index` command replaces the file.
+    if removed:
+        from .analysis.index import write_index
+
+        try:
+            write_index()
+        except OSError as error:
+            print(f"WARNING: session index refresh failed: {error}", file=sys.stderr)
 
 
 def _launch_collectors(

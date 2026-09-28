@@ -41,6 +41,16 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+- Capture: post-capture auto-prune rewrites the session index when it retires
+  a session. The index is written by the finalize stage, which runs before the
+  retention pass, so a host capturing on a timer kept `index.json` entries and
+  `index.html` links for sessions the prune had already moved to the trash. The
+  `prune` command has refreshed the index for this reason since it was added.
+- Flamegraphs: the interactive HTML falls back to folding `stacks.folded`
+  directly when the d3 tree beside it is older than that file. The tree is
+  reused to skip a second fold of the same stacks, but a build that died after
+  rewriting the folded file left the previous run's tree in place, and the
+  page published it as current.
 - Import: the restored session is audited against the manifest the bundle
   carries before a new one is written, and the findings are printed one per
   line. A bundle that drifted since the export is now reported by name instead

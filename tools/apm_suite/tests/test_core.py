@@ -5159,11 +5159,15 @@ def test_paired_deltas_verdict_matches_printed_delta() -> None:
     0.04 ms difference rounds to 0.0 there."""
     from apm_suite.analysis.compare import _paired_deltas
 
-    deltas = _paired_deltas({"io_saves": 100.0}, {"io_saves": 100.04}, "subsystem", "a_ms", "b_ms", 1)
+    deltas = _paired_deltas(
+        {"io_saves": 100.0}, {"io_saves": 100.04}, "subsystem", "a_ms", "b_ms", 1
+    )
     assert deltas[0]["delta_b_minus_a"] == 0.0
     assert deltas[0]["better"] == "tie"
 
-    coarse = _paired_deltas({"io_saves": 100.0}, {"io_saves": 105.0}, "subsystem", "a_ms", "b_ms", 1)
+    coarse = _paired_deltas(
+        {"io_saves": 100.0}, {"io_saves": 105.0}, "subsystem", "a_ms", "b_ms", 1
+    )
     assert coarse[0]["delta_b_minus_a"] == 5.0
     assert coarse[0]["better"] == "A"  # B grew, so A holds the lower heat
 
@@ -5325,6 +5329,60 @@ def test_prune_grace_zero_restores_hard_delete(
     assert result.exit_code == 0
     assert sorted(p.name for p in root.glob("session_*")) == ["session_2", "session_3"]
     assert not (root / ".trash").exists()
+
+
+def test_auto_prune_rewrites_the_index_it_staled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Auto-prune runs after finalize wrote the index, so it must rewrite it.
+
+    The CLI prune path refreshes for exactly this reason; when the post-capture
+    pass did not, a host capturing on a timer kept index.json entries and
+    index.html links for sessions the retention pass had already retired.
+    """
+    from apm_suite.analysis.index import write_index
+    from apm_suite.capture import _auto_prune_sessions
+    from apm_suite.io import load_json
+
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    monkeypatch.setenv("APM_KEEP_SESSIONS", "2")
+    # Real summary documents: an unreadable one is skipped by the index scan,
+    # and this test is about what the index lists, not what it can parse.
+    for i in range(5):
+        session = root / f"session_{i}"
+        session.mkdir()
+        (session / "summary.json").write_text("{}")
+        stamp = 1_700_000_000 + i * 100
+        os.utime(session, (stamp, stamp))
+    # What finalize leaves behind: an index listing every session in the store.
+    assert write_index(root) == 5
+
+    _auto_prune_sessions()
+
+    assert sorted(p.name for p in root.glob("session_*")) == ["session_3", "session_4"]
+    indexed = [row["dir"] for row in load_json(root / "index.json")["sessions"]]
+    assert indexed == ["session_4", "session_3"]
+
+
+def test_auto_prune_leaves_the_index_alone_when_nothing_is_pruned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No session retired means no index rewrite: a store that was never
+    indexed stays unindexed rather than gaining one from a capture."""
+    from apm_suite.capture import _auto_prune_sessions
+
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    monkeypatch.setenv("APM_KEEP_SESSIONS", "5")
+    _prune_store(root, 2)
+
+    _auto_prune_sessions()
+
+    assert sorted(p.name for p in root.glob("session_*")) == ["session_0", "session_1"]
+    assert not (root / "index.json").exists()
 
 
 # --- resource lifecycle ------------------------------------------------------------
