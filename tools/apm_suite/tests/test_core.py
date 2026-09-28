@@ -4603,18 +4603,39 @@ def test_scaling_skips_unreadable_summaries_like_missing_ones(tmp_path: Path) ->
 
 
 def test_place_perf_map_link_swaps_stale_link(tmp_path: Path) -> None:
-    """pid reuse leaves the previous capture's link at /tmp/perf-<pid>.map;
+    """pid reuse leaves the previous capture's symlink at /tmp/perf-<pid>.map;
     a fresh capture must be able to replace it with its own map."""
     map_source = tmp_path / "telemetry" / "perf-4242.map"
     map_source.parent.mkdir()
     map_source.write_text("sym 0x0\n", encoding="utf-8")
+    old_source = tmp_path / "telemetry" / "perf-1111.map"
+    old_source.write_text("old-process symbols\n", encoding="utf-8")
     stale = tmp_path / "perf-4242.map"
-    stale.write_text("old-process symbols\n", encoding="utf-8")
+    stale.symlink_to(old_source)
 
     capture._place_perf_map_link(map_source, stale)
 
     assert stale.is_symlink()
     assert stale.resolve() == map_source.resolve()
+
+
+def test_place_perf_map_link_refuses_foreign_entry(tmp_path: Path) -> None:
+    """/tmp is a shared name space. A regular file (or anything that is not
+    this uid's own symlink) sitting at perf-<pid>.map belongs to some other
+    local user: replacing it would unlink their file and hand perf a symbol
+    table this capture never wrote. The swap must refuse and leave the entry."""
+    map_source = tmp_path / "telemetry" / "perf-4242.map"
+    map_source.parent.mkdir()
+    map_source.write_text("sym 0x0\n", encoding="utf-8")
+    planted = tmp_path / "perf-4242.map"
+    planted.write_text("somebody else's file\n", encoding="utf-8")
+
+    with pytest.raises(OSError):
+        capture._place_perf_map_link(map_source, planted)
+
+    assert not planted.is_symlink()
+    assert planted.read_text(encoding="utf-8") == "somebody else's file\n"
+    assert not list(tmp_path.glob(".perf-4242.map.*.tmp"))  # no stranded staging link
 
 
 def test_export_jitmap_survives_unplaceable_tmp_link_and_warns(

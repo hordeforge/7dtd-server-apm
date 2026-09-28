@@ -7,10 +7,12 @@ a versioned CollectorResult JSON next to its primary artifact.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -489,7 +491,26 @@ def _place_perf_map_link(map_source: Path, map_link: Path) -> None:
     user after pid reuse survives the sticky /tmp); the caller records that as
     a session warning instead of letting perf silently resolve this capture's
     JIT frames against the previous process's map.
+
+    /tmp is a shared namespace: a name here is claimable by any local user.
+    Replacing whatever sits at the path is only ever correct when it is a
+    symlink this tool (the same uid) left behind, so anything else is refused
+    before the rename. A regular file, directory, fifo, or device planted by
+    another user is somebody else's data, and unlinking it would be a root
+    capture breaking the sticky-bit rule; perf would likewise read a planted
+    regular file as this capture's symbol table.
     """
+    try:
+        st = os.lstat(map_link)
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISLNK(st.st_mode) or st.st_uid != os.getuid():
+            raise OSError(
+                errno.EPERM,
+                f"{map_link} exists and is not a symlink owned by uid {os.getuid()}",
+                str(map_link),
+            )
     temp = map_link.with_name(f".{map_link.name}.{os.getpid()}.tmp")
     temp.symlink_to(map_source)
     try:

@@ -183,6 +183,12 @@ def write_index(root: Path | None = None) -> int:
     target = root or apm_root()
     rows = scan(target)
     target.mkdir(parents=True, exist_ok=True)
+    # Owner-only on shared hosts: index.json carries every session's absolute
+    # path and health/grade data, and `index` can be the first command run, so
+    # this can be the call that creates the store. Same contract as capture and
+    # import, which chmod the root right after creating it.
+    with contextlib.suppress(OSError):
+        target.chmod(0o700)
     atomic_json(target / "index.json", {"sessions": rows})
     atomic_text(target / "index.html", html_index(rows))
     return len(rows)
