@@ -5159,11 +5159,15 @@ def test_paired_deltas_verdict_matches_printed_delta() -> None:
     0.04 ms difference rounds to 0.0 there."""
     from apm_suite.analysis.compare import _paired_deltas
 
-    deltas = _paired_deltas({"io_saves": 100.0}, {"io_saves": 100.04}, "subsystem", "a_ms", "b_ms", 1)
+    deltas = _paired_deltas(
+        {"io_saves": 100.0}, {"io_saves": 100.04}, "subsystem", "a_ms", "b_ms", 1
+    )
     assert deltas[0]["delta_b_minus_a"] == 0.0
     assert deltas[0]["better"] == "tie"
 
-    coarse = _paired_deltas({"io_saves": 100.0}, {"io_saves": 105.0}, "subsystem", "a_ms", "b_ms", 1)
+    coarse = _paired_deltas(
+        {"io_saves": 100.0}, {"io_saves": 105.0}, "subsystem", "a_ms", "b_ms", 1
+    )
     assert coarse[0]["delta_b_minus_a"] == 5.0
     assert coarse[0]["better"] == "A"  # B grew, so A holds the lower heat
 

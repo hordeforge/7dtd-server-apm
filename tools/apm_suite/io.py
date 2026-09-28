@@ -139,7 +139,9 @@ def member_is_safe(name: str) -> bool:
     manifest.json that an imported bundle may have planted): an absolute path,
     any ".." segment, a lone-surrogate spelling (unencodable, so no such
     file can exist on this host yet still crash the join), or a name carrying
-    invisible/bidi controls is rejected.
+    invisible/bidi controls is rejected. A name that normalizes to no path
+    part at all ("" or ".") is rejected with them: it names no member, and
+    extraction raises ValueError on it rather than writing anything.
 
     The control rule covers C0/C1 controls (a newline or CR in a member name
     is legal on Linux and produces a file whose name every line-oriented tool
@@ -156,6 +158,10 @@ def member_is_safe(name: str) -> bool:
     if _INVISIBLE_RE.search(name):
         return False
     candidate = PurePosixPath(name)
+    if not candidate.parts:
+        # "" and "." normalize to the base directory itself: they name no
+        # member, and extracting one raises ValueError("Empty filename").
+        return False
     return not candidate.is_absolute() and ".." not in candidate.parts
 
 
