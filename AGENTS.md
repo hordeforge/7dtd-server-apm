@@ -55,7 +55,7 @@ uv run 7dtd-server-apm prune --keep 20 --dry-run
 
 Sessions default to `~/.local/share/7dtd-server-apm/session_*` (`SEVENDTD_APM_DIR` overrides).
 
-### Capture presets
+### Presets (`scenario run --preset`; `capture` takes `--only` only)
 
 | Preset | Use |
 |---|---|
@@ -65,8 +65,9 @@ Sessions default to `~/.local/share/7dtd-server-apm/session_*` (`SEVENDTD_APM_DI
 
 ## Diagnosing "laggy without CPU"
 
-The recurring root cause is Boehm GC, not compute. Capture with `--only alloc`
-(or `--preset forensic`), then read `summary.json` `metadata.lag_diagnosis`:
+The recurring root cause is Boehm GC, not compute. Capture with
+`capture --only all,alloc` (or `scenario run --preset forensic`), then read
+`summary.json` `metadata.lag_diagnosis`:
 `profile` says spike-driven (bursty GC/stalls, low compute) vs compute-bound;
 `gc.grossAllocMBPerSecond` is the churn (net `allocMBPerSecond` reads ~0 and is
 misleading); `runtime_gc` layer `stw_pause_worst_ms` is the direct freeze;
@@ -83,6 +84,7 @@ tools/host_profiler/   perf/bpftrace helpers and flame conversion
 bridge/ApmBridge/      Optional managed timing DLL
 docs/                  APM model, bridge correlation, compatibility
 scripts/               bridge build/install, checks
+plans/                 load-profile and campaign manifests consumed by scenario runs
 ```
 
 ## Docs map
@@ -90,6 +92,9 @@ scripts/               bridge build/install, checks
 | Path | Role |
 |---|---|
 | `docs/APM.md` | Capture lifecycle, validity, operations |
+| `docs/FEATURES.md` | Shipped feature inventory |
+| `docs/LOAD_PROFILE.md` | Load-profile methodology and tier ladder |
+| `docs/ROADMAP.md` | Planned work |
 | `docs/THREAT_MODEL.md` | Attack surface, trust boundaries, risk ranking |
 | `docs/APM_CS_BRIDGE.md` | Native ↔ managed correlation |
 | `docs/COMPATIBILITY.md` | Game / kernel / perf / bpftrace / Mono matrix |
