@@ -49,19 +49,29 @@ repos:
         entry: make lint-webui
         language: system
         pass_filenames: false
-        files: ^bridge/ApmBridge/WebMod/|^scripts/lint-webui\.sh$|^scripts/build_bridge\.sh$
+        # tool_versions.sh holds the tsc/oxlint/vnu pins these checks run
+        # under, so bumping a pin has to re-run them; without it a pin bump
+        # pushes clean and only CI sees the new verdicts.
+        files: ^bridge/ApmBridge/WebMod/|^scripts/lint-webui\.sh$|^scripts/build_bridge\.sh$|^scripts/lib/tool_versions\.sh$
         stages: [pre-push]
       - id: html
         name: Nu HTML checker (make lint-html)
         entry: make lint-html
         language: system
         pass_filenames: false
-        files: \.html$|jinja2?$|\.j2$
+        # Same reason as the webui hook: VNU_VERSION is read from
+        # scripts/lib/tool_versions.sh, not from a file this filter names.
+        files: \.html$|jinja2?$|\.j2$|^scripts/lib/tool_versions\.sh$
         stages: [pre-push]
       - id: test
         name: pytest + version gate (make test)
         entry: make test
         language: system
         pass_filenames: false
-        types: [python]
+        # Every input the gate reads, not just .py. scripts/check_version.py
+        # compares pyproject.toml, uv.lock, ModInfo.xml, BridgeMod.cs,
+        # bridge/README.md, and CHANGELOG.md, and none of them is a python
+        # type, so a types: [python] filter let a version-bump change, the
+        # one CONTRIBUTING spells out, through this hook and into CI.
+        files: \.py$|^(pyproject\.toml|uv\.lock|CHANGELOG\.md|bridge/ApmBridge/ModInfo\.xml|bridge/ApmBridge/BridgeMod\.cs|bridge/README\.md)$
         stages: [pre-push]

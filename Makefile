@@ -13,7 +13,7 @@ UV := env UV_CACHE_DIR=$(ROOT)/.uv-cache uv run --locked --project $(ROOT)
 .PHONY: help test coverage lint lint-shell check-bt format format-check typecheck check check-ci lint-html lint-webui clean bridge-build bridge-install bridge-uninstall package sbom
 help:
 	@echo "7dtd-server-apm contributor targets (requires: Python 3.11+, uv, Linux):"
-	@echo "  make test           pytest suite + version gate (~1min)"
+	@echo "  make test           pytest suite + version gate (~1-2min; select with -k while editing)"
 	@echo "  make coverage       same suite under coverage; the number behind the README badge"
 	@echo "                      single test: uv run pytest tools/apm_suite/tests/test_core.py -k name"
 	@echo "  make lint           ruff over tools/, scripts/, plans/, tests/"
