@@ -25,7 +25,7 @@ jobs:
 # Actions are pinned to immutable commit SHAs (mutable tags are a
 # supply-chain risk); Dependabot keeps the SHAs current via the comments.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # .python-version is the one interpreter pin (3.12); naming the file
           # keeps the runner from silently falling back to whatever the image
@@ -65,7 +65,7 @@ jobs:
 # Actions are pinned to immutable commit SHAs (mutable tags are a
 # supply-chain risk); Dependabot keeps the SHAs current via the comments.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           # Same interpreter pin as the python job, so the badge it publishes
           # comes from the version the gate runs under.
