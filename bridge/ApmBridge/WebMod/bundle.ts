@@ -784,26 +784,29 @@ function renderSectionsSection(
           setFilter((e.target as HTMLInputElement).value);
         }
       })),
-    h("table", { className: "apm-table" },
-      h("caption", { className: "apm-visually-hidden" }, "Managed sections timing"),
-      h("thead", null, h("tr", null,
-        th("Section", "name"), th("Calls", "calls"), th("Avg", "avgMs"),
-        th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"),
-        h("th", { key: "budget", scope: "col" }, "% of 50ms"))),
-      h("tbody", null, shown.map((s): unknown => {
-        const frac = num(s.avgMs) / TICK_BUDGET_MS;
-        const note = severityNote(num(s.p95Ms));
-        return h("tr", { key: s.name, className: sectionRowClass(s) },
-          h("td", null, `${s.name}${s.deep === true ? " ·deep" : ""}`, note === null ? null : sr(h, note)),
-          h("td", null, num(s.calls)),
-          h("td", null, fx(s.avgMs, 3)),
-          h("td", null, fx(s.p95Ms, 3)),
-          h("td", null, fx(s.p99Ms, 3)),
-          h("td", null, fx(s.maxMs, 3)),
-          h("td", { className: "apm-budget-cell" },
-            budgetBar(React, frac, budgetBarClass(frac)),
-            h("span", { className: "apm-budget-pct" }, `${fx(frac * 100, 1)}%`)));
-      }))),
+    h("div", { className: "apm-table-scroll" },
+      h("table", { className: "apm-table" },
+        h("caption", { className: "apm-visually-hidden" }, "Managed sections timing"),
+        h("thead", null, h("tr", null,
+          th("Section", "name"), th("Calls", "calls"), th("Avg", "avgMs"),
+          th("P95", "p95Ms"), th("P99", "p99Ms"), th("Max", "maxMs"),
+          h("th", { key: "budget", scope: "col" }, "% of 50ms"))),
+        h("tbody", null, shown.length === 0
+          ? h("tr", null, h("td", { className: "apm-empty", colSpan: 7 }, "No section matches this filter."))
+          : shown.map((s): unknown => {
+            const frac = num(s.avgMs) / TICK_BUDGET_MS;
+            const note = severityNote(num(s.p95Ms));
+            return h("tr", { key: s.name, className: sectionRowClass(s) },
+              h("td", null, `${s.name}${s.deep === true ? " ·deep" : ""}`, note === null ? null : sr(h, note)),
+              h("td", null, num(s.calls)),
+              h("td", null, fx(s.avgMs, 3)),
+              h("td", null, fx(s.p95Ms, 3)),
+              h("td", null, fx(s.p99Ms, 3)),
+              h("td", null, fx(s.maxMs, 3)),
+              h("td", { className: "apm-budget-cell" },
+                budgetBar(React, frac, budgetBarClass(frac)),
+                h("span", { className: "apm-budget-pct" }, `${fx(frac * 100, 1)}%`)));
+          })))),
   ];
 }
 
@@ -819,16 +822,17 @@ function renderSpikesSection(h: CreateElement, spikes: Array<SpikeRecord>): Arra
   const headers = ["When (UTC)", "gmUpdate ms", "Tick ms", "Players", "Entities"];
   return [
     h("h3", null, "Recent spikes"),
-    h("table", { className: "apm-table" },
-      h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"),
-      h("thead", null, h("tr", null, headers.map((x): unknown => h("th", { key: x, scope: "col" }, x)))),
-      h("tbody", null, [...spikes].reverse().slice(0, SPIKE_ROWS).map((s, i): unknown =>
-        h("tr", { key: i },
-          h("td", null, formatUtc(s.utc)),
-          h("td", null, fx(s.gmUpdateDurationMs, 1)),
-          h("td", null, fx(s.serverTickIntervalMs, 1)),
-          h("td", null, num(objOrEmpty(s.world).players)),
-          h("td", null, num(objOrEmpty(s.world).entities)))))),
+    h("div", { className: "apm-table-scroll" },
+      h("table", { className: "apm-table" },
+        h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"),
+        h("thead", null, h("tr", null, headers.map((x): unknown => h("th", { key: x, scope: "col" }, x)))),
+        h("tbody", null, [...spikes].reverse().slice(0, SPIKE_ROWS).map((s, i): unknown =>
+          h("tr", { key: i },
+            h("td", null, formatUtc(s.utc)),
+            h("td", null, fx(s.gmUpdateDurationMs, 1)),
+            h("td", null, fx(s.serverTickIntervalMs, 1)),
+            h("td", null, num(objOrEmpty(s.world).players)),
+            h("td", null, num(objOrEmpty(s.world).entities))))))),
   ];
 }
 
@@ -836,16 +840,19 @@ function renderTransfersSection(h: CreateElement, transfers: Array<TransferStat>
   const headers = ["Package", "Count", "MiB", "Last bytes", "Max bytes"];
   return [
     h("h3", null, "Map and chunk transfers"),
-    h("table", { className: "apm-table" },
-      h("caption", { className: "apm-visually-hidden" }, "Map and chunk transfers"),
-      h("thead", null, h("tr", null, headers.map((x): unknown => h("th", { key: x, scope: "col" }, x)))),
-      h("tbody", null, transfers.map((t): unknown =>
-        h("tr", { key: t.name },
-          h("td", null, t.name),
-          h("td", null, num(t.packages)),
-          h("td", null, fx(t.mebibytes, 2)),
-          h("td", null, num(t.lastBytes)),
-          h("td", null, num(t.maxBytes)))))),
+    h("div", { className: "apm-table-scroll" },
+      h("table", { className: "apm-table" },
+        h("caption", { className: "apm-visually-hidden" }, "Map and chunk transfers"),
+        h("thead", null, h("tr", null, headers.map((x): unknown => h("th", { key: x, scope: "col" }, x)))),
+        h("tbody", null, transfers.length === 0
+          ? h("tr", null, h("td", { className: "apm-empty", colSpan: headers.length }, "No transfers recorded yet."))
+          : transfers.map((t): unknown =>
+            h("tr", { key: t.name },
+              h("td", null, t.name),
+              h("td", null, num(t.packages)),
+              h("td", null, fx(t.mebibytes, 2)),
+              h("td", null, num(t.lastBytes)),
+              h("td", null, num(t.maxBytes))))))),
   ];
 }
 
@@ -913,10 +920,23 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const [sort, setSort] = React.useState({ key: "p95Ms", dir: -1 });
   // Copy/freeze feedback for assistive tech (role=status announces changes).
   const [copyStatus, setCopyStatus] = React.useState("");
+  // Every hook runs before any early return: returning earlier on a poll
+  // failure would drop this useState from the render and React would unmount
+  // the panel ("rendered fewer hooks than expected") instead of showing the
+  // error state.
+  const { depth, changeDepth } = depthController(React, hist.current);
 
-  // All hooks above; a failed fetch (e.g. logged-out session or logged-in
-  // non-admin) renders a clear state instead of the NO DATA pills, and the
-  // queries are paused (authBlocked) so nothing polls into an error storm.
+  // First poll still in flight. Rendering the panel here would fill it with
+  // zeroes that read as measurements; "unavailable" is the honest state.
+  if (query.isError !== true && query.data === undefined) {
+    return h("div", { className: "seven-dtd-apm" },
+      h("div", { className: "apm-head" }, h("h2", null, "7DTD APM")),
+      h("p", { className: "apm-status" }, "Loading telemetry…"));
+  }
+
+  // A failed fetch (e.g. logged-out session or logged-in non-admin) renders a
+  // clear state instead of the NO DATA pills, and the queries are paused
+  // (authBlocked) so nothing polls into an error storm.
   if (query.isError === true) {
     const status = query.error?.response?.status;
     return renderAuthError(h, "7DTD APM", status,
@@ -933,12 +953,13 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const g = grade(update);
 
   const toggleFreeze = (): void => freezeHandler({ frozen, setFrozen, live, frozenSnap });
-  const { depth, changeDepth } = depthController(React, hist.current);
   const setSortKey = (key: string): void => setSort((s): { key: string; dir: number } => ({ key, dir: s.key === key ? -s.dir : -1 }));
 
   return h("div", { className: "seven-dtd-apm" },
     renderHead(h, g, frozen, toggleFreeze, (): void => copySnapshot(snapshot, setCopyStatus), gc, update),
-    h("span", { className: "apm-visually-hidden", role: "status" }, copyStatus),
+    // Visible, not screen-reader-only: a click with no on-screen result reads
+    // as a dead button. role=status still announces the change.
+    copyStatus === "" ? null : h("p", { className: "apm-status", role: "status" }, copyStatus),
     host === null ? null : renderHostStrip(h, host),
     renderTrendsChart(h, React, hist.current, depth, changeDepth),
     h("div", { className: "apm-charts-row" },
