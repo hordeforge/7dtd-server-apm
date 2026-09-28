@@ -125,7 +125,13 @@ def _scrub_jsonl_line(line: str, home: str) -> str:
 
 
 def _stream_scrubbed_member(
-    archive: zipfile.ZipFile, member: str, source: Path, home: str, *, jsonl: bool
+    archive: zipfile.ZipFile,
+    member: str,
+    source: Path,
+    home: str,
+    *,
+    jsonl: bool,
+    recorded: list[Artifact],
 ) -> bool:
     """Stream one text artifact into the archive line by line.
 
@@ -145,6 +151,10 @@ def _stream_scrubbed_member(
     bundle is written to be handed to a stranger, and those lines name players.
     The JSONL path is untouched: a record there is this tool's own structured
     telemetry, already scrubbed field by field.
+
+    `recorded` collects the size and sha256 of the bytes as they are stored, so
+    the bundle manifest needs no second decompression pass over the finished
+    archive.
     """
     try:
         source_stream = source.open("r", encoding="utf-8", errors="replace")
@@ -157,34 +167,18 @@ def _stream_scrubbed_member(
         return None if SERVER_LOG_LINE.match(line) else line.replace(home, "~")
 
     with source_stream, archive.open(member, "w") as member_stream:
+        digest = hashlib.sha256()
+        size = 0
         for line in source_stream:
             body = scrub(line[:-1] if line.endswith("\n") else line)
             if body is None:
                 continue
-            member_stream.write(body.encode("utf-8") + b"\n")
+            payload = body.encode("utf-8") + b"\n"
+            digest.update(payload)
+            size += len(payload)
+            member_stream.write(payload)
+    recorded.append(Artifact(path=member, bytes=size, sha256=digest.hexdigest()))
     return True
-
-
-def _bundle_artifacts(bundle: Path) -> list[Artifact]:
-    """Size and hash of every member actually stored in the bundle.
-
-    Read back from the finished archive, not from the session: bundled members
-    are scrubbed and re-serialized, so the source files' hashes describe bytes
-    the bundle does not contain.
-    """
-    artifacts: list[Artifact] = []
-    with zipfile.ZipFile(bundle) as archive:
-        for info in archive.infolist():
-            if info.is_dir():
-                continue
-            digest = hashlib.sha256()
-            with archive.open(info) as stream:
-                for block in iter(lambda: stream.read(1024 * 1024), b""):
-                    digest.update(block)
-            artifacts.append(
-                Artifact(path=info.filename, bytes=info.file_size, sha256=digest.hexdigest())
-            )
-    return artifacts
 
 
 def _bundle_manifest(session: Path, artifacts: list[Artifact]) -> ManifestV2:
@@ -226,14 +220,35 @@ def _bundle_manifest(session: Path, artifacts: list[Artifact]) -> ManifestV2:
     )
 
 
-def _copy_member(archive: zipfile.ZipFile, source: Path, relative: Path) -> None:
+def _stored_bytes(relative: Path, payload: bytes) -> Artifact:
+    """Record one member exactly as the archive stored it.
+
+    Every writer in the export walk routes its output through here, so the
+    bundle manifest describes the stored bytes (scrubbed, re-serialized) and
+    not the source file's.
+    """
+    return Artifact(
+        path=relative.as_posix(), bytes=len(payload), sha256=hashlib.sha256(payload).hexdigest()
+    )
+
+
+def _copy_member(
+    archive: zipfile.ZipFile, source: Path, relative: Path, recorded: list[Artifact]
+) -> None:
     """Raw-copy one artifact into the archive; an unreadable source names the
     file instead of surfacing as a bare traceback mid-export (the .json branch
     in the same walk reports its failures the same way)."""
+    digest = hashlib.sha256()
+    size = 0
     try:
-        archive.write(source, str(relative))
+        with source.open("rb") as raw, archive.open(str(relative), "w") as member_stream:
+            for block in iter(lambda: raw.read(1024 * 1024), b""):
+                digest.update(block)
+                size += len(block)
+                member_stream.write(block)
     except OSError as error:
         raise BundleError(f"cannot bundle {relative}: {error}") from None
+    recorded.append(Artifact(path=relative.as_posix(), bytes=size, sha256=digest.hexdigest()))
 
 
 def export_bundle(session: Path, output: Path) -> Path:
@@ -264,6 +279,11 @@ def export_bundle(session: Path, output: Path) -> Path:
             # Applied to known-text artifacts only.
             home = str(Path.home())
             text_suffixes = {".txt", ".folded", ".html", ".script", ".md", ".log", ".out", ".svg"}
+            # Every writer appends its member's stored size and sha256 here, in
+            # archive order, so the manifest below describes the bundle itself.
+            # Re-reading the finished zip to hash it meant inflating the whole
+            # session a second time on top of the deflate that just stored it.
+            recorded: list[Artifact] = []
             # Sorted walk: identical session content must yield an identical
             # member order, not a readdir-order zip layout.
             for source in sorted(session.rglob("*")):
@@ -285,10 +305,11 @@ def export_bundle(session: Path, output: Path) -> Path:
                         data = json_loads(read_text(source), relative)
                     except (ValueError, OSError) as error:
                         raise BundleError(f"cannot parse {relative}: {error}") from None
-                    archive.writestr(
-                        str(relative),
-                        json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n",
+                    payload = (json.dumps(_scrub(data), indent=2).replace(home, "~") + "\n").encode(
+                        "utf-8"
                     )
+                    archive.writestr(str(relative), payload)
+                    recorded.append(_stored_bytes(relative, payload))
                 elif source.suffix == ".jsonl" or source.suffix in text_suffixes:
                     # Streamed scrub (see _stream_scrubbed_member): the same
                     # per-line transforms as the former read_text+writestr,
@@ -299,12 +320,13 @@ def export_bundle(session: Path, output: Path) -> Path:
                         source,
                         home,
                         jsonl=source.suffix == ".jsonl",
+                        recorded=recorded,
                     ):
                         # The stream open failed (raced prune, perms); the raw
                         # copy hits the same wall, so let it name the file.
-                        _copy_member(archive, source, relative)
+                        _copy_member(archive, source, relative, recorded)
                 else:
-                    _copy_member(archive, source, relative)
+                    _copy_member(archive, source, relative, recorded)
         # The integrity manifest travels with the evidence it describes: hash
         # the members as stored and record those, so a hand-extracted bundle
         # audits clean and a tampered member is still detectable.
@@ -312,7 +334,7 @@ def export_bundle(session: Path, output: Path) -> Path:
             archive.writestr(
                 "manifest.json",
                 json.dumps(
-                    schema_dict(_bundle_manifest(session, _bundle_artifacts(tmp_zip_path))),
+                    schema_dict(_bundle_manifest(session, recorded)),
                     indent=2,
                 )
                 + "\n",

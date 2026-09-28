@@ -11,6 +11,8 @@ import contextlib
 import json
 import re
 import stat
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -109,6 +111,64 @@ def parse_perf_stat(text: str) -> dict[str, float]:
     return out
 
 
+# Longest needle the app layer looks for in the scrape artifact, so the tail
+# carried between records is wide enough for a match straddling two of them.
+_APP_NEEDLE_MAX = len("TickEntities")
+
+
+@dataclass(frozen=True)
+class AppScrapeFacts:
+    """What the app layer needs from app/bridge.jsonl, gathered in one stream.
+
+    Each record carries a whole telnet reply and the artifact reaches tens of
+    MB, so joining it into one string (plus the .lower() copy the substring
+    tests needed) held two full copies of it resident for the entire summary
+    build to answer three substring questions. None of the needles contains a
+    newline, so a match can only span the record separator through a carried
+    tail of _APP_NEEDLE_MAX characters; the streamed answer is then identical
+    to the joined one.
+    """
+
+    has_reply: bool = False
+    mentions_tick: bool = False
+    has_spike: bool = False
+
+
+# Frozen, so the shared "no scrape artifact" default cannot be mutated by a
+# caller that kept a reference to it.
+NO_APP_FACTS = AppScrapeFacts()
+
+
+def app_scrape_facts(session: Path) -> AppScrapeFacts:
+    """Stream app/bridge.jsonl once for the app layer's three signals.
+
+    An empty record field contributes the record separator and nothing else,
+    so the carried tail is cleared rather than bridging across it: a needle
+    that would match the joined text "tic\\n\\nkEntities" must not be reported
+    when the two halves land in non-adjacent records.
+    """
+    has_reply = False
+    tick = False
+    spike = False
+    carry = ""
+    path = session / "app/bridge.jsonl"
+    records: Iterable[dict[str, Any]] = iter_jsonl(path) if path.exists() else ()
+    for record in records:
+        piece = str(record.get("text") or record.get("error") or "")
+        if not piece:
+            carry = ""
+            continue
+        has_reply = has_reply or bool(piece.strip())
+        window = carry + piece
+        lowered = window.lower()
+        tick = tick or "TickEntities" in window or "tick" in lowered
+        spike = spike or "spike" in lowered
+        if has_reply and tick and spike:
+            break
+        carry = piece[-_APP_NEEDLE_MAX:]
+    return AppScrapeFacts(has_reply=has_reply, mentions_tick=tick, has_spike=spike)
+
+
 def load_texts(session: Path) -> dict[str, str]:
     mapping = {
         "futex": session / "sync/futex.bt.out",
@@ -126,17 +186,12 @@ def load_texts(session: Path) -> dict[str, str]:
     # shared with the site rankings, and the on-CPU ustack histogram is asked
     # only whether it carries more than a header (a file-size check), so loading
     # either here held megabytes resident for the whole build for nothing.
-    texts = {
+    # app/bridge.jsonl is absent from this dict on purpose: the app layer needs
+    # three facts out of a multi-MB stream, not its text (app_scrape_facts).
+    return {
         key: path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
         for key, path in mapping.items()
     }
-    app_path = session / "app/bridge.jsonl"
-    parts: list[str] = []
-    if app_path.exists():
-        for record in iter_jsonl(app_path):
-            parts.append(str(record.get("text") or record.get("error") or ""))
-    texts["app"] = "\n".join(parts)
-    return texts
 
 
 # The on-CPU ustack histogram is evidence only when the probe actually printed
@@ -371,19 +426,16 @@ def _gc_layer(texts: dict[str, str]) -> LayerScore:
     )
 
 
-def _app_layer(texts: dict[str, str]) -> LayerScore:
-    app = texts.get("app", "")
-    # One lowered copy: app is the joined bridge.jsonl text, megabytes.
-    lowered = app.lower()
+def _app_layer(app: AppScrapeFacts) -> LayerScore:
     score = 0
-    if "TickEntities" in app or "tick" in lowered:
+    if app.mentions_tick:
         score += 10
-    if "spike" in lowered:
+    if app.has_spike:
         score += 30
     return LayerScore(
         layer="app_sim",
         score=min(100, score),
-        signals={"has_managed_bridge": bool(app.strip())},
+        signals={"has_managed_bridge": app.has_reply},
         optimize=[
             "APM bridge snapshot / deep for C# sections",
             "sibling 7dtd-loadgen scenario to reproduce AI pressure",
@@ -392,7 +444,12 @@ def _app_layer(texts: dict[str, str]) -> LayerScore:
     )
 
 
-def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> list[LayerScore]:
+def layer_scores(
+    session: Path,
+    hw: dict[str, float],
+    texts: dict[str, str],
+    app: AppScrapeFacts = NO_APP_FACTS,
+) -> list[LayerScore]:
     """Heuristic 0-100 severity scores (higher = more pressure), coverage-aware."""
     meta = _load_meta(session)
     duration = max(1.0, effective_seconds(meta))
@@ -403,7 +460,7 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
         _scheduler_layer(texts, duration),
         _io_layer(texts),
         _gc_layer(texts),
-        _app_layer(texts),
+        _app_layer(app),
     ]
     requested = {
         token.strip() for token in str(meta.get("only") or "all").split(",") if token.strip()
@@ -1291,7 +1348,7 @@ def build_summary(session: Path) -> SummaryV2:
     meta = _load_meta(session)
     texts = load_texts(session)
     hw = parse_perf_stat(texts.get("hw") or "")
-    layers = layer_scores(session, hw, texts)
+    layers = layer_scores(session, hw, texts, app_scrape_facts(session))
 
     threads = thread_summary(session)
     _apply_main_thread_pressure(layers, threads)

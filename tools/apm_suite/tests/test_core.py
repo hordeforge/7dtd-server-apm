@@ -997,22 +997,25 @@ def test_export_unreadable_member_names_file_and_keeps_prior_bundle(
     fail with the offending member named - like the .json branch of the same
     walk already does - instead of a bare traceback. The temp+replace build
     must also leave a pre-existing bundle at the target untouched."""
-    import zipfile as zipfile_module
-
     session = tmp_path / "session_export_fail"
     (session / "io").mkdir(parents=True)
     atomic_json(session / "meta.json", _meta())
     (session / "io/vfs.bt.out").write_text("openat /steamapps/common\n")
 
-    def denied(self: Any, filename: str, arcname: str) -> None:
-        raise PermissionError(13, "Permission denied", str(filename))
+    opened = session / "io/vfs.bt.out"
+    real_open = Path.open
+
+    def denied(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == opened:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_open(self, *args, **kwargs)
 
     # Force the open-failure fallback path: the stream scrubber reports it
     # could not read the source (monkeypatched to False, its documented
     # "source could not be opened" signal), so export falls back to a raw
     # copy - which then fails with the same OS error and must be named.
     monkeypatch.setattr("apm_suite.bundle._stream_scrubbed_member", lambda *a, **k: False)
-    monkeypatch.setattr(zipfile_module.ZipFile, "write", denied)
+    monkeypatch.setattr(Path, "open", denied)
 
     prior = tmp_path / "bundle.zip"
     prior.write_bytes(b"prior bundle bytes")
@@ -1066,6 +1069,39 @@ def test_export_streamed_text_members_match_full_text_scrub_bytes(tmp_path: Path
             got = archive.read(name).decode("utf-8")
             assert got == want, name
             assert home not in got
+
+
+def test_export_manifest_hashes_describe_the_stored_members(tmp_path: Path) -> None:
+    """The bundle manifest is recorded while each member is written, so it must
+    still describe the archive's stored bytes, not the source files. Read the
+    zip back and hash every member independently."""
+    import hashlib
+    import zipfile
+
+    session = tmp_path / "session_manifest_hashes"
+    (session / "io").mkdir(parents=True)
+    (session / "app").mkdir()
+    atomic_json(session / "meta.json", _meta())
+    (session / "io/vfs.bt.out").write_text("openat /steamapps/common\n")
+    (session / "events.jsonl").write_text('{"t": 1.0, "message": "tick"}\n')
+    # A binary member takes the raw-copy path, not the scrubbed-text one.
+    (session / "cpu").mkdir(parents=True)
+    (session / "cpu/perf.pmu").write_bytes(bytes(range(256)) * 64)
+
+    bundle = tmp_path / "hashes.zip"
+    result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert result.exit_code == 0, result.output
+
+    with zipfile.ZipFile(bundle) as archive:
+        recorded = {
+            artifact["path"]: (artifact["bytes"], artifact["sha256"])
+            for artifact in json.loads(archive.read("manifest.json"))["artifacts"]
+        }
+        assert recorded, "manifest recorded no artifacts"
+        for name in ("io/vfs.bt.out", "events.jsonl", "cpu/perf.pmu"):
+            stored = archive.read(name)
+            assert recorded[name] == (len(stored), hashlib.sha256(stored).hexdigest()), name
+        assert set(recorded) == {info.filename for info in archive.infolist()} - {"manifest.json"}
 
 
 def test_import_bundle_round_trip_restores_evidence(
@@ -2071,6 +2107,57 @@ def test_app_scrape_with_one_success_stays_collected(tmp_path: Path) -> None:
     )
     app = next(s for s in layer_scores(session, {}, {}) if s.layer == "app_sim")
     assert app.state == "collected"
+
+
+def test_app_scrape_facts_stream_matches_the_joined_text(tmp_path: Path) -> None:
+    """app_scrape_facts answers the same three questions as scanning the joined
+    bridge.jsonl, including a needle that straddles two adjacent records. The
+    record separator is a newline, so an empty field between the halves must
+    break the match exactly as the joined text does."""
+    from apm_suite.analysis.report import app_scrape_facts
+
+    joined = _session(tmp_path / "session_scrape_joined")
+    (joined / "app").mkdir()
+    records = [
+        {"ok": True, "text": "apm status\nTick"},
+        {"ok": False, "error": ""},
+        {"ok": True, "text": "Entities spike"},
+    ]
+    (joined / "app/bridge.jsonl").write_text(
+        "".join(__import__("json").dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    text = "\n".join(str(r.get("text") or r.get("error") or "") for r in records)
+    facts = app_scrape_facts(joined)
+    assert facts.has_reply == bool(text.strip())
+    assert facts.mentions_tick == ("TickEntities" in text or "tick" in text.lower())
+    assert facts.has_spike == ("spike" in text.lower())
+
+    # The same two halves in adjacent records: the needle now spans the
+    # separator, which the carried tail has to catch. Neither half carries it
+    # alone, so only the join can produce the match.
+    adjacent = _session(tmp_path / "session_scrape_adjacent")
+    (adjacent / "app").mkdir()
+    (adjacent / "app/bridge.jsonl").write_text(
+        '{"ok": true, "text": "apm status\\nSPI"}\n{"ok": true, "text": "KE"}\n',
+        encoding="utf-8",
+    )
+    assert app_scrape_facts(adjacent).has_spike
+    # One empty record between them puts a second newline in between.
+    apart = _session(tmp_path / "session_scrape_apart")
+    (apart / "app").mkdir()
+    (apart / "app/bridge.jsonl").write_text(
+        '{"ok": true, "text": "apm status\\nSPI"}\n{"ok": true, "text": ""}\n'
+        '{"ok": true, "text": "KE"}\n',
+        encoding="utf-8",
+    )
+    assert not app_scrape_facts(apart).has_spike
+
+
+def test_app_scrape_facts_on_a_missing_artifact_is_absent_evidence(tmp_path: Path) -> None:
+    from apm_suite.analysis.report import AppScrapeFacts, app_scrape_facts
+
+    assert app_scrape_facts(_session(tmp_path / "session_scrape_absent")) == AppScrapeFacts()
 
 
 # --- unit: store restore verification -----------------------------------------
