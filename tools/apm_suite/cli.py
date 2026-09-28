@@ -27,7 +27,7 @@ from .capture import (
     unknown_only_tokens,
     write_plan_text,
 )
-from .io import atomic_json, claim_file
+from .io import atomic_json, claim_file, load_jsonc
 from .models import as_number
 from .paths import REPO, apm_root, require_backends
 from .prometheus import MetricError, export_metrics
@@ -41,6 +41,11 @@ from .session import (
     sessions_beyond_budget,
     verify_session,
 )
+
+# Bridge config defaults, mirroring BridgeConfig.cs so both readers of
+# Config/apmbridge.json agree on what an absent or unusable value means.
+DEFAULT_BRIDGE_EXPORT_SECONDS = 30.0
+MAX_BRIDGE_EXPORT_SECONDS = 3600.0
 
 app = typer.Typer(help="Host-only APM for 7 Days to Die dedicated servers.", no_args_is_help=True)
 flame_app = typer.Typer(help="Build and compare flame profiles.", no_args_is_help=True)
@@ -640,14 +645,25 @@ def bridge_export_period(telemetry_dir: Path) -> float:
 
     Read from the mod config beside the telemetry dir (default 30): the
     monitor's stale-read flag must key off the export cadence, not the sample
-    interval, or every fresh-at-cadence sample is flagged stale.
+    interval, or every fresh-at-cadence sample is flagged stale. The range is
+    the bridge's own (BridgeConfig.PeriodicExportSeconds), so a value the mod
+    would clamp cannot leave the monitor waiting on a read that never comes.
     """
     config = telemetry_dir.parent / "Config" / "apmbridge.json"
     try:
-        value = float(json.loads(config.read_text(encoding="utf-8")).get("PeriodicExportSeconds"))
+        settings = load_jsonc(config)
+        raw = settings.get("PeriodicExportSeconds") if isinstance(settings, dict) else None
+        # bool is an int subclass: a hand-edited `true` is not a 1-second cadence.
+        value = (
+            float(raw)
+            if isinstance(raw, (int, float)) and not isinstance(raw, bool)
+            else DEFAULT_BRIDGE_EXPORT_SECONDS
+        )
     except (OSError, ValueError, TypeError):
-        return 30.0
-    return value if value > 0 else 30.0
+        return DEFAULT_BRIDGE_EXPORT_SECONDS
+    if value <= 0:
+        return DEFAULT_BRIDGE_EXPORT_SECONDS
+    return min(value, MAX_BRIDGE_EXPORT_SECONDS)
 
 
 @app.command("prune")

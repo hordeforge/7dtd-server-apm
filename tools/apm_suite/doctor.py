@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import socket
@@ -10,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .capture import server_candidates
-from .io import file_sha256
+from .io import file_sha256, load_jsonc
 from .paths import REPO, apm_root, bridge_mod_dir, dedicated_dir
 from .session import keep_sessions_budget, prune_grace_hours
 
@@ -91,7 +90,7 @@ def _bridge_status() -> dict[str, Any]:
     config = bridge_mod_dir() / "Config/apmbridge.json"
     settings: Any = None
     with suppress(OSError, ValueError):
-        settings = json.loads(config.read_text(encoding="utf-8"))
+        settings = load_jsonc(config)
     # Valid JSON that is not an object (a hand-edited "[1,2]") has no .get;
     # like every other malformed config read here it is a diagnosable
     # condition, not a reason to crash the whole doctor report.

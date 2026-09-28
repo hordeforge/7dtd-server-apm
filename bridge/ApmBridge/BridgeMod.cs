@@ -10,7 +10,7 @@ namespace DtdApmBridge
 {
     public sealed class BridgeMod : IModApi
     {
-        public const string Version = "2.5.0";
+        public const string Version = "3.0.0";
         // Written by InitMod while Capabilities() reads the same table from the
         // export ThreadPool thread, web API threads (/api/apm), and the telnet
         // console (`apm capabilities`); unsynchronized enumeration during a
@@ -36,7 +36,9 @@ namespace DtdApmBridge
         public void InitMod(Mod mod)
         {
             ModDir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) ?? "";
-            Config = BridgeConfig.Load(Path.Combine(ModDir, "Config", "apmbridge.json"));
+            BridgeConfigLoad load = BridgeConfigReader.Load(Path.Combine(ModDir, "Config", "apmbridge.json"));
+            Config = load.Config;
+            Log(load.Describe());
             if (!Config.Enabled) { Log("disabled by configuration"); return; }
             _harmony = new Harmony("com.7dtd.apm.bridge");
             PatchFrame();
@@ -267,7 +269,10 @@ namespace DtdApmBridge
         public static void Reload()
         {
             bool priorDeep = Config.DeepMode;
-            Config = BridgeConfig.Load(Path.Combine(ModDir, "Config", "apmbridge.json"));
+            BridgeConfigLoad load = BridgeConfigReader.Load(Path.Combine(ModDir, "Config", "apmbridge.json"));
+            if (load.Error != null) { Log(load.Describe()); return; }
+            Config = load.Config;
+            Log(load.Describe());
             if (priorDeep != Config.DeepMode) Log("DeepMode changed; restart required to change installed deep hooks");
         }
         public static void Log(string text) { try { global::Log.Out("[7dtd-server-apm] " + text); } catch { Console.WriteLine("[7dtd-server-apm] " + text); } }

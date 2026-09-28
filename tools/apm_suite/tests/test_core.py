@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shutil
 import stat
 import subprocess
 import sys
@@ -26,7 +27,7 @@ from apm_suite.analysis.report import parse_perf_stat, top_alloc_sites
 from apm_suite.capture import CaptureContext, CollectorSpec
 from apm_suite.cli import app
 from apm_suite.finalize import finalize
-from apm_suite.io import atomic_json, load_json
+from apm_suite.io import atomic_json, load_json, load_jsonc
 from apm_suite.models import Artifact, EventsV2, LayerScore, ManifestV2, Target, schema_dict
 from apm_suite.paths import REPO
 from apm_suite.reporting import render_session
@@ -1536,6 +1537,68 @@ def test_bridge_export_period_from_config_or_default(tmp_path: Path) -> None:
     assert bridge_export_period(telemetry) == 30.0
     (config / "apmbridge.json").write_text("not json\n")
     assert bridge_export_period(telemetry) == 30.0
+    # Valid non-object JSON and a hand-edited bool both used to reach
+    # float()/AttributeError instead of the documented default; the bridge
+    # itself rejects either, so the monitor must too.
+    (config / "apmbridge.json").write_text("[1, 2]")
+    assert bridge_export_period(telemetry) == 30.0
+    atomic_json(config / "apmbridge.json", {"PeriodicExportSeconds": True})
+    assert bridge_export_period(telemetry) == 30.0
+    # Above the bridge's own clamp: the mod would export hourly at most, so
+    # the stale-read threshold must not wait on a read that never comes.
+    atomic_json(config / "apmbridge.json", {"PeriodicExportSeconds": 99999})
+    assert bridge_export_period(telemetry) == 3600.0
+
+
+def test_bridge_config_readers_accept_the_commented_example(tmp_path: Path) -> None:
+    """The example config install_bridge.sh seeds carries // and /* */ comments
+    (Json.NET skips them on read), so every Python reader of the live config
+    must parse the same dialect instead of falling back to defaults."""
+    from apm_suite.cli import bridge_export_period
+
+    telemetry = tmp_path / "telemetry"
+    telemetry.mkdir()
+    config = tmp_path / "Config"
+    config.mkdir()
+    (config / "apmbridge.json").write_text(
+        '{\n  // cadence\n  "PeriodicExportSeconds": 45,\n'
+        '  /* block\n     comment */\n  "DeepMode": true\n}\n'
+    )
+    assert bridge_export_period(telemetry) == 45.0
+
+    # A commented install must also reach doctor's DeepMode advisory.
+    from apm_suite import doctor
+
+    mods = tmp_path / "Mods/7dtd-server-apm-bridge"
+    (mods / "Config").mkdir(parents=True)
+    (mods / "7dtd-server-apm-bridge.dll").write_bytes(b"dll")
+    shutil.copy(config / "apmbridge.json", mods / "Config/apmbridge.json")
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(doctor, "bridge_mod_dir", lambda: mods)
+    monkey.setattr(doctor, "REPO", tmp_path)
+    try:
+        assert doctor._bridge_status()["deep_mode"] is True
+    finally:
+        monkey.undo()
+
+
+def test_strip_json_comments_keeps_strings_and_line_numbers(tmp_path: Path) -> None:
+    """A regex strip would eat "http://" inside a value; a stripped comment
+    must still occupy its lines so a parse error points at the operator's."""
+    from apm_suite.io import strip_json_comments
+
+    assert json.loads(strip_json_comments('{"u": "http://h/a//b"}'))["u"] == "http://h/a//b"
+    assert json.loads(strip_json_comments('{"q": "a /* b */ c", "n": 1}')) == {
+        "q": "a /* b */ c",
+        "n": 1,
+    }
+    text = '{\n  // one\n  /* two\n     three */\n  "n": ?\n}\n'
+    stripped = strip_json_comments(text)
+    assert stripped.count("\n") == text.count("\n")
+    bad = tmp_path / "apmbridge.json"
+    bad.write_text(text, encoding="utf-8")
+    with pytest.raises(ValueError, match="cannot parse"):
+        load_jsonc(bad)
 
 
 def _result_json(status: str, name: str = "futex", layer: str = "sync_locks") -> dict[str, object]:

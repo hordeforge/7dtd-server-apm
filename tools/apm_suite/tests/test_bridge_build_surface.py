@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 
 from apm_suite.paths import REPO
@@ -190,3 +191,51 @@ def test_bridge_releases_every_os_handle_it_acquires() -> None:
             assert "using" in source[max(0, match.start() - 200) : match.start()], (
                 f"{name}:{line} acquires a disposable handle outside a using block"
             )
+
+
+CONFIG_CS = REPO / "bridge" / "ApmBridge" / "BridgeConfig.cs"
+BRIDGE_MOD_CS = REPO / "bridge" / "ApmBridge" / "BridgeMod.cs"
+EXAMPLE_CONFIG = REPO / "bridge" / "ApmBridge" / "apmbridge.json"
+
+
+def test_config_loader_rejects_unknown_keys_instead_of_defaulting() -> None:
+    # A hand-edited config with a misspelled key used to load as defaults: the
+    # mod then reported the setting it was asked to change as off, with nothing
+    # in the log. MissingMemberHandling.Error is what makes the typo visible.
+    source = CONFIG_CS.read_text(encoding="utf-8")
+    assert "MissingMemberHandling.Error" in source
+    assert "load.Error" in source, "a rejected config must record why"
+
+
+def test_config_load_reports_source_and_effective_values() -> None:
+    # Config observability: the startup log names the file that was read and
+    # the values in force after clamping, so an operator can read the active
+    # config off the server log without guessing.
+    source = CONFIG_CS.read_text(encoding="utf-8")
+    assert "built-in defaults" in source
+    assert "Config.Describe()" in source
+    mod = BRIDGE_MOD_CS.read_text(encoding="utf-8")
+    init = mod[mod.index("public void InitMod(") : mod.index("static Type GameType")]
+    reload_body = mod[
+        mod.index("public static void Reload(") : mod.index("public static void Log(")
+    ]
+    for name, body in (("InitMod", init), ("Reload", reload_body)):
+        assert "BridgeConfigReader.Load(" in body, f"{name} must go through the config reader"
+        assert "Log(load.Describe())" in body, (
+            f"{name} must log the config source and the values in force"
+        )
+
+
+def test_example_config_documents_the_keys_it_sets() -> None:
+    # The shipped example is what install_bridge.sh seeds as the live config,
+    # so it must cover every key BridgeConfig declares, and it may carry
+    # comments (the mod's reader accepts them, and io.load_jsonc reads the same
+    # dialect on the Python side).
+    fields = set(re.findall(r"public (?:bool|int|double) (\w+)\s*=", CONFIG_CS.read_text("utf-8")))
+    assert fields
+    from apm_suite.io import strip_json_comments
+
+    text = EXAMPLE_CONFIG.read_text(encoding="utf-8")
+    assert "//" in text, "the example config should show the comment syntax it accepts"
+    example = json.loads(strip_json_comments(text))
+    assert set(example) == fields, "example config and BridgeConfig fields must match"

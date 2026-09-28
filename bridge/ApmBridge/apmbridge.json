@@ -1,4 +1,9 @@
 {
+  // Installed to Mods/7dtd-server-apm-bridge/Config/apmbridge.json by
+  // scripts/install_bridge.sh on first install; upgrades keep your edits.
+  // // and /* */ comments are accepted. An unknown key is rejected and the
+  // mod logs the reason and runs built-in defaults, so a typo cannot look
+  // like a setting that was simply "off".
   "Enabled": true,
   "DeepMode": false,
   "SpikeThresholdMs": 50.0,

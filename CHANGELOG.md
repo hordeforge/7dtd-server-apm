@@ -87,6 +87,17 @@ to 2.3.0 and 2.2.4 stays skipped.
   production dependency inventory (name, version, artifact hashes, CycloneDX
   graph) a scanner or downstream consumer can read. The inventory stays out of
   the archive: it unzips into `<server>/Mods/`.
+- Config: the readers of the bridge's `Config/apmbridge.json` (`doctor`,
+  `monitor`) now parse the commented example the mod itself accepts, so a
+  freshly installed config is not reported as unreadable. `monitor` also
+  treats a non-object config and a boolean `PeriodicExportSeconds` as the
+  documented default instead of raising out of the sample loop, and holds the
+  stale-read threshold to the bridge's own upper bound.
+- Config: `find_server.sh` exits 1 when `SEVENDTD_DS_BIN` is set and no
+  running server resolves to it, instead of falling through to the truncated
+  process-name match and handing back another install's PID. The lenient
+  fallback (with a warning) stays for the derived default.
+
 - `verify-store [STORE]`: read-only integrity audit of every session in a
   session store, so a whole-store copy-back can be proven instead of assumed.
   Reports `ok` / `incomplete` (no recorded manifest, or required documents
@@ -127,6 +138,21 @@ to 2.3.0 and 2.2.4 stays skipped.
 
 ## Unreleased - bridge mod
 
+- Config (breaking, 3.0.0): `Config/apmbridge.json` no longer accepts an
+  unknown key. A misspelled `DeepMode` used to load as the default and leave
+  the mod reporting the sections it was asked to change as unavailable, with
+  nothing in the log; the file is now rejected, the reason is logged, and the
+  mod runs built-in defaults. A config carrying a key this version no longer
+  reads (or one from a future version) must be corrected before it takes
+  effect.
+- Config: the startup line and `apm reload` now log the config file that was
+  read (or "built-in defaults") and the values in force after clamping, so the
+  active config is readable from the server log. `apm reload` keeps the
+  settings already in force when a re-read is rejected.
+- Config: every default and clamp bound is a named constant in
+  `BridgeConfig.cs`, and `bridge/README.md` documents each key, its type,
+  default, and accepted range. The shipped `apmbridge.json.example` is
+  commented; the example had no description of what any key did.
 - API contract: `bridge/README.md` now documents the `GET /api/apm` response
   itself (status codes, the `SNAPSHOT_FAILED` error envelope, every top-level
   key, and which fields are nullable), not just the authorization matrix.

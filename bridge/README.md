@@ -9,9 +9,10 @@ It is also a native V3 WebDashboard plugin. `WebMod/` adds a direct **7DTD APM**
 sidebar entry (a module route, not a Settings tab) and authenticated
 `GET /api/apm` exposes the same bounded
 snapshot used by console capture. The endpoint defaults to administrator
-permission level 0. Enable `WebDashboardEnabled`, browse to its configured port
-(8080 in the loadgen profile), and sign in normally; the mod opens no separate
-web listener. The menu entries are registered unconditionally (the session
+permission level 0. There is no config switch for it: browse to the port the
+server's own WebDashboard is configured on (8080 in the loadgen profile) and
+sign in normally; the mod opens no separate web listener. The menu entries are
+registered unconditionally (the session
 cookie is HttpOnly, so client-side JS cannot see it to gate registration); a
 logged-out or non-admin visitor sees the entry and the panel's
 "Authentication required" state after its first poll answers 403, since the
@@ -19,6 +20,29 @@ endpoints stay at permission 0. The bridge exposes measurement only: there is
 no endpoint that writes config or restarts the server (a former
 `GET/POST /api/perf` ops switch for the sibling EfficientServer mod was
 removed in 2.5.0; APM measures and never edits optimizer config).
+
+### Mod config
+
+`Config/apmbridge.json` beside the DLL, seeded on first install from
+`apmbridge.json.example` (`//` and `/* */` comments are accepted). `apm reload`
+re-reads it; `DeepMode` is the one key that needs a server restart to take
+effect, and the reload says so when it changes. A value outside the accepted
+range is clamped, and a file that cannot be parsed, or that carries an unknown
+key, is rejected: the mod logs the reason and runs built-in defaults rather
+than silently profiling under settings nobody asked for. The startup line
+(`[7dtd-server-apm] config: ...`) names the file it read and the values in
+force, so the active config is readable from the server log.
+
+| Key | Type | Default | Accepted range |
+|---|---|---|---|
+| `Enabled` | bool | `true` | master switch; `false` loads no hooks |
+| `DeepMode` | bool | `false` | adds the per-entity AI/path sections; needs a restart |
+| `SpikeThresholdMs` | number | `50` | `1` to `60000`; a lower value records more spikes |
+| `PeriodicExportSeconds` | number | `30` | `0` to `3600`; `0` disables periodic export |
+| `LogPeriodicSummary` | bool | `true` | log line per periodic export |
+| `LogSpikes` | bool | `true` | log line per spike |
+| `MaxSpikeRecords` | int | `128` | `1` to `1024`; ring size kept in the snapshot |
+| `DeepSampleRate` | int | `16` | `1` to `10000`; every Nth call in a deep section is recorded |
 
 ### Web authorization matrix
 
@@ -105,7 +129,7 @@ lacks managed `GC.GetTotalAllocatedBytes`; that API is only the fallback, and
 include tile-entity chunk load (`TileEntity.InstantiateFromRead`,
 `TileEntityFeatureData.InstantiateModule`) so serialization cost is measurable
 alongside the allocation churn it drives. Current schema `7dtd.apm.app.v3`,
-mod version 2.5.0.
+mod version 3.0.0.
 
 ```bash
 make bridge-build

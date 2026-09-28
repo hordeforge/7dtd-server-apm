@@ -240,6 +240,10 @@ TRASH_DIRNAME = ".trash"
 SCENARIO_DIRNAME = ".scenario"
 
 
+DEFAULT_PRUNE_GRACE_HOURS = 24.0
+DEFAULT_KEEP_SESSIONS = 40
+
+
 def prune_grace_hours() -> float:
     """Soft-delete window for pruned sessions, in hours.
 
@@ -247,40 +251,42 @@ def prune_grace_hours() -> float:
     runaway auto-prune deletes evidence irreversibly), so deletions land in the
     store's trash first and only expire from there. APM_PRUNE_GRACE_HOURS
     overrides; 0 restores immediate hard deletes for space-constrained hosts.
-    A non-numeric value warns and falls back to 24h instead of silently
+    A non-numeric value warns and falls back to the default instead of silently
     pretending the operator's setting was read.
     """
     raw = os.environ.get("APM_PRUNE_GRACE_HOURS", "")
     if not raw.strip():
-        return 24.0
+        return DEFAULT_PRUNE_GRACE_HOURS
     try:
         return max(0.0, float(raw))
     except ValueError:
         print(
-            f"WARNING: APM_PRUNE_GRACE_HOURS={raw!r} is not a number; using 24",
+            f"WARNING: APM_PRUNE_GRACE_HOURS={raw!r} is not a number; "
+            f"using {DEFAULT_PRUNE_GRACE_HOURS:g}",
             file=sys.stderr,
         )
-        return 24.0
+        return DEFAULT_PRUNE_GRACE_HOURS
 
 
 def keep_sessions_budget() -> int:
     """Retention budget for post-capture auto-prune: keep the newest N sessions.
 
     APM_KEEP_SESSIONS overrides; <= 0 disables auto-prune. A non-numeric value
-    warns and falls back to 40 so a typo cannot silently disable or explode
-    retention. Single implementation for capture-time auto-prune and doctor.
+    warns and falls back to the default so a typo cannot silently disable or
+    explode retention. Single implementation for capture-time auto-prune and
+    doctor.
     """
     raw = os.environ.get("APM_KEEP_SESSIONS", "")
     if not raw.strip():
-        return 40
+        return DEFAULT_KEEP_SESSIONS
     try:
         return int(raw)
     except ValueError:
         print(
-            f"WARNING: APM_KEEP_SESSIONS={raw!r} is not an integer; using 40",
+            f"WARNING: APM_KEEP_SESSIONS={raw!r} is not an integer; using {DEFAULT_KEEP_SESSIONS}",
             file=sys.stderr,
         )
-        return 40
+        return DEFAULT_KEEP_SESSIONS
 
 
 def _trash_dir(store: Path) -> Path:

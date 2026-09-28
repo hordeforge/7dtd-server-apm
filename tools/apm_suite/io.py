@@ -149,6 +149,62 @@ def load_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def strip_json_comments(text: str) -> str:
+    """Drop // and /* */ comments from JSON text, outside strings only.
+
+    The bridge's Config/apmbridge.json is hand-edited and ships with
+    comments, which the mod's own reader accepts and json.loads does not. A
+    character walk (not a regex) is what keeps a "http://" inside a string
+    value from eating the rest of the line; comment text is replaced by its
+    newlines so a parse error still points at the operator's line.
+    """
+    out: list[str] = []
+    index = 0
+    length = len(text)
+    in_string = False
+    while index < length:
+        char = text[index]
+        if in_string:
+            out.append(char)
+            if char == "\\" and index + 1 < length:
+                out.append(text[index + 1])
+                index += 2
+                continue
+            if char == '"':
+                in_string = False
+            index += 1
+        elif char == '"':
+            in_string = True
+            out.append(char)
+            index += 1
+        elif char == "/" and text.startswith("//", index):
+            newline = text.find("\n", index)
+            index = length if newline == -1 else newline
+        elif char == "/" and text.startswith("/*", index):
+            end = text.find("*/", index + 2)
+            stop = length if end == -1 else end + 2
+            out.append("\n" * text.count("\n", index, stop))
+            index = stop
+        else:
+            out.append(char)
+            index += 1
+    return "".join(out)
+
+
+def load_jsonc(path: Path) -> Any:
+    """Read a comment-carrying JSON config, naming the file on a decode error.
+
+    Same ValueError contract as load_json, but it returns whatever the
+    document holds rather than insisting on an object: the bridge config
+    readers must be able to see a valid non-object document and diagnose it.
+    """
+    text = path.read_text(encoding="utf-8")
+    try:
+        return json.loads(strip_json_comments(text))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"cannot parse {path}: {error}") from None
+
+
 def _next_candidate(base: Path, suffix: int) -> tuple[Path, int]:
     return base.with_name(f"{base.name}_{suffix}"), suffix + 1
 
