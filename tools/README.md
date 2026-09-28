@@ -34,10 +34,14 @@ normalized to NFC once, at ingestion.
 
 Generated pages (session report, dashboard, store index, flame delta,
 interactive flame) share one palette, monospace stack, and type scale from
-`apm_suite/web_tokens.py`; the bridge WebMod panel reuses the same literal
-colors and declares its own three corner radii. Add a page rule against a
-token, never a hex, and a test
-(`test_every_generated_page_carries_the_shared_tokens`) fails if one drifts.
+`apm_suite/web_tokens.py`. The bridge WebMod panel renders inside the stock
+game dashboard rather than a generated page, so it cannot import that module;
+it declares the same color values once in `WebMod/styling.css` and reads them
+by name, as `bundle.ts` does for its series and gauge, and keeps its own three
+corner radii. Add a page rule against a token, never a hex, and a test
+(`test_every_generated_page_carries_the_shared_tokens`) fails if one drifts;
+`test_webmod_panel_colors_come_from_the_shared_tokens` does the same for the
+panel and pins its block to `web_tokens.TOKENS`.
 That test also rejects a radius, shadow, or gradient on any generated page:
 the report views are flat by design, and decoration there is what made the
 flame page read as a different product.

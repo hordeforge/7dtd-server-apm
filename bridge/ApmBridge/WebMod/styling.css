@@ -1,17 +1,24 @@
-/* WebMod panel styling. The literal colors here are the same tokens the
-   generated report, dashboard, session index, and flame pages use
-   (tools/apm_suite/web_tokens.py): muted #9aa0a6, text #e8eaed, ok #57d977,
-   warn/accent #e6bd3a, bad #ff7070. They are literals because this sheet is
-   embedded in the managed assembly and the panel renders inside the stock
-   dashboard, not inside a generated page. The series colors in bundle.ts come
-   from the same set. */
-/* Three corner radii, chosen by the size of the thing being rounded, and no
-   others: a control and its cell used to carry 5px, 6px, 4px and 8px between
-   them, which reads as four unrelated shops inside one panel. 2px for meter
-   tracks (half of a 10px bar), 4px for controls the finger or cursor lands on,
-   6px for the panels those controls sit in. The status pill keeps its full
-   round because that shape is the point of it. */
+/* WebMod panel styling. The panel renders inside the stock game dashboard, not
+   inside a generated page, so it cannot import apm_suite.web_tokens; the values
+   below are that token set, declared once here and read by name everywhere
+   else, including by bundle.ts for its series and gauge colors. Status hues are
+   stored as bare RGB channels so one declaration serves both a solid fill and
+   the 20% pill tint. A color spelled out in two rules is two colors waiting to
+   drift, which is how the top bars ended up painting "within budget" a
+   different green from the level meters. */
 .seven-dtd-apm {
+  --apm-text-rgb: 232 234 237;
+  --apm-muted-rgb: 154 160 166;
+  --apm-link-rgb: 138 180 248;
+  --apm-accent-rgb: 230 189 58;
+  --apm-ok-rgb: 87 217 119;
+  --apm-bad-rgb: 255 112 112;
+  /* Three corner radii, chosen by the size of the thing being rounded, and no
+     others: a control and its cell used to carry 5px, 6px, 4px and 8px between
+     them, which reads as four unrelated shops inside one panel. 2px for meter
+     tracks (half of a 10px bar), 4px for controls the finger or cursor lands
+     on, 6px for the panels those controls sit in. The status pill keeps its
+     full round because that shape is the point of it. */
   --apm-r-track: 2px;
   --apm-r-control: 4px;
   --apm-r-panel: 6px;
@@ -22,14 +29,16 @@
 .apm-window { opacity: .6; font-size: .8rem; margin-left: auto; }
 /* The sample clock going amber is the panel's only cue that the numbers on
    screen stopped moving; without it a stalled bridge reads as a calm server. */
-.apm-window.apm-stale { color: #e6bd3a; opacity: 1; }
+.apm-window.apm-stale { color: rgb(var(--apm-accent-rgb)); opacity: 1; }
+/* Three text sizes and no fourth: the .8rem chrome, the .85rem cell label, the
+   .75rem pill. */
 .apm-pill { font-size: .75rem; font-weight: 700; letter-spacing: .04em; padding: .2rem .55rem; border-radius: 999px; }
-.apm-btn { font-size: .78rem; padding: .32rem .6rem; min-height: 24px; border-radius: var(--apm-r-control); border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
+.apm-btn { font-size: .8rem; padding: .32rem .6rem; min-height: 24px; border-radius: var(--apm-r-control); border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
 .apm-btn:hover { background: rgba(127,127,127,.25); }
 
 /* Keyboard focus is always visible (WCAG 2.4.7); the dashboard theme may
    reset outlines, so re-declare on our interactive elements only. */
-.apm-btn:focus-visible, .apm-filter:focus-visible, .apm-sort-btn:focus-visible { outline: 2px solid #8ab4f8; outline-offset: 1px; }
+.apm-btn:focus-visible, .apm-filter:focus-visible, .apm-sort-btn:focus-visible { outline: 2px solid rgb(var(--apm-link-rgb)); outline-offset: 1px; }
 
 /* Screen-reader-only text: carries state that the theme paints in color
    (severity rows, staged ring) or that would otherwise be unnamed. */
@@ -55,9 +64,9 @@
 @media (prefers-reduced-motion: reduce) {
   .apm-bar-fill, .apm-topbar-fill { transition: none; }
 }
-.apm-bar-fill { height: 100%; background: #57d977; }
-.apm-bar-fill.apm-warn { background: #e6bd3a; }
-.apm-bar-fill.apm-bad { background: #ff7070; }
+.apm-bar-fill { height: 100%; background: rgb(var(--apm-ok-rgb)); }
+.apm-bar-fill.apm-warn { background: rgb(var(--apm-accent-rgb)); }
+.apm-bar-fill.apm-bad { background: rgb(var(--apm-bad-rgb)); }
 
 .apm-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: .75rem; margin-top: .75rem; }
 .apm-cell { background: rgba(127,127,127,.12); border-radius: var(--apm-r-panel); padding: .75rem; display: flex; flex-direction: column; }
@@ -72,28 +81,28 @@
 /* Wide tables keep their columns on a narrow panel: the wrapper scrolls
    sideways instead of the page clipping the trailing columns. */
 .apm-table-scroll { overflow-x: auto; }
-.apm-table .apm-empty { text-align: center; color: #9aa0a6; padding: .8rem .4rem; }
-.apm-status { margin: .5rem 0 0; font-size: .8rem; color: #9aa0a6; }
+.apm-table .apm-empty { text-align: center; color: rgb(var(--apm-muted-rgb)); padding: .8rem .4rem; }
+.apm-status { margin: .5rem 0 0; font-size: .8rem; color: rgb(var(--apm-muted-rgb)); }
 .apm-table th:first-child,.apm-table td:first-child { text-align: left; }
 .apm-sortable { user-select: none; }
-.apm-sortable:hover { color: #8ab4f8; }
+.apm-sortable:hover { color: rgb(var(--apm-link-rgb)); }
 /* Reset the button chrome so the sortable header keeps its table look; the
    click target is a real <button> for keyboard operability. */
 .apm-sort-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; min-height: 24px; }
-.apm-sortable:hover { color: #8ab4f8; }
 .apm-budget-cell { display: flex; align-items: center; gap: .4rem; }
 .apm-budget-cell .apm-bar { width: 70px; flex: none; }
 .apm-budget-pct { min-width: 3.2rem; font-variant-numeric: tabular-nums; }
 
-.apm-error { color: #ff7070; white-space: pre-wrap; }
-.apm-ok { background: rgba(64,192,96,.2); color: #57d977; }
-.apm-warn { background: rgba(224,176,32,.2); color: #e6bd3a; }
-.apm-bad { background: rgba(224,64,64,.2); color: #ff7070; }
+.apm-error { color: rgb(var(--apm-bad-rgb)); white-space: pre-wrap; }
+/* One declaration per status serves the pill tint and the solid text. */
+.apm-ok { background: rgb(var(--apm-ok-rgb) / .2); color: rgb(var(--apm-ok-rgb)); }
+.apm-warn { background: rgb(var(--apm-accent-rgb) / .2); color: rgb(var(--apm-accent-rgb)); }
+.apm-bad { background: rgb(var(--apm-bad-rgb) / .2); color: rgb(var(--apm-bad-rgb)); }
 .apm-cell.apm-warn,.apm-cell.apm-bad { background: rgba(127,127,127,.12); }
-.apm-cell.apm-warn strong { color: #e6bd3a; }
-.apm-cell.apm-bad strong { color: #ff7070; }
-.apm-warn-row td:first-child { box-shadow: inset 3px 0 0 #e6bd3a; }
-.apm-bad-row td:first-child { box-shadow: inset 3px 0 0 #ff7070; }
+.apm-cell.apm-warn strong { color: rgb(var(--apm-accent-rgb)); }
+.apm-cell.apm-bad strong { color: rgb(var(--apm-bad-rgb)); }
+.apm-warn-row td:first-child { box-shadow: inset 3px 0 0 rgb(var(--apm-accent-rgb)); }
+.apm-bad-row td:first-child { box-shadow: inset 3px 0 0 rgb(var(--apm-bad-rgb)); }
 
 /* Sidebar icon for the APM entry. The stock dashboard gives every module
    route the same "Mods" font glyph; replace it via the stable tooltip anchor
@@ -134,21 +143,26 @@ a[data-for="tooltip-APM"]::before {
 .apm-host .apm-cell strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .apm-gauge-title { opacity: .7; font-size: .85rem; margin-bottom: .25rem; }
 .apm-gauge text { font-family: inherit; }
-.apm-gauge-value { fill: #e8eaed; font-size: 21px; font-weight: 700; }
-.apm-gauge-label { fill: #9aa0a6; font-size: 11px; }
+/* The unfilled arc reads on whichever dashboard theme is active, the same way
+   the bar tracks do. */
+.apm-gauge-track { stroke: rgba(127,127,127,.22); }
+.apm-gauge-value { fill: rgb(var(--apm-text-rgb)); font-size: 21px; font-weight: 700; }
+.apm-gauge-label { fill: rgb(var(--apm-muted-rgb)); font-size: 11px; }
 .apm-legend { display: flex; gap: 1rem; margin-top: .4rem; flex-wrap: wrap; align-items: baseline; font-size: .8rem; }
-.apm-legend-chip { display: inline-flex; align-items: center; gap: .35rem; color: #9aa0a6; }
+.apm-legend-chip { display: inline-flex; align-items: center; gap: .35rem; color: rgb(var(--apm-muted-rgb)); }
 .apm-legend-swatch { width: 10px; height: 10px; border-radius: var(--apm-r-track); flex: 0 0 auto; }
-.apm-legend-value { color: #e8eaed; font-weight: 600; font-variant-numeric: tabular-nums; }
+.apm-legend-value { color: rgb(var(--apm-text-rgb)); font-weight: 600; font-variant-numeric: tabular-nums; }
 .apm-gridline { stroke: rgba(127,127,127,.18); }
-.apm-axis-label { fill: #9aa0a6; font-size: 10px; }
-.apm-crosshair { stroke: #9aa0a6; stroke-dasharray: 3 3; }
-.apm-topbars h3 { margin: 0 0 .5rem; font-size: .85rem; color: #9aa0a6; }
+.apm-axis-label { fill: rgb(var(--apm-muted-rgb)); font-size: 10px; }
+.apm-crosshair { stroke: rgb(var(--apm-muted-rgb)); stroke-dasharray: 3 3; }
+.apm-topbars h3 { margin: 0 0 .5rem; font-size: .85rem; color: rgb(var(--apm-muted-rgb)); }
 .apm-topbar-row { display: grid; grid-template-columns: 150px 1fr 64px; gap: .5rem; align-items: center; margin: .3rem 0; font-size: .8rem; }
-.apm-topbar-name { color: #9aa0a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.apm-topbar-name { color: rgb(var(--apm-muted-rgb)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .apm-topbar-track { position: relative; background: rgba(127,127,127,.18); border-radius: var(--apm-r-track); height: 10px; overflow: hidden; }
 .apm-topbar-fill { height: 100%; }
-.apm-topbar-fill.apm-ok { background: #2d6b3a; }
-.apm-topbar-fill.apm-warn { background: #e6bd3a; }
-.apm-topbar-fill.apm-bad { background: #ff7070; }
-.apm-topbar-val { text-align: right; color: #9aa0a6; font-variant-numeric: tabular-nums; }
+/* Eight "ok" bars sit under one budget meter, so the list fills at half the
+   meter green's weight: same hue, quieter rank. */
+.apm-topbar-fill.apm-ok { background: rgb(var(--apm-ok-rgb) / .55); }
+.apm-topbar-fill.apm-warn { background: rgb(var(--apm-accent-rgb)); }
+.apm-topbar-fill.apm-bad { background: rgb(var(--apm-bad-rgb)); }
+.apm-topbar-val { text-align: right; color: rgb(var(--apm-muted-rgb)); font-variant-numeric: tabular-nums; }

@@ -431,6 +431,18 @@ major.
   12,931 B to 8,930 B gzipped) that no browser renders. The freshness gate only
   compares a fresh `tsc` run, so it would not have caught the weight coming
   back.
+- WebMod: the panel reads its colors from one token block instead of naming
+  them in each rule. It renders inside the stock dashboard, so it cannot import
+  `apm_suite.web_tokens`, but it can hold the same values: the six it uses are
+  declared once as RGB channels (so a solid fill and its 20% pill tint come
+  from one line) and every rule, plus the series and gauge colors in
+  `bundle.ts`, names them. The top bars painted "within budget" in a different
+  green from the level meters, three status hues carried a second hand-mixed
+  translucent literal, and the gauge arc sat on a dark ink no other track in
+  the panel uses, which vanishes on a light dashboard theme.
+  `tests/test_bridge_build_surface.py` pins the block to `web_tokens.TOKENS`
+  and fails on a raw literal in either file. `styling.css` goes 10,562 B to
+  11,818 B, inside the 12 KB budget.
 - Observability: `GET /api/apm` instruments itself. The panel polls it every
   2 s, so a failure there left the operator with a frozen dashboard and no
   record anywhere. The request is timed and counted as the

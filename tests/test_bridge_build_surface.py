@@ -175,6 +175,45 @@ def test_shipped_webmod_assets_stay_inside_the_download_budget() -> None:
         assert size <= budget, f"{name} is {size} B, over the {budget} B budget"
 
 
+def test_webmod_panel_colors_come_from_the_shared_tokens() -> None:
+    # The panel is the sixth view of this product, and it renders inside the
+    # stock game dashboard instead of a generated page, so it cannot import
+    # apm_suite.web_tokens. Its stylesheet declares those token values once and
+    # every rule reads them by name. The panel used to spell the colors out in
+    # each rule, which is how the top bars ended up showing "within budget" in a
+    # different green from the level meters, and how the gauge arc ended up on a
+    # dark ink that no other track in the panel uses.
+    from apm_suite.web_tokens import TOKENS
+
+    webmod = REPO / "bridge" / "ApmBridge" / "WebMod"
+    sheet = re.sub(r"/\*.*?\*/", "", (webmod / "styling.css").read_text(encoding="utf-8"))
+
+    # Each token the panel uses is declared as bare RGB channels, so one
+    # declaration serves the solid fill and the translucent pill tint.
+    for name in ("text", "muted", "link", "accent", "ok", "bad"):
+        channels = " ".join(str(int(TOKENS[name][i : i + 2], 16)) for i in (1, 3, 5))
+        assert f"--apm-{name}-rgb: {channels};" in sheet, (
+            f"--apm-{name}-rgb does not carry {TOKENS[name]}"
+        )
+
+    assert not re.search(r"#[0-9a-fA-F]{3,8}", sheet), "a raw hex literal crept back into the sheet"
+
+    # What is left is theme-neutral chrome, which has to stay literal because it
+    # is an alpha over whatever the dashboard theme paints: the mid-gray family
+    # plus the meter's dark segmentation ink.
+    neutral = {
+        m for m in re.findall(r"rgba\(\d+,\d+,\d+,[.\d]+\)", sheet) if m != "rgba(10,12,16,.8)"
+    }
+    assert all(m.startswith("rgba(127,127,127,") for m in neutral), f"off-palette gray: {neutral}"
+
+    # bundle.ts draws the series and the gauge arc. A hex there is a second
+    # copy of a token the sheet already declares.
+    source = (webmod / "bundle.ts").read_text(encoding="utf-8")
+    assert not re.search(r"#[0-9a-fA-F]{3,8}", source), "bundle.ts spells out a color literal"
+    for token in ("ok", "link", "accent", "bad"):
+        assert f"var(--apm-{token}-rgb)" in source, f"bundle.ts never names --apm-{token}-rgb"
+
+
 def test_emitted_webmod_bundle_carries_no_comments() -> None:
     # tsconfig emits with removeComments, so the source comments in bundle.ts
     # (10.5 KB of a 44 KB emit) do not ride along on every dashboard load. The

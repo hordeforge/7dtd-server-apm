@@ -379,10 +379,13 @@ type TrendSeries = {
   format: (v: number) => string;
 };
 
+// Series and gauge colors name the panel tokens declared in styling.css
+// instead of repeating their hex values here, so the chart palette and the
+// rest of the panel cannot drift apart.
 function trendSeriesOf(H: SparkHistory): Array<TrendSeries> {
   return [
-    { key: "tps", label: "TPS", values: H.tps, color: "#57d977", format: (v: number): string => v.toFixed(1) },
-    { key: "gm", label: "gmUpdate ms", values: H.gm, color: "#8ab4f8", format: (v: number): string => v.toFixed(2) },
+    { key: "tps", label: "TPS", values: H.tps, color: "rgb(var(--apm-ok-rgb))", format: (v: number): string => v.toFixed(1) },
+    { key: "gm", label: "gmUpdate ms", values: H.gm, color: "rgb(var(--apm-link-rgb))", format: (v: number): string => v.toFixed(2) },
   ];
 }
 
@@ -498,12 +501,12 @@ function arcPath(cx: number, cy: number, r: number, start: number, end: number):
 
 function gaugeColor(frac: number): string {
   if (frac < 0.6) {
-    return "#57d977";
+    return "rgb(var(--apm-ok-rgb))";
   }
   if (frac < 0.9) {
-    return "#e6bd3a";
+    return "rgb(var(--apm-accent-rgb))";
   }
-  return "#ff7070";
+  return "rgb(var(--apm-bad-rgb))";
 }
 
 function topBarClass(p95: number): string {
@@ -672,7 +675,7 @@ function renderBudgetGauge(h: CreateElement, update: Record<string, unknown>): u
       width, height, viewBox: `0 0 ${width} ${height}`, role: "img",
       "aria-label": `Average tick ${fx(avg, 1)} ms of the ${TICK_BUDGET_MS} ms budget (${Math.round(frac * 100)}% used).`
     },
-      h("path", { d: arcPath(cx, cy, r, Math.PI, 0), fill: "none", stroke: "#1d2631", strokeWidth: 14, strokeLinecap: "round" }),
+      h("path", { className: "apm-gauge-track", d: arcPath(cx, cy, r, Math.PI, 0), fill: "none", strokeWidth: 14, strokeLinecap: "round" }),
       frac > 0
         ? h("path", { d: arcPath(cx, cy, r, Math.PI, Math.PI - frac * Math.PI), fill: "none", stroke: gaugeColor(frac), strokeWidth: 14, strokeLinecap: "round" })
         : null,
@@ -707,10 +710,10 @@ function renderGrid(h: CreateElement, React: PanelProps["React"], g: Grade, H: S
   // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined before the first sample
   const lastAlloc = H.alloc[H.alloc.length - 1];
   return h("div", { className: "apm-grid" },
-    trend(h, React, "TPS", H.tps, fx(g.tps, 1), "#57d977"),
+    trend(h, React, "TPS", H.tps, fx(g.tps, 1), "rgb(var(--apm-ok-rgb))"),
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined at runtime before the first sample
-    trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc ?? 0, 1), "#e6bd3a"),
-    trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"),
+    trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc ?? 0, 1), "rgb(var(--apm-accent-rgb))"),
+    trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "rgb(var(--apm-link-rgb))"),
     cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null),
     cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null),
     cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null),

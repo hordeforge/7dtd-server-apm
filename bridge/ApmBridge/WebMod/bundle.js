@@ -192,8 +192,8 @@
     }
     function trendSeriesOf(H) {
         return [
-            { key: "tps", label: "TPS", values: H.tps, color: "#57d977", format: (v) => v.toFixed(1) },
-            { key: "gm", label: "gmUpdate ms", values: H.gm, color: "#8ab4f8", format: (v) => v.toFixed(2) },
+            { key: "tps", label: "TPS", values: H.tps, color: "rgb(var(--apm-ok-rgb))", format: (v) => v.toFixed(1) },
+            { key: "gm", label: "gmUpdate ms", values: H.gm, color: "rgb(var(--apm-link-rgb))", format: (v) => v.toFixed(2) },
         ];
     }
     function niceMax(value) {
@@ -290,12 +290,12 @@
     }
     function gaugeColor(frac) {
         if (frac < 0.6) {
-            return "#57d977";
+            return "rgb(var(--apm-ok-rgb))";
         }
         if (frac < 0.9) {
-            return "#e6bd3a";
+            return "rgb(var(--apm-accent-rgb))";
         }
-        return "#ff7070";
+        return "rgb(var(--apm-bad-rgb))";
     }
     function topBarClass(p95) {
         if (p95 > 16) {
@@ -401,7 +401,7 @@
         return h("div", { className: "apm-chart apm-gauge" }, h("div", { className: "apm-gauge-title" }, "Tick vs budget"), h("svg", {
             width, height, viewBox: `0 0 ${width} ${height}`, role: "img",
             "aria-label": `Average tick ${fx(avg, 1)} ms of the ${TICK_BUDGET_MS} ms budget (${Math.round(frac * 100)}% used).`
-        }, h("path", { d: arcPath(cx, cy, r, Math.PI, 0), fill: "none", stroke: "#1d2631", strokeWidth: 14, strokeLinecap: "round" }), frac > 0
+        }, h("path", { className: "apm-gauge-track", d: arcPath(cx, cy, r, Math.PI, 0), fill: "none", strokeWidth: 14, strokeLinecap: "round" }), frac > 0
             ? h("path", { d: arcPath(cx, cy, r, Math.PI, Math.PI - frac * Math.PI), fill: "none", stroke: gaugeColor(frac), strokeWidth: 14, strokeLinecap: "round" })
             : null, h("text", { x: cx, y: cy - 30, textAnchor: "middle", className: "apm-gauge-value" }, `${fx(avg, 1)} ms`), h("text", { x: cx, y: cy - 12, textAnchor: "middle", className: "apm-gauge-label" }, `of ${TICK_BUDGET_MS} ms budget`)));
     }
@@ -419,7 +419,7 @@
     }
     function renderGrid(h, React, g, H, update, gc, world, health) {
         const lastAlloc = H.alloc[H.alloc.length - 1];
-        return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "#57d977"), trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "#e6bd3a"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null), cell(h, "API errors", `${num(health.apiErrors)} / ${num(health.apiRequests)}`, num(health.apiErrors) > 0 ? "apm-warn" : null));
+        return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "rgb(var(--apm-ok-rgb))"), trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "rgb(var(--apm-accent-rgb))"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "rgb(var(--apm-link-rgb))"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null), cell(h, "API errors", `${num(health.apiErrors)} / ${num(health.apiRequests)}`, num(health.apiErrors) > 0 ? "apm-warn" : null));
     }
     function healthAlerts(h, health) {
         const alerts = [];
