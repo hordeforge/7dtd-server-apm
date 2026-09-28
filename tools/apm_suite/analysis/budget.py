@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import as_number, collected_layer_scores
+from ..models import as_mapping, as_number, collected_layer_scores
 from .bridge import ranked_section_heats
 
 DEFAULT_BUDGET: dict[str, Any] = {
@@ -63,18 +63,27 @@ def check(
     summary = load_json(session / "summary.json")
     layers = collected_layer_scores(summary)
     sections = load_sections(session)
-    metadata = summary.get("metadata") or {}
+    metadata = as_mapping(summary.get("metadata"))
 
     def gate(label: str, value: float, limit: Any) -> None:
-        """Append the ok/FAIL line for one budgeted number and latch the verdict."""
+        """Append the ok/FAIL line for one budgeted number and latch the verdict.
+
+        A limit that is not a number is UNKNOWN (the gate fails closed), never
+        a pass: a budget the gate cannot read is a budget it cannot enforce.
+        """
         nonlocal ok
-        if value > float(limit):
+        bound = as_number(limit)
+        if bound is None:
+            ok = False
+            lines.append(f"UNKNOWN {label}: unparseable budget limit {limit!r}")
+            return
+        if value > bound:
             ok = False
             lines.append(f"FAIL {label}={value} > budget {limit}")
         else:
             lines.append(f"ok   {label}={value} <= {limit}")
 
-    for name, limit in (budget.get("max_layer_scores") or {}).items():
+    for name, limit in as_mapping(budget.get("max_layer_scores")).items():
         if name not in layers:
             ok = False
             lines.append(f"UNKNOWN layer {name}: no usable evidence")
@@ -85,7 +94,7 @@ def check(
     if max_sum is not None:
         gate("sum_layers", sum(layers.values()), max_sum)
 
-    for name, limit in (budget.get("max_section_heat") or {}).items():
+    for name, limit in as_mapping(budget.get("max_section_heat")).items():
         if name not in sections:
             lines.append(f"skip section {name} (no heat data)")
             continue
@@ -121,7 +130,12 @@ def check(
         limit = budget.get(key)
         if limit is None:
             continue
-        rate_value = (metadata.get(block_name) or {}).get(field)
+        bound = as_number(limit)
+        if bound is None:
+            ok = False
+            lines.append(f"UNKNOWN {key}: unparseable budget limit {limit!r}")
+            continue
+        rate_value = as_mapping(metadata.get(block_name)).get(field)
         if rate_value is None:
             lines.append(f"skip {key} (no data)")
             continue
@@ -131,7 +145,7 @@ def check(
             ok = False
             lines.append(f"UNKNOWN {key}: unparseable summary value {rate_value!r}")
             continue
-        if number > float(limit):
+        if number > bound:
             ok = False
             lines.append(f"FAIL {key}={rate_value} > budget {limit}")
         else:
@@ -139,7 +153,7 @@ def check(
 
     max_late = budget.get("max_late_tick_share")
     if max_late is not None:
-        frame = metadata.get("frame") or {}
+        frame = as_mapping(metadata.get("frame"))
         late_raw = frame.get("lateTicks")
         window_raw = frame.get("windowUpdates")
         late = as_number(late_raw)
@@ -154,24 +168,20 @@ def check(
                 f"lateTicks={late_raw!r} windowUpdates={window_raw!r}"
             )
         elif window > 0:
-            share = late / window
-            if share > float(max_late):
+            bound = as_number(max_late)
+            if bound is None:
                 ok = False
-                lines.append(
-                    f"FAIL late_ticks {late:g}/{window:g} = {share:.3f} > budget {max_late} "
-                    "(server missed its tick deadline)"
-                )
+                lines.append(f"UNKNOWN late_ticks: unparseable budget limit {max_late!r}")
             else:
-                lines.append(f"ok   late_ticks {late:g}/{window:g} = {share:.3f} <= {max_late}")
-        elif late > 0:
-            # Fail closed: late ticks with no update count to divide by is
-            # UNKNOWN, never a pass. A zero numerator is a genuine "no late
-            # ticks" observation and needs no denominator.
-            ok = False
-            lines.append(
-                f"UNKNOWN late_ticks: {late:g} late ticks with "
-                f"windowUpdates={window:g} (no denominator)"
-            )
+                share = late / window
+                if share > bound:
+                    ok = False
+                    lines.append(
+                        f"FAIL late_ticks {late:g}/{window:g} = {share:.3f} > budget {max_late} "
+                        "(server missed its tick deadline)"
+                    )
+                else:
+                    lines.append(f"ok   late_ticks {late:g}/{window:g} = {share:.3f} <= {max_late}")
         else:
             lines.append("skip late_ticks (no bridge frame data)")
 

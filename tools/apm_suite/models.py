@@ -26,6 +26,17 @@ def as_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
+def as_mapping(value: Any) -> dict[str, Any]:
+    """Coerce an unvalidated JSON value to an object, else {}.
+
+    Same posture as as_number: session documents and budget files are re-read
+    without schema guarantees (imported bundles, hand edits), so a scalar or
+    list where an object is expected ("metadata": 5) must read as absent
+    evidence instead of raising AttributeError/TypeError mid-analysis.
+    """
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def first_number(*values: Any) -> float | None:
     """First value coercible to a finite number, else None.
 

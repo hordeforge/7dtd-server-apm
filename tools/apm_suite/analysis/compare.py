@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import as_number, collected_layer_scores, first_present, layer_signals
+from ..models import as_mapping, as_number, collected_layer_scores, first_present, layer_signals
 from .bridge import ranked_section_heats
 from .flame_delta import delta, folded_stack_path, load_weights
 
@@ -57,7 +57,7 @@ def _attribution_totals(session: Path) -> dict[str, float]:
     bridge = session / "csharp_bridge.json"
     if not bridge.is_file():
         return {}
-    attribution = load_json(bridge).get("attribution") or {}
+    attribution = as_mapping(load_json(bridge).get("attribution"))
     totals: dict[str, float] = {}
     for entry in attribution.get("subsystems") or []:
         if not isinstance(entry, dict):
@@ -113,7 +113,7 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
     layers_a, layers_b = collected_layer_scores(summary_a), collected_layer_scores(summary_b)
     if set(layers_a) != set(layers_b):
         raise ValueError(f"incompatible layer coverage: A={sorted(layers_a)} B={sorted(layers_b)}")
-    meta_a, meta_b = summary_a.get("meta") or {}, summary_b.get("meta") or {}
+    meta_a, meta_b = as_mapping(summary_a.get("meta")), as_mapping(summary_b.get("meta"))
     if meta_a.get("analyzer_version") != meta_b.get("analyzer_version"):
         raise ValueError("analyzer versions differ; re-finalize both sessions with one version")
     if str(meta_a.get("only") or "all") != str(meta_b.get("only") or "all"):
@@ -164,11 +164,12 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
 
     def late_ticks(summary: dict[str, Any]) -> int:
         return int(
-            as_number(((summary.get("metadata") or {}).get("frame") or {}).get("lateTicks")) or 0
+            as_number(as_mapping(as_mapping(summary.get("metadata")).get("frame")).get("lateTicks"))
+            or 0
         )
 
     def rate(summary: dict[str, Any], block: str, field: str) -> float:
-        value = (summary.get("metadata") or {}).get(block) or {}
+        value = as_mapping(as_mapping(summary.get("metadata")).get(block))
         return as_number(value.get(field)) or 0.0
 
     late_a, late_b = late_ticks(summary_a), late_ticks(summary_b)

@@ -31,6 +31,7 @@ import pytest
 
 from apm_suite.analysis.bridge import load_speedscope_frames, parse_section_line
 from apm_suite.analysis.events import PER_SOURCE_MAX, RETAINED_MAX, build_timeline
+from apm_suite.io import load_json
 from apm_suite.models import EventsV2, schema_dict
 from apm_suite.paths import REPO
 
@@ -567,3 +568,179 @@ def test_fuzz_session_artifacts_regression(tmp_path: Path) -> None:
     assert load_speedscope_frames(profile) == []
     target.write_text('{"shared":"x"}')
     assert load_speedscope_frames(profile) == []
+
+
+# --- store index + budget gate readers (imported evidence bundles) -----------
+
+# Shapes a writer can leave behind: a scalar where an object is expected, an
+# object where a list is, and values that only pass a truthiness check
+# ("x.get(k) or {}" defends None but not a list or an int).
+CONTAINERS: list[Any] = [{}, {"cpu": 1}, [], [1, 2], "x", 5, None, True]
+SCALARS_SHORT: list[Any] = [0, 1, -2.5, "12", "abc", "", None, True, 10**400, "9" * 400]
+
+STORE_SEEDS = range(4)
+
+
+def _summary_doc(rng: random.Random) -> dict[str, Any]:
+    """A summary.json whose every nesting level is an unvalidated container."""
+    layers: Any = rng.choice(
+        [
+            [{"layer": "cpu", "score": rng.choice(SCALARS_SHORT), "state": "collected"}],
+            [{"layer": "runtime_gc", "score": rng.choice(SCALARS_SHORT), "signals": {}}],
+            rng.choice(CONTAINERS),
+        ]
+    )
+    metadata: Any = rng.choice(CONTAINERS)
+    if isinstance(metadata, dict) and rng.random() < 0.7:
+        metadata["gc"] = rng.choice([{"grossAllocMBPerSecond": 40.0}, *CONTAINERS])
+        metadata["lag_diagnosis"] = rng.choice(
+            [
+                {"verdict": "x", "profile": "spike-driven"},
+                {"verdict": "y", "profile": "compute-bound"},
+                {"profile": rng.choice([5, None, ["spike-driven"]])},
+                *CONTAINERS,
+            ]
+        )
+    return {
+        "schema": "7dtd.apm.summary.v2",
+        "session_id": "session_fuzz",
+        "layers": layers,
+        "metadata": metadata,
+        "meta": rng.choice([{"utc": rng.choice(UTC_STAMPS), "pid": 1}, *CONTAINERS]),
+        "health": rng.choice([{"health": "ok", "grade": "A"}, *CONTAINERS]),
+    }
+
+
+def _write_summary(session: Path, doc: Any) -> None:
+    (session / "summary.json").write_text(json.dumps(doc), encoding="utf-8")
+
+
+@pytest.mark.parametrize("seed", list(STORE_SEEDS))
+def test_fuzz_store_index_scan_and_html(tmp_path: Path, seed: int) -> None:
+    """`index` walks every session under the data root and renders each row
+    into one HTML page, so one crafted summary.json must not raise out of the
+    scan or smuggle markup into the page. Unreadable evidence reads as blank
+    cells, never a traceback and never raw HTML."""
+    rng = random.Random(seed)
+    root = tmp_path / "store"
+    for index in range(rng.randint(1, 4)):
+        session = root / f"session_2026010{index}"
+        session.mkdir(parents=True)
+        _write_summary(session, _summary_doc(rng))
+        if rng.random() < 0.5:
+            (session / "health.json").write_text(
+                rng.choice([json.dumps(rng.choice(CONTAINERS)), "torn {", ""]),
+                encoding="utf-8",
+            )
+        for artifact in (
+            "cpu/perf/flame.html",
+            "report.html",
+            "dashboard.html",
+            "csharp_bridge.md",
+        ):
+            if rng.random() < 0.3:
+                target = session / artifact
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("x", encoding="utf-8")
+
+    from apm_suite.analysis.index import html_index, scan
+
+    rows_a, rows_b = scan(root), scan(root)
+    assert rows_a == rows_b, f"seed={seed}: index scan must be deterministic"
+    assert len(rows_a) == len([p for p in root.iterdir() if p.is_dir()])
+    for row in rows_a:
+        # sum_pressure only ever sums finite numbers from recorded scores.
+        assert math.isfinite(row["sum_pressure"]), f"seed={seed}: {row['sum_pressure']!r}"
+        assert row["profile"] in ("", "spike", "compute"), f"seed={seed}: {row['profile']!r}"
+
+    page_a, page_b = html_index(rows_a), html_index(rows_b)
+    assert page_a == page_b, f"seed={seed}: index page must be deterministic"
+    assert page_a.startswith("<!DOCTYPE html>") and page_a.rstrip().endswith("</html>")
+    for injected in ("<script", "<img", "javascript:"):
+        assert injected not in page_a.lower(), f"seed={seed}: unescaped {injected} in index page"
+
+    # Serialization boundary: the rows persist as index.json and read back
+    # through the untrusted-document reader without losing or inventing fields.
+    (root / "index.json").write_text(
+        json.dumps({"sessions": rows_a}, allow_nan=False), encoding="utf-8"
+    )
+    assert load_json(root / "index.json")["sessions"] == rows_a, (
+        f"seed={seed}: index.json round trip diverged"
+    )
+
+
+@pytest.mark.parametrize("seed", list(STORE_SEEDS))
+def test_fuzz_budget_gate_on_crafted_sessions(tmp_path: Path, seed: int) -> None:
+    """The budget gate is the pass/fail verdict on a candidate build, so it
+    must degrade to UNKNOWN on unparseable evidence instead of raising, and
+    must never report a pass it could not actually decide."""
+    rng = random.Random(seed)
+    session = tmp_path / f"session_budget_{seed}"
+    session.mkdir()
+    _write_summary(session, _summary_doc(rng))
+    budget: dict[str, Any] = {
+        "max_layer_scores": rng.choice(
+            [{"cpu": 60, "runtime_gc": 60}, {"cpu": "abc"}, {"cpu": [1]}, 5, [], "x", None]
+        ),
+        "max_section_heat": rng.choice(
+            [{"World.TickEntities": 5}, {"World.TickEntities": None}, 7]
+        ),
+        "max_sum_layer_score": rng.choice([500, "abc", None, [1], True]),
+        "max_gross_alloc_mb_per_second": rng.choice([15.0, "abc", None]),
+        "max_udp_send_mb_per_second": rng.choice([5.0, [1]]),
+        "max_late_tick_share": rng.choice([0.1, "abc", None]),
+    }
+
+    from apm_suite.analysis.budget import check
+
+    ok, lines = check(session, budget, None, 15.0)
+    assert lines, f"seed={seed}: gate produced no verdict"
+    decided_fail = any(line.startswith(("FAIL", "UNKNOWN")) for line in lines)
+    assert not (ok and decided_fail), f"seed={seed}: FAIL/UNKNOWN reported on a passing gate"
+
+
+def test_fuzz_scalar_containers_regression(tmp_path: Path) -> None:
+    """Regression artifacts, one per shape that raised out of a reader before
+    hardening. `x.get(key) or {}` only defends a missing key: an int, a
+    string, or a list where an object is expected still raises, and one such
+    session used to take out the whole store index, the budget gate, and the
+    report's layer scores."""
+    from apm_suite.analysis.budget import check
+    from apm_suite.analysis.index import html_index, scan
+    from apm_suite.analysis.report import layer_scores
+
+    store = tmp_path / "store"
+    cases = {
+        "layers": '{"layers": 5}',
+        "meta": '{"meta": 5}',
+        "metadata": '{"metadata": 5}',
+        "health": '{"health": 5}',
+        "lag": '{"metadata": {"lag_diagnosis": 5}}',
+        "profile": '{"metadata": {"lag_diagnosis": {"profile": 5}}}',
+        "world": '{"metadata": {"world": 5}}',
+        "gc": '{"metadata": {"gc": 5}}',
+    }
+    for index, (name, body) in enumerate(cases.items()):
+        session = store / f"session_scalar_{index}"
+        session.mkdir(parents=True)
+        (session / "summary.json").write_text(body, encoding="utf-8")
+        (session / "meta.json").write_text(name, encoding="utf-8")
+
+    rows = scan(store)
+    assert len(rows) == len(cases)
+    assert html_index(rows).startswith("<!DOCTYPE html>")
+    # meta.json is a scalar here too: the report still scores the host layers.
+    assert layer_scores(store / "session_scalar_1", {}, {})
+
+    # The budget gate: a scalar metadata and a scalar limits block read as
+    # UNKNOWN evidence, never as a traceback and never as a silent pass.
+    session = tmp_path / "session_gate"
+    session.mkdir()
+    (session / "summary.json").write_text(
+        '{"layers": [{"layer": "cpu", "score": 10, "state": "collected"}],'
+        ' "metadata": {"frame": 5, "gc": 5}}',
+        encoding="utf-8",
+    )
+    ok, lines = check(session, {"max_layer_scores": 5, "max_sum_layer_score": "abc"}, None, 15.0)
+    assert ok is False
+    assert any(line.startswith("UNKNOWN sum_layers") for line in lines)

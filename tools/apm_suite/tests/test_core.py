@@ -4777,29 +4777,33 @@ def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
     assert _mtime(tmp_path / "never-existed") == 0.0
 
     (tmp_path / "session_a").mkdir()
-    real_stat = Path.stat
+    (tmp_path / "session_b").mkdir()
+    real_is_dir = Path.is_dir
+    pruned = {"done": False}
     seen_b: dict[str, int] = {"n": 0}
 
-    def flaky_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
-        # The race window is the sort-key stat: Path.is_dir() goes through
-        # os.stat, not Path.stat, so the first Path.stat call on a listed
-        # session is the one _mtime makes. Failing on the second (as this did)
-        # never fired, and the test silently asserted plain mtime ordering;
-        # without the count assertion below a hook that stopped firing would
-        # leave this test passing for the wrong reason.
-        if self == tmp_path / "session_b":
+    def flaky_is_dir(self: Path) -> bool:
+        # The race window sits between the listing's is_dir() filter and the
+        # sort-key stat: report session_b as present, then remove it, so only
+        # the sort-key stat finds it gone. Removing the real directory (rather
+        # than counting stat calls) keeps the race reproducible: is_dir does
+        # not route through Path.stat on every supported Python. The count
+        # matters too: a hook that stopped firing would leave the directory in
+        # place and the assertions below would still pass.
+        if self == tmp_path / "session_b" and not pruned["done"]:
+            pruned["done"] = True
             seen_b["n"] += 1
-            raise FileNotFoundError(2, "No such file or directory", str(self))
-        return real_stat(self, *args, **kwargs)
+            self.rmdir()
+            return True
+        return real_is_dir(self)
 
-    (tmp_path / "session_b").mkdir()
     # Pin the mtimes a year apart: a filesystem with coarse timestamp
     # resolution would otherwise leave both sessions on the same sort key and
     # let readdir order decide the result.
     now = time.time()
     os.utime(tmp_path / "session_a", (now, now))
     os.utime(tmp_path / "session_b", (now - 365 * 86400, now - 365 * 86400))
-    monkeypatch.setattr("apm_suite.session.Path.stat", flaky_stat)
+    monkeypatch.setattr("apm_suite.session.Path.is_dir", flaky_is_dir)
     names = [p.name for p in list_sessions(tmp_path)]
 
     assert seen_b["n"] == 1

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, iter_jsonl
-from ..models import LayerScore, SummaryV2, as_number, layer_requested, schema_dict
+from ..models import LayerScore, SummaryV2, as_mapping, as_number, layer_requested, schema_dict
 from .bridge import attribute_document, attribute_snapshot
 
 
@@ -718,8 +718,8 @@ def diagnose_lag(
     fired this session and how bad, so the reader gets an answer, not a table.
     """
     signals = {layer.layer: layer.signals for layer in layers if layer.state == "collected"}
-    frame = metadata.get("frame") or {}
-    gc = metadata.get("gc") or {}
+    frame = as_mapping(metadata.get("frame"))
+    gc = as_mapping(metadata.get("gc"))
     alloc_sites: list[str] = metadata.get("top_alloc_sites") or []
     churn_sites: list[str] = metadata.get("top_churn_sites") or []
     causes: list[dict[str, Any]] = []
@@ -824,7 +824,7 @@ def diagnose_lag(
             }
         )
 
-    mem = metadata.get("memory") or {}
+    mem = as_mapping(metadata.get("memory"))
     rss_slope = _num0(mem.get("rss_growth_mb_per_s"))
     fd_growth = _int0(mem.get("fd_end")) - _int0(mem.get("fd_start"))
     if rss_slope >= 5 or fd_growth >= 100:
@@ -877,9 +877,9 @@ def diagnose_lag(
             }
         )
 
-    transfers = metadata.get("transfers") or {}
+    transfers = as_mapping(metadata.get("transfers"))
     bridge_mb_s = _num0(transfers.get("mb_per_second"))  # since-reset average
-    kernel_send = _num0((metadata.get("net") or {}).get("udp_send_mb_per_second"))
+    kernel_send = _num0(as_mapping(metadata.get("net")).get("udp_send_mb_per_second"))
     # Kernel UDP send is always the capture window; the bridge counter averages
     # since the last reset and is inflated by the initial join chunk burst.
     # Prefer the windowed kernel rate as the current headline when we have it.
@@ -987,7 +987,15 @@ def diagnose_lag(
 
 def _load_meta(session: Path) -> dict[str, Any]:
     meta_path = session / "meta.json"
-    return json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    if not meta_path.exists():
+        return {}
+    try:
+        loaded = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        # An imported bundle can carry a torn or hand-mangled meta.json; the
+        # host-side layers below stay computable without it.
+        return {}
+    return as_mapping(loaded)
 
 
 def _apply_main_thread_pressure(layers: list[LayerScore], threads: dict[str, Any]) -> None:

@@ -11,8 +11,13 @@ from pathlib import Path
 from typing import Any
 
 from ..io import atomic_json, atomic_text, load_json
-from ..models import as_number, layer_signals
+from ..models import as_mapping, as_number, layer_signals
 from ..paths import apm_root
+
+
+def _text(value: Any) -> str:
+    """A JSON string, or "" for every other shape (substring tests need one)."""
+    return value if isinstance(value, str) else ""
 
 
 def scan(root: Path) -> list[dict[str, Any]]:
@@ -37,17 +42,19 @@ def scan(root: Path) -> list[dict[str, Any]]:
             with contextlib.suppress(ValueError, OSError):
                 health = load_json(health_path)
         if not health:
-            health = summary.get("health") or {}  # sessions finalized before v2.2
+            # sessions finalized before v2.2
+            health = as_mapping(summary.get("health"))
+        entries = summary.get("layers")
         layers = {
             layer["layer"]: layer.get("score")
-            for layer in summary.get("layers") or []
+            for layer in (entries if isinstance(entries, list) else [])
             if isinstance(layer, dict) and layer.get("layer")
         }
-        meta = summary.get("meta") or {}
-        metadata = summary.get("metadata") or {}
-        lag = metadata.get("lag_diagnosis") or {}
-        verdict = lag.get("verdict") or ""
-        profile = lag.get("profile") or ""
+        meta = as_mapping(summary.get("meta"))
+        metadata = as_mapping(summary.get("metadata"))
+        lag = as_mapping(metadata.get("lag_diagnosis"))
+        verdict = _text(lag.get("verdict"))
+        profile = _text(lag.get("profile"))
         profile_tag = (
             "spike"
             if "spike-driven" in profile
@@ -55,8 +62,8 @@ def scan(root: Path) -> list[dict[str, Any]]:
             if "compute-bound" in profile
             else ""
         )
-        world = metadata.get("world") or {}
-        gc = metadata.get("gc") or {}
+        world = as_mapping(metadata.get("world"))
+        gc = as_mapping(metadata.get("gc"))
         gc_layer = layer_signals(summary, "runtime_gc")
         rows.append(
             {

@@ -56,6 +56,23 @@ to 2.3.0 and 2.2.4 stays skipped.
   `incomplete`), and writes nothing. `audit` cannot serve this role: it
   re-stamps `manifest.json` on a clean session, so on a restored copy it would
   absorb the drift it is meant to detect.
+- Correctness: a session document or budget file that carried a scalar or
+  list where an object is expected (`{"metadata": 5}`, `"layers": 5`,
+  `{"meta": 5}`) raised out of the store index, the budget gate, session
+  comparison, and the report's layer scoring. `x.get(key) or {}` only defends
+  a missing key, never a wrongly typed one. All four readers now coerce with
+  `models.as_mapping` and read such evidence as absent, matching how
+  `as_number` already treats unparseable scalars. Budget limits go through
+  `as_number` too: a non-numeric limit is now an `UNKNOWN` line (the gate
+  fails closed) instead of a `ValueError` traceback.
+- Correctness: a torn or hand-mangled `meta.json` in an imported bundle no
+  longer fails the whole report; the host-side layer scores stay computable
+  without it.
+- Tests: deterministic fuzz targets for the store index scan and HTML render
+  (determinism, finite pressure sums, no unescaped markup, `index.json`
+  round trip) and for the budget gate (UNKNOWN on unparseable limits and
+  evidence, never a pass it could not decide), plus regression cases for
+  every wrongly typed container shape above.
 
 ## 2.2.0 - host CLI - 2026-08-26
 
