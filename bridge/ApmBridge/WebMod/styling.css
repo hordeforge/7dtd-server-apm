@@ -26,12 +26,15 @@
   background-size: calc(100% / 12) 100%;
 }
 /* Values ease toward their target (and decay back down) instead of jumping
-   between polls. */
-.apm-bar-fill, .apm-topbar-fill { transition: width .45s cubic-bezier(.22,.61,.36,1); }
+   between polls. The fill scales rather than resizes: every poll moves these
+   bars, and a width transition re-runs layout for all of them on the main
+   thread, where a transform runs on the compositor. Both tracks clip
+   (overflow: hidden, own radius), so a scaled fill paints the same. */
+.apm-bar-fill, .apm-topbar-fill { width: 100%; transform-origin: left center; transform: scaleX(0); transition: transform .45s cubic-bezier(.22,.61,.36,1); }
 @media (prefers-reduced-motion: reduce) {
   .apm-bar-fill, .apm-topbar-fill { transition: none; }
 }
-.apm-bar-fill { height: 100%; background: #57d977; border-radius: 5px; }
+.apm-bar-fill { height: 100%; background: #57d977; }
 .apm-bar-fill.apm-warn { background: #e6bd3a; }
 .apm-bar-fill.apm-bad { background: #ff7070; }
 
@@ -111,7 +114,7 @@ a[data-for="tooltip-APM"]::before {
 .apm-topbar-row { display: grid; grid-template-columns: 150px 1fr 64px; gap: .5rem; align-items: center; margin: .3rem 0; font-size: .8rem; }
 .apm-topbar-name { color: #c8d2e0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .apm-topbar-track { position: relative; background: rgba(127,127,127,.18); border-radius: 4px; height: 10px; overflow: hidden; }
-.apm-topbar-fill { height: 100%; border-radius: 4px; }
+.apm-topbar-fill { height: 100%; }
 .apm-topbar-fill.apm-ok { background: #2d6b3a; }
 .apm-topbar-fill.apm-warn { background: #e6bd3a; }
 .apm-topbar-fill.apm-bad { background: #ff7070; }

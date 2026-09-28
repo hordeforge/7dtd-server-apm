@@ -24,7 +24,7 @@ removed in 2.5.0; APM measures and never edits optimizer config).
 
 | Endpoint | Verbs | Required level | Notes |
 |---|---|---|---|
-| `/api/apm` | GET | 0 (admin) | read-only telemetry snapshot |
+| `/api/apm` | GET | 0 (admin) | read-only telemetry snapshot; newest 12 spike records, the panel's row count |
 | `/api/apm` | POST/PUT/DELETE | 0 + not implemented | base handler answers 405 |
 
 Enforcement is not per-handler code: every `AbsRestApi` subclass registers its

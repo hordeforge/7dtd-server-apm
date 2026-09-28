@@ -275,7 +275,14 @@ namespace DtdApmBridge
             sample.unityFrame = UnityEngine.Time.frameCount; sample.unityDeltaMs = UnityEngine.Time.unscaledDeltaTime * 1000.0;
             return sample;
         }
-        static object Snapshot()
+        /// <summary>Rows the dashboard panel's spike table shows. The API
+        /// carries no more than this, so a long spike streak does not push
+        /// 128 full world samples down the wire on every 2 s poll; the
+        /// periodic JSON export keeps the whole ring for audit and compare.</summary>
+        public const int DashboardSpikeRecords = 12;
+
+        /// <param name="spikeLimit">Newest spike records to keep, 0 for all.</param>
+        static object Snapshot(int spikeLimit)
         {
             List<SpikeSample> spikes;
             Metric.Copied[] copies;
@@ -299,6 +306,8 @@ namespace DtdApmBridge
                 copies = new Metric.Copied[_metricCount];
                 for (int i = 0; i < _metricCount; i++) copies[i] = Metrics[i].CopyUnderLock(Deep[i]);
             }
+            // Oldest-first ring, so trimming from the front keeps the newest.
+            if (spikeLimit > 0 && spikes.Count > spikeLimit) spikes.RemoveRange(0, spikes.Count - spikeLimit);
             // Host /proc reads happen outside the lock: a slow read must never
             // block the sim path (the export runs on a ThreadPool thread).
             host = HostSample();
@@ -341,7 +350,7 @@ namespace DtdApmBridge
                 grossAllocBytesPerSecond = (grossAlloc >= 0 && elapsed > 0) ? grossAlloc / elapsed : -1,
             };
         }
-        public static string SnapshotJson() => JsonConvert.SerializeObject(Snapshot());
+        public static string SnapshotJson() => JsonConvert.SerializeObject(Snapshot(DashboardSpikeRecords));
 
         /// <summary>
         /// Host OS metrics from /proc: the bridge runs inside the dedicated
@@ -419,7 +428,7 @@ namespace DtdApmBridge
             string temp = TempFiles.NewTempPath(path);
             try
             {
-                File.WriteAllText(temp, JsonConvert.SerializeObject(Snapshot(), Formatting.Indented));
+                File.WriteAllText(temp, JsonConvert.SerializeObject(Snapshot(0), Formatting.Indented));
                 lock (ExportSwapLock)
                 {
                     TempFiles.Publish(temp, path);

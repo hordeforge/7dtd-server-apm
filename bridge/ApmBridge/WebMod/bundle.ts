@@ -166,10 +166,11 @@ function spark(React: PanelProps["React"], values: Array<number>, color: string,
 }
 
 function budgetBar(React: PanelProps["React"], frac: number, cls: string): unknown {
-  const pct = Math.max(0, Math.min(1, frac)) * 100;
+  const pct = Math.max(0, Math.min(1, frac));
   // Decorative: the adjacent .apm-budget-pct span prints the percentage.
+  // scaleX, not width: the fill animates on the compositor (see styling.css).
   return React.createElement("div", { className: "apm-bar", "aria-hidden": true },
-    React.createElement("div", { className: `apm-bar-fill ${cls}`, style: { width: `${pct.toFixed(1)}%` } }));
+    React.createElement("div", { className: `apm-bar-fill ${cls}`, style: { transform: `scaleX(${pct.toFixed(4)})` } }));
 }
 
 // The dashboard HTTP wrapper may hand us the axios response, the {data: ...}
@@ -662,7 +663,7 @@ function renderTopSections(h: CreateElement, sections: Array<SectionStat>): unkn
         h("span", { className: "apm-topbar-name" }, s.name),
         // Decorative bar; the ms value beside it carries the data.
         h("div", { className: "apm-topbar-track", "aria-hidden": true },
-          h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { width: `${Math.round(frac * 100)}%` } })),
+          h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { transform: `scaleX(${frac.toFixed(4)})` } })),
         h("span", { className: "apm-topbar-val" }, `${fx(p95, 2)} ms`, note === null ? null : sr(h, note)));
     }));
 }
@@ -806,6 +807,11 @@ function renderSectionsSection(
   ];
 }
 
+// Rows the spike table shows, newest first. GET /api/apm caps spikes[] at
+// this same count (Telemetry.DashboardSpikeRecords), so a full ring costs no
+// extra bytes on the wire and the slice below only guards older bridges.
+const SPIKE_ROWS = 12;
+
 function renderSpikesSection(h: CreateElement, spikes: Array<SpikeRecord>): Array<unknown> | null {
   if (spikes.length === 0) {
     return null;
@@ -816,7 +822,7 @@ function renderSpikesSection(h: CreateElement, spikes: Array<SpikeRecord>): Arra
     h("table", { className: "apm-table" },
       h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"),
       h("thead", null, h("tr", null, headers.map((x): unknown => h("th", { key: x, scope: "col" }, x)))),
-      h("tbody", null, [...spikes].reverse().slice(0, 12).map((s, i): unknown =>
+      h("tbody", null, [...spikes].reverse().slice(0, SPIKE_ROWS).map((s, i): unknown =>
         h("tr", { key: i },
           h("td", null, formatUtc(s.utc)),
           h("td", null, fx(s.gmUpdateDurationMs, 1)),

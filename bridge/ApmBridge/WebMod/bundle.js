@@ -96,9 +96,10 @@
         return React.createElement("svg", { className: "apm-spark", width: w, height: h, viewBox: `0 0 ${w} ${h}`, preserveAspectRatio: "none", "aria-hidden": true }, React.createElement("defs", null, React.createElement("linearGradient", { id: gradId, x1: 0, y1: 0, x2: 0, y2: 1 }, React.createElement("stop", { offset: "0%", stopColor: color, stopOpacity: 0.35 }), React.createElement("stop", { offset: "100%", stopColor: color, stopOpacity: 0.02 }))), ...refs, React.createElement("polygon", { points: `0,${h} ${pts} ${w},${h}`, fill: `url(#${gradId})` }), React.createElement("polyline", { points: pts, fill: "none", stroke: color, strokeWidth: 1.5, vectorEffect: "non-scaling-stroke" }), React.createElement("circle", { cx: lastX, cy: lastY, r: 2, fill: color }));
     }
     function budgetBar(React, frac, cls) {
-        const pct = Math.max(0, Math.min(1, frac)) * 100;
+        const pct = Math.max(0, Math.min(1, frac));
         // Decorative: the adjacent .apm-budget-pct span prints the percentage.
-        return React.createElement("div", { className: "apm-bar", "aria-hidden": true }, React.createElement("div", { className: `apm-bar-fill ${cls}`, style: { width: `${pct.toFixed(1)}%` } }));
+        // scaleX, not width: the fill animates on the compositor (see styling.css).
+        return React.createElement("div", { className: "apm-bar", "aria-hidden": true }, React.createElement("div", { className: `apm-bar-fill ${cls}`, style: { transform: `scaleX(${pct.toFixed(4)})` } }));
     }
     // The dashboard HTTP wrapper may hand us the axios response, the {data: ...}
     // envelope, or the bare payload; accept all three.
@@ -456,7 +457,7 @@
             const note = severityNote(p95);
             return h("div", { key: s.name, className: "apm-topbar-row" }, h("span", { className: "apm-topbar-name" }, s.name), 
             // Decorative bar; the ms value beside it carries the data.
-            h("div", { className: "apm-topbar-track", "aria-hidden": true }, h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { width: `${Math.round(frac * 100)}%` } })), h("span", { className: "apm-topbar-val" }, `${fx(p95, 2)} ms`, note === null ? null : sr(h, note)));
+            h("div", { className: "apm-topbar-track", "aria-hidden": true }, h("div", { className: `apm-topbar-fill ${topBarClass(p95)}`, style: { transform: `scaleX(${frac.toFixed(4)})` } })), h("span", { className: "apm-topbar-val" }, `${fx(p95, 2)} ms`, note === null ? null : sr(h, note)));
         }));
     }
     function renderGrid(h, React, g, H, update, gc, world, health) {
@@ -550,6 +551,10 @@
             }))),
         ];
     }
+    // Rows the spike table shows, newest first. GET /api/apm caps spikes[] at
+    // this same count (Telemetry.DashboardSpikeRecords), so a full ring costs no
+    // extra bytes on the wire and the slice below only guards older bridges.
+    const SPIKE_ROWS = 12;
     function renderSpikesSection(h, spikes) {
         if (spikes.length === 0) {
             return null;
@@ -557,7 +562,7 @@
         const headers = ["When (UTC)", "gmUpdate ms", "Tick ms", "Players", "Entities"];
         return [
             h("h3", null, "Recent spikes"),
-            h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"), h("thead", null, h("tr", null, headers.map((x) => h("th", { key: x, scope: "col" }, x)))), h("tbody", null, [...spikes].reverse().slice(0, 12).map((s, i) => h("tr", { key: i }, h("td", null, formatUtc(s.utc)), h("td", null, fx(s.gmUpdateDurationMs, 1)), h("td", null, fx(s.serverTickIntervalMs, 1)), h("td", null, num(objOrEmpty(s.world).players)), h("td", null, num(objOrEmpty(s.world).entities)))))),
+            h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"), h("thead", null, h("tr", null, headers.map((x) => h("th", { key: x, scope: "col" }, x)))), h("tbody", null, [...spikes].reverse().slice(0, SPIKE_ROWS).map((s, i) => h("tr", { key: i }, h("td", null, formatUtc(s.utc)), h("td", null, fx(s.gmUpdateDurationMs, 1)), h("td", null, fx(s.serverTickIntervalMs, 1)), h("td", null, num(objOrEmpty(s.world).players)), h("td", null, num(objOrEmpty(s.world).entities)))))),
         ];
     }
     function renderTransfersSection(h, transfers) {
