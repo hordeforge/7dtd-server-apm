@@ -2380,6 +2380,27 @@ def test_backup_of_an_empty_store_is_not_a_successful_backup(
     assert "no finalized session to back up" in result.stderr
 
 
+def test_backup_names_a_destination_copy_that_is_short_of_a_required_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A session whose manifest never recorded the missing artifact fails no
+    hash check, so the copy reads back "incomplete" rather than invalid. It is
+    still evidence the archive holds is short, and the run must say so instead
+    of reporting a clean copy."""
+    root = tmp_path / "apm"
+    root.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(root))
+    session = _session(root / "session_partial")
+    manifest, _ = audit_session(session)
+    (session / "health.json").unlink()
+    manifest.artifacts = []
+    atomic_json(session / "manifest.json", schema_dict(manifest))
+
+    result = runner.invoke(app, ["backup", str(tmp_path / "backup")])
+    assert "incomplete session_partial" in " ".join(result.stderr.split())
+    assert "1 copied" in " ".join(result.stdout.split())
+
+
 def test_backup_warns_when_the_copy_shares_the_store_filesystem(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

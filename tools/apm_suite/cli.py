@@ -494,6 +494,14 @@ def backup(
         err_console.print(f"[red]INVALID {escape(name)}[/red]")
         for problem in problems:
             err_console.print(f"{' ' * _VERDICT_WIDTH}  {escape(problem)}")
+    # A destination session short of a required document (never recorded, so
+    # no hash check fails) is evidence the archive holds incomplete, and the
+    # run otherwise reports a clean copy. Reported like verify-store's
+    # incomplete verdict, which it is: the same read-only check, same wording.
+    for name in report.incomplete:
+        err_console.print(
+            f"[yellow]incomplete[/yellow] {escape(name)} (required artifact never recorded)"
+        )
     console.print(
         f"backed up {report.backed_up} session(s) to {escape(str(report.destination))}: "
         f"{len(report.copied)} copied, {len(report.unchanged)} already current"
