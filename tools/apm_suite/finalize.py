@@ -84,7 +84,7 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
     def record_manifest() -> None:
         result.audit_valid = _record_manifest(session)
 
-    # Every session ships an integrity manifest (README "Sessions"), and a
+    # Every session ships an integrity manifest (docs/APM.md "Validity"), and a
     # re-finalize rewrites artifacts a previous audit recorded: re-stamp last so
     # the manifest describes the session as it stands after this run.
     stage("manifest", record_manifest, required=False)

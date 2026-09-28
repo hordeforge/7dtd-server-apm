@@ -17,8 +17,8 @@ import sys
 import time
 from pathlib import Path
 
-# Runs under a bare python3 like the host_profiler scripts: resolve the shared
-# path helpers from the repository checkout instead of duplicating defaults.
+# Runs under whatever interpreter invoked it: resolve the shared path helpers
+# from the repository checkout instead of duplicating defaults.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from apm_suite.paths import REPO, apm_root, bridge_mod_dir
 

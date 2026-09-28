@@ -797,8 +797,9 @@ def diagnose_lag(
 
     # allocMBPerSecond is NET heap growth (GetTotalMemory delta); at steady
     # state alloc==collect so it reads ~0 even under heavy churn. The full-GC
-    # count is the direct pause signal, and grossAllocMBPerSecond (bridge
-    # GetTotalAllocatedBytes, monotonic) is the true pressure when available.
+    # count is the direct pause signal, and grossAllocMBPerSecond (the bridge's
+    # monotonic gross-bytes counter, divided by the window) is the true
+    # pressure when available.
     net_heap = _num0(gc.get("allocMBPerSecond"))
     gross = _num0(gc.get("grossAllocMBPerSecond"))
     full_gc = _int0(gc.get("fullCollections"))
@@ -1122,11 +1123,11 @@ def _snapshot_metadata(snapshot: dict[str, Any], mono_alloc: str) -> dict[str, A
         # collection it triggers is a stop-the-world frame hitch.
         alloc_mb_s = (heap_delta / 1048576 / window_s) if window_s > 0 else 0
         collections = int(as_number(gc_window.get("gen2Collections")) or 0)
-        # Gross allocation is the real GC-pause driver. Unity 2022 Mono
-        # lacks GC.GetTotalAllocatedBytes (bridge counter is -1), so the
-        # opt-in mono_alloc probe (Boehm GC_malloc arg0) is the source
-        # on this runtime. Left None when unmeasured so the budget gate
-        # treats it as UNKNOWN, never a healthy zero.
+        # Gross allocation is the real GC-pause driver. The bridge reads it
+        # from Boehm's native GC_get_total_bytes (Unity 2022 Mono lacks the
+        # managed GC.GetTotalAllocatedBytes), so the opt-in mono_alloc probe
+        # below is only the no-bridge fallback. Left None when unmeasured so
+        # the budget gate treats it as UNKNOWN, never a healthy zero.
         gross_bps = as_number(gc_window.get("grossAllocBytesPerSecond"))
         if gross_bps is None:
             # Missing or junk field: fall back to the bridge's own "unmeasured"

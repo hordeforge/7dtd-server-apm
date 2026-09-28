@@ -68,7 +68,7 @@ Interactive flamegraphs
 5. stacks.folded / stacks.annotated.folded
 
 Tags come from tools/host_profiler/annotate_stacks.py (catalog of native→layer labels).
-Pair with csharp_bridge.md for Harmony targets.
+Pair with docs/APM_CS_BRIDGE.md for Harmony targets.
 
 EOF
 echo "flames ready in $OUTDIR"

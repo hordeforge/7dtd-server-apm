@@ -48,8 +48,10 @@ from .session import (
     verify_session,
 )
 
-# Bridge config defaults, mirroring BridgeConfig.cs so both readers of
-# Config/apmbridge.json agree on what an absent or unusable value means.
+# Bridge config bounds, mirroring BridgeConfig.cs. The bridge clamps
+# PeriodicExportSeconds to [0, 3600] and treats 0 as "never export"; this
+# reader keeps 0 as unusable and falls back to the default, so it never keys
+# the monitor's stale flag off a cadence the mod will not produce.
 DEFAULT_BRIDGE_EXPORT_SECONDS = 30.0
 MAX_BRIDGE_EXPORT_SECONDS = 3600.0
 
@@ -60,17 +62,6 @@ scenario_app = typer.Typer(
 )
 app.add_typer(flame_app, name="flame")
 app.add_typer(scenario_app, name="scenario")
-
-
-@app.callback()
-def _pin_stdio_encoding() -> None:
-    """Every command runs with UTF-8 stdout/stderr, whatever LANG says.
-
-    Runs before the command body so a path, hostname, or tool version with a
-    non-ASCII character is printed rather than raising UnicodeEncodeError out
-    of the printer. See apm_suite.io.force_utf8_stdio.
-    """
-    force_utf8_stdio()
 
 
 console = Console()
@@ -154,7 +145,14 @@ def root(
         typer.Option("--version", callback=_version_callback, is_eager=True, help="Show version."),
     ] = False,
 ) -> None:
-    """Host-only APM for 7 Days to Die dedicated servers."""
+    """Host-only APM for 7 Days to Die dedicated servers.
+
+    Every command runs with UTF-8 stdout/stderr, whatever LANG says. The pin
+    happens here, before the command body, so a path, hostname, or tool
+    version with a non-ASCII character is printed rather than raising
+    UnicodeEncodeError out of the printer. See apm_suite.io.force_utf8_stdio.
+    """
+    force_utf8_stdio()
 
 
 @app.command()
@@ -664,9 +662,10 @@ def bridge_export_period(telemetry_dir: Path) -> float:
 
     Read from the mod config beside the telemetry dir (default 30): the
     monitor's stale-read flag must key off the export cadence, not the sample
-    interval, or every fresh-at-cadence sample is flagged stale. The range is
-    the bridge's own (BridgeConfig.PeriodicExportSeconds), so a value the mod
-    would clamp cannot leave the monitor waiting on a read that never comes.
+    interval, or every fresh-at-cadence sample is flagged stale. The upper
+    bound is the bridge's own (BridgeConfig.MaxPeriodicExportSeconds), so a
+    value the mod would clamp cannot leave the monitor waiting on a read that
+    never comes.
     """
     config = telemetry_dir.parent / "Config" / "apmbridge.json"
     try:
@@ -840,7 +839,12 @@ def scenario_run(
         ),
     ] = CapturePreset.STANDARD,
     bot_mode: Annotated[
-        str, typer.Option(help="wander, mixed, demolition, combat, chaos, kite, traverse")
+        str,
+        typer.Option(
+            help="One behaviour for every bot, e.g. traverse, wander, combat, bait, "
+            "demolition, chatty. Passed to loadgen unvalidated; see the mode table in "
+            "docs/LOAD_PROFILE.md. Use --bot-mix for a weighted cohort."
+        ),
     ] = "",
     bot_mix: Annotated[
         str,

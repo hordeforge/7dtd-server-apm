@@ -239,7 +239,7 @@ def sessions_beyond_budget(
 
 TRASH_DIRNAME = ".trash"
 # Per-run loadgen manifests/stats written by `scenario run`; each experiment
-# leaves two small files behind that nothing else ever deletes.
+# leaves two small files behind that only the scenario sweep below deletes.
 SCENARIO_DIRNAME = ".scenario"
 
 
@@ -435,8 +435,9 @@ def purge_stale_scenario_runs(
     window has elapsed.
 
     `scenario run` claims a fresh manifest per invocation (and its stats twin
-    lands beside it), so periodic captures on a 24/7 host accumulate files
-    forever: unlike session_* directories nothing pruned this run directory.
+    lands beside it), so a 24/7 host that runs scenarios accumulates files in
+    this directory forever. Unlike session_* directories, nothing in the
+    session prune pass ever reached it, which is what this sweep covers.
     The same soft-delete clock as the trash applies (APM_PRUNE_GRACE_HOURS);
     with grace 0 every stale file drops immediately. Only the `loadgen_*`
     family is touched; anything else an operator placed there stays.

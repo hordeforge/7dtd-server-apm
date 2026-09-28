@@ -41,9 +41,12 @@ def test_ci_actions_are_pinned_to_commit_shas() -> None:
 
 
 def test_executed_npx_calls_are_version_pinned() -> None:
-    # npx fetches and executes whatever the registry currently serves, so every
-    # invocation in repo scripts must pin package@version. Heredoc bodies are
-    # documentation (e.g. the speedscope hint in OPEN_FLAMES.txt), not runs.
+    # npx and bunx both fetch and execute whatever the registry currently
+    # serves, so every invocation in repo scripts must pin package@version.
+    # bunx is the runner the build actually uses (scripts/build_bridge.sh,
+    # lint-webui.sh, lint-html.sh), so guarding npx alone would leave the real
+    # path uncovered. Heredoc bodies are documentation (e.g. the speedscope
+    # hint in OPEN_FLAMES.txt), not runs.
     script_dirs = [
         REPO / "scripts",
         REPO / "tools" / "host_profiler",
@@ -53,9 +56,11 @@ def test_executed_npx_calls_are_version_pinned() -> None:
     assert scripts, "no shell scripts found"
     unpinned: list[str] = []
     versioned = re.compile(r"[\"']?[A-Za-z0-9._/@-]+@[A-Za-z0-9.$_{}-]+")
-    # A command position: optional indentation/env assignments, then `npx`
-    # (excludes `command -v npx`, echo strings mentioning npx, etc.).
-    invocation = re.compile(r"^\s*(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*npx(?:\s|$)")
+    # A command position: optional indentation/env assignments, then the
+    # runner (excludes `command -v npx`, echo strings mentioning npx, etc.).
+    invocation = re.compile(
+        r"^\s*(?:env\s+)?(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*(?:npx|bunx)(?:\s|$)"
+    )
     for path in scripts:
         body = _strip_shell_heredocs(path.read_text(encoding="utf-8"))
         for lineno, line in enumerate(body.splitlines(), start=1):
@@ -64,5 +69,5 @@ def test_executed_npx_calls_are_version_pinned() -> None:
             if not versioned.search(line):
                 unpinned.append(f"{path.relative_to(REPO)}:{lineno}: {line.strip()}")
     assert not unpinned, (
-        f"npx calls must pin package@version (override vars like TSC_VERSION count): {unpinned}"
+        f"npx/bunx calls must pin package@version (override vars like TSC_VERSION count): {unpinned}"
     )

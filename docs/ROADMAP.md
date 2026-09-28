@@ -11,7 +11,8 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 2. [x] Detect super-linear (O(N^2)) scaling signature across a ramp
 3. [x] Death-spiral detection (tick interval growing monotonically + backlog)
 4. [x] Correlate each GC STW pause to its frame spike by timestamp
-5. [ ] Memory-leak detection (RSS/heap trend regression over long captures)
+5. [ ] Memory-leak detection across a session series (per-capture RSS slope and
+   fd delta already feed the `memory_growth` lag cause; trend them over time)
 6. [ ] Per-thread CPU attribution (which threads burn CPU)
 7. [ ] Main-thread starvation vs worker imbalance classifier
 8. [ ] Idle-vs-loaded baseline delta in every report
@@ -43,14 +44,17 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 30. [ ] Chunk-observer count per client
 31. [ ] Managed thread-pool queue depth
 32. [ ] Boehm GC callback hooks for exact pause boundaries
-33. [ ] Pathfinding queue depth (enqueue/drain/compute)
+33. [ ] Pathfinding queue depth as a time series (the per-window enqueue/drain/
+    compute counts and a backlog estimate already ship as `path_pipeline`)
 34. [x] Per-tick gross-allocation counter (GC_get_total_bytes delta/tick)
 35. [ ] Cut the bridge's own export allocation (observer effect)
 
 ## D. CLI / UX
 36. [x] Milestone capture ramp (`scenario matrix` plan + `scaling` fit)
 37. [ ] `capture --follow` streams metrics during capture
-38. [ ] `compare --attribution` diffs two captures' subsystem shares
+38. [ ] Rank the `compare` attribution diff by significance, so a subsystem
+    share move below the noise floor is not read as a regression (the table
+    itself always ships; there is no `--attribution` flag)
 39. [ ] `watch` alias for monitor
 40. [ ] `capture --auto-alloc` enables alloc probe when GC detected
 41. [ ] Clearer probe-failure messages

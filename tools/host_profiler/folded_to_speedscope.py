@@ -3,7 +3,7 @@
 
 Usage:
   python3 folded_to_speedscope.py stacks.folded -o profile.speedscope.json
-  npx speedscope profile.speedscope.json
+  bunx speedscope profile.speedscope.json
   # or drag-drop onto https://www.speedscope.app/
 """
 
@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any
 
 # apm_suite is resolved from the repository checkout, not the interpreter's
-# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
+# venv: these scripts run under the resolved project interpreter (shell
+# callers go through scripts/lib/python.sh -> SEVENDTD_APM_PYTHON), which is not
+# necessarily this interpreter.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.io import force_utf8_stdio
 

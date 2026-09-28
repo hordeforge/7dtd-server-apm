@@ -10,9 +10,6 @@ tracepoint:block:block_rq_issue
     @start[args.dev, args.sector] = nsecs;
     @issue_bytes = hist(args.bytes);
     @issue_n = count();
-    if (args.rwbs != "") {
-        /* rwbs is char array on some kernels, skip if missing */
-    }
 }
 
 tracepoint:block:block_rq_complete

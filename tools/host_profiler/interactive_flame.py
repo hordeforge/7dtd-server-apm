@@ -18,7 +18,9 @@ import sys
 from pathlib import Path
 
 # apm_suite is resolved from the repository checkout, not the interpreter's
-# venv: these scripts run under a bare python3 (make_flames.sh, perf_record.sh).
+# venv: these scripts run under the resolved project interpreter (shell
+# callers go through scripts/lib/python.sh -> SEVENDTD_APM_PYTHON), which is not
+# necessarily this interpreter.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.io import force_utf8_stdio
 
@@ -82,7 +84,7 @@ HTML = r"""<!DOCTYPE html>
   Click a frame to zoom (or Tab to it and press Enter). Esc resets. Search highlights matches.
   Also open <code>__SPEEDSCOPE_NAME__</code> in
   <a href="https://www.speedscope.app/" target="_blank" rel="noopener">speedscope.app</a>
-  or <code>npx speedscope __SPEEDSCOPE_NAME__</code>
+  or <code>bunx speedscope __SPEEDSCOPE_NAME__</code>
 </footer>
 <script>
 const ROOT = __TREE_JSON__;

@@ -312,9 +312,12 @@ def attribute_snapshot(session: Path) -> dict[str, Any] | None:
 def ranked_section_heats(session: Path) -> dict[str, float | None]:
     """name -> per-call heat (ms) from csharp_bridge.json's ranked sections.
 
-    Single parser for the budget gate and session compare so their field
-    fallback chains cannot drift (they had: one fell back score->p95->avgMs,
-    the other score->avgMs). `score` is what section_rank wrote (p95 preferred,
+    Single parser for the csharp_bridge.json fallback chain, so the budget
+    gate and session compare cannot drift on it (they had: one fell back
+    score->p95->avgMs, the other score->avgMs). compare additionally re-reads
+    the raw snapshot files with its own p95Ms->avgMs chain, which is why this
+    function is not the only place a section duration is resolved.
+    `score` is what section_rank wrote (p95 preferred,
     else avgMs), so the raw p95/avgMs keys only matter for hand-made documents;
     a legitimate 0 stays 0 instead of falling through to the next field.
     The value is None when an entry carries no parseable duration - UNKNOWN,
@@ -692,8 +695,9 @@ def build_playbook(hits: list[dict[str, Any]], top_sections: list[dict[str, Any]
     lines = []
     if not hits:
         lines.append(
-            "No evidence cleared the bridge thresholds. Install the standalone APM bridge, run "
-            "`APM bridge DeepMode` + load (`7dtd-server-apm scenario run`), re-capture, re-run this tool."
+            "No evidence cleared the bridge thresholds. Install the standalone APM bridge, set "
+            "`DeepMode` in Config/apmbridge.json, `apm reload`, restart the server, run load "
+            "(`7dtd-server-apm scenario run`), re-capture, re-run this tool."
         )
         if top_sections:
             lines.append(

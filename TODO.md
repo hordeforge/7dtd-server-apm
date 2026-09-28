@@ -183,7 +183,7 @@ raw evidence.
 - R79: compare surfaces worst STW-pause regression (stw_worst_ms_a/b) alongside gross alloc + late ticks, so a GC-pause change between two sessions is visible in the compare markdown.
 - R80: scenario preset help clarifies forensic = mono_alloc gross-alloc + STW attribution for GC-lag diagnosis; bot-mode help lists kite/traverse.
 - R81: README gains a "Measured bottleneck findings" section - the validated "laggy without CPU" conclusion (77% headroom, 321ms GC STW freezes, 12.5 MB/s gross churn, PooledBinaryWriter reflection + tile-entity + pathfinding alloc sources, linear per-entity tick cost, chunk-burst-not-steady) with the lever order. This is the user-facing deliverable answering the core goal.
-- R82: added parser-robustness tests (CLAUDE.md "fuzz any parser") - _gc_layer and build_summary net parse survive empty/truncated/malformed/garbage probe output without raising, returning safe defaults. 39 tests pass.
+- R82: added parser-robustness tests (AGENTS.md "Fuzz parsers, serializers, decoders, and every handler of untrusted or external input") - _gc_layer and build_summary net parse survive empty/truncated/malformed/garbage probe output without raising, returning safe defaults. 39 tests pass.
 - R83: END-TO-END INTEGRATION PROOF via `scenario run --preset forensic` (15 bots, zombieBoe x3/player, 20s warmup): full pipeline (loadgen launch -> warmup -> zombie spawn -> forensic capture with all probes -> finalize -> diagnosis) works in ONE command. Output: verdict "gc_pauses; chunk_bandwidth", profile "spike-driven: 84.1% headroom, lag is bursty GC", gross alloc 10.19 vs net 0.58 MB/s, STW 31/58ms. The toolchain correctly diagnoses "laggy without CPU = GC" automatically.
 - R84: bridge version 2.0.0 -> 2.1.0 (gross-alloc GetTotalAllocatedBytes counter + tile-entity hooks); rebuilt+installed. COMPATIBILITY.md documents the gross-alloc measurement path (GetTotalAllocatedBytes absent in Unity 2022 Mono -> mono_alloc GC_malloc probe; STW via GC_stop_world/GC_start_world).
 - R85: monitor flags stale bridge reads ("[bridge Ns old]") when the snapshot is older than 1.5x the sample interval - the bridge exports every 30s (PeriodicExportSeconds), so faster polling would otherwise show stale GC/tick data as live.
@@ -256,8 +256,9 @@ ms/entity/tick -> ~80 ms/tick at 1000 entities).
   manager), a stream distinct from the per-player trickle. `--horde-every-ms`/
   `--horde-waves` on loadgen + scenario. Verified both ambient + horde tasks
   start with the full mixed entity list.
-- R106: canonical profile - plans/profile.canonical.json (100/250/500-player
-  scale ladder, forensic capture) + docs/LOAD_PROFILE.md. Mixes zombies + animals
+- R106: canonical profile - plans/profile.canonical.json (the 100/250/500-player
+  scale ladder lives in plans/profile.scale-ladder.json; forensic capture) +
+  docs/LOAD_PROFILE.md. Mixes zombies + animals
   (predator/prey/vulture) + zombieDemolition (explosions) + vehicles + junk drone
   + wandering hordes + the bot mix. Covers chunk streaming, AI/pathfinding, animal
   AI, explosions, falling blocks/water, block updates, vehicles, drones, GC churn,
@@ -296,6 +297,9 @@ ms/entity/tick -> ~80 ms/tick at 1000 entities).
 - R112: THE canonical profile = plans/profile.canonical.json single fixed step
   `canonical-v1` (seed 20240717, 50 clients, 90s warmup, 120s window, forensic,
   reset_bridge, the mix + mixed ambient + wandering hordes, max_dynamite 60).
+  SUPERSEDED: the file now holds one step `canonical-heavy-v2` (64 clients, 150 s
+  window, max_dynamite 80, actions 8000); the 50-client baseline is
+  `tier-moderate` in plans/profile.tiers.json. See docs/LOAD_PROFILE.md.
   Scale ladder split to plans/profile.scale-ladder.json (25/50/100, same seed).
   docs/LOAD_PROFILE.md rewritten to lead with the pinned-knob table + the
   reproducible run protocol (reset_world --start -> campaign).
@@ -347,7 +351,7 @@ ms/entity/tick -> ~80 ms/tick at 1000 entities).
 
 ## Adversarial code review (10 rounds) + super-linear detection
 
-- Feature batch first: #3 saturation/death-spiral cause (verdict "SATURATED (X TPS)" when tick>=150ms + >=90% late); #12 grossAllocKBPerTick; #2/#36 super-linear detector (analysis/scaling.py log-log fit of section cost vs load) + `apm scaling` command; roadmap in docs/ROADMAP.md.
+- Feature batch first: #3 saturation/death-spiral cause (verdict "SATURATED (X TPS)" when tick>=150ms + >=90% late); #12 grossAllocKBPerTick; #2/#36 super-linear detector (analysis/scaling.py log-log fit of section cost vs load) + `7dtd-server-apm scaling` command; roadmap in docs/ROADMAP.md.
 - Review R-fixes (verified each finding, dropped false positives):
   - report.py: off-CPU bucket regex was DEAD (expected raw "1000" but bpftrace prints "[1K,2K)"); fixed to match K/M/G buckets (>= ~1ms). The +30 heuristic never fired before.
   - cli.py scenario_run: loadgen subprocess LEAKED if warmup/rally raised (Popen before the try/finally); moved warmup+rally inside try. Added --rally-at validation (crashed on bad input).
@@ -462,7 +466,7 @@ Wave 8 (bridge lifecycle+reflection / loadgen state-machine deep / report+HTML g
 - Sections table: substring filter box + clickable sortable column headers.
 - Leak-signal shading: GC gen2/s and heap cells go amber when the window tail averages >1.2x the head (climbing), using the same client-side history.
 - Panel stays dependency-free (React.createElement, runtime-provided React hooks) and read-only (WebApi is GET-only admin; no mutating controls added). node --check passes; dist ships the updated WebMod; bridge build clean.
-- R26 (2026-07-18): ran both scale ladders, closing the pending ladder/attribution items above. PLAYER-scale fit (15->498 players, no zombies, `apm scaling --by players`): network layer is super-linear - `ConnectionManager.Update` O(N^2.27) and `NetEntityDistribution.OnUpdateEntities` O(N^2.26) per call; entity AI sub-linear (confounded - no zombies spawned). ENTITY/zombie-scale fit (players held at 16, zombies 114->452 via `plans/scale_ladder.py`, `apm scaling --by entities`): entity AI is LINEAR - `World.TickEntities` O(N^1.13) per call; NO super-linear section by entities; `ConnectionManager.Update` sub-linear (0.09) in entities (player-driven). So two distinct walls: player=network super-linear, zombie=AI linear-volume. Also confirmed entity sim is observer-gated (0 players -> entityAlives=0, TickEntities ~0.005 ms/call, ~415 zombies persist dormant). Zombie population plateaus ~450-500 (scout despawn). Bridge fix this session: dropped `NetConnectionSimple.taskSerialize` from instrumentation (long-lived writer-thread task reported 600s+ lifetime, swamped attribution) + added a 30s per-sample drop guard. Full writeup: 7dtd-server-optimizer/docs/measured-scaling.md; optimizer OPTIMIZATION_CANDIDATES.md 4b/4d updated with exponents. Still deferred: A2 path-admission + TickEntity-stride before/after prototypes; reaching a true 1000-player capture (connect-pacing + host limits).
+- R26 (2026-07-18): ran both scale ladders, closing the pending ladder/attribution items above. PLAYER-scale fit (15->498 players, no zombies, `7dtd-server-apm scaling --by players`): network layer is super-linear - `ConnectionManager.Update` O(N^2.27) and `NetEntityDistribution.OnUpdateEntities` O(N^2.26) per call; entity AI sub-linear (confounded - no zombies spawned). ENTITY/zombie-scale fit (players held at 16, zombies 114->452 via `plans/scale_ladder.py`, `7dtd-server-apm scaling --by entities`): entity AI is LINEAR - `World.TickEntities` O(N^1.13) per call; NO super-linear section by entities; `ConnectionManager.Update` sub-linear (0.09) in entities (player-driven). So two distinct walls: player=network super-linear, zombie=AI linear-volume. Also confirmed entity sim is observer-gated (0 players -> entityAlives=0, TickEntities ~0.005 ms/call, ~415 zombies persist dormant). Zombie population plateaus ~450-500 (scout despawn). Bridge fix this session: dropped `NetConnectionSimple.taskSerialize` from instrumentation (long-lived writer-thread task reported 600s+ lifetime, swamped attribution) + added a 30s per-sample drop guard. Full writeup: 7dtd-server-optimizer/docs/measured-scaling.md; optimizer OPTIMIZATION_CANDIDATES.md 4b/4d updated with exponents. Still deferred: A2 path-admission + TickEntity-stride before/after prototypes; reaching a true 1000-player capture (connect-pacing + host limits).
 
 ## Residual (V3.1.0, 2026-08-03)
 

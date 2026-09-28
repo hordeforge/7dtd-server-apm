@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import io
 import json
 import os
@@ -633,7 +634,7 @@ def test_stdout_stays_utf8_under_a_c_locale(
     Rich writes straight to the text stream and does not guard, so without
     the CLI's encoding pin the first non-ASCII character a command prints
     raises UnicodeEncodeError and the operator sees a traceback instead of
-    the report. Both streams are pinned at the command entry point.
+    the report.
     """
     out_buffer = io.BytesIO()
     err_buffer = io.BytesIO()
@@ -651,6 +652,22 @@ def test_stdout_stays_utf8_under_a_c_locale(
     written = out_buffer.getvalue().decode("utf-8")
     assert f"{session}\n" in written
     assert written.endswith("café\n")
+
+
+def test_the_typer_callback_runs_the_encoding_pin() -> None:
+    """The app must have exactly one callback, and it must pin the streams.
+
+    Typer keeps a single registered callback slot and a second @app.callback()
+    overwrites the first, so a pin parked on its own decorator is dead code
+    that reads exactly like a live entry point. This asserts the pin is
+    reachable from the registered callback every command actually goes through.
+    """
+    from apm_suite import cli as cli_module
+
+    assert cli_module.app.registered_callback is not None
+    assert cli_module.app.registered_callback.callback is cli_module.root
+    source = inspect.getsource(cli_module.root)
+    assert "force_utf8_stdio" in source, "the root callback no longer pins stdio"
 
 
 def test_doctor_json_stdout_is_machine_readable() -> None:

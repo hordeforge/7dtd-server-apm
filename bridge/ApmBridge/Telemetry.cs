@@ -30,11 +30,12 @@ namespace DtdApmBridge
             if (sorted.Length == 0) return 0;
             return sorted[(int)Math.Min(sorted.Length - 1, Math.Round((p / 100.0) * (sorted.Length - 1)))];
         }
-        // Two-phase snapshot so the ~150-200 Array.Sorts across all metrics run
-        // OUTSIDE the global Gate lock: Copy under the lock is a cheap memcpy; Build
-        // (sorts + object shaping) happens lock-free on the exporting thread, so the
-        // sim thread's Record/BeginFrame never wait on percentile math (a ms-scale
-        // self-inflicted hitch every export period on a 24/7 server).
+        // Two-phase snapshot so the Array.Sorts across all metrics (bounded by
+        // MaxSections) run OUTSIDE the global Gate lock: Copy under the lock is a
+        // cheap memcpy; Build (sorts + object shaping) happens lock-free on the
+        // exporting thread, so the sim thread's Record/BeginFrame never wait on
+        // percentile math (a ms-scale self-inflicted hitch every export period on
+        // a 24/7 server).
         public sealed class Copied
         {
             public string Name; public long Calls; public double TotalMs, MaxMs, LastMs;
@@ -53,8 +54,10 @@ namespace DtdApmBridge
                 name = c.Name, calls = c.Calls, avgMs = c.Calls == 0 ? 0 : c.TotalMs / c.Calls,
                 lastMs = c.LastMs, maxMs = c.MaxMs, p50Ms = Percentile(c.Ring, 50),
                 p95Ms = Percentile(c.Ring, 95), p99Ms = Percentile(c.Ring, 99), totalMs = c.TotalMs,
-                // Sampled 1-in-DeepSampleRate; scale calls/totalMs by the rate for
-                // attribution. Per-call stats (avg/percentiles) are unbiased.
+                // Sampled 1-in-DeepSampleRate: calls and totalMs are the raw sampled
+                // totals, and the host scales them by measurement.deepSampleRate
+                // (apm_suite.analysis.bridge) before summing them into subsystems.
+                // Per-call stats (avg/percentiles) are unbiased either way.
                 deep = c.Deep
             };
         }
@@ -295,8 +298,8 @@ namespace DtdApmBridge
             return sample;
         }
         /// <summary>Rows the dashboard panel's spike table shows. The API
-        /// carries no more than this, so a long spike streak does not push
-        /// 128 full world samples down the wire on every 2 s poll; the
+        /// carries no more than this, so a long spike streak does not push a
+        /// full ring of world samples down the wire on every 2 s poll; the
         /// periodic JSON export keeps the whole ring for audit and compare.</summary>
         public const int DashboardSpikeRecords = 12;
 

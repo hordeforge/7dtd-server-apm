@@ -62,8 +62,8 @@ Every bridge REST class must keep an explicit all-zero
 `DefaultMethodPermissionLevels` override; `test_bridge_build_surface.py` fails
 otherwise so widening access cannot happen by silently dropping a default.
 The panel JS is TypeScript (`WebMod/bundle.ts`), compiled to `bundle.js` by
-the version-pinned `npx` TypeScript path inside `make bridge-build`; do not
-hand-edit the generated bundle. Node.js/npm is required, but no global `tsc`
+the version-pinned `bunx` TypeScript path inside `make bridge-build`; do not
+hand-edit the generated bundle. Bun is required, but no global `tsc`
 installation is needed.
 
 ### Response contract

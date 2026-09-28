@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-# Same bare-python3 contract as scale_ladder.py: shared path helpers from the
+# Same checkout path bootstrap as scale_ladder.py: shared path helpers from the
 # checkout so SEVENDTD_APM_DIR is honored exactly like the CLI honors it.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from apm_suite.paths import apm_root

@@ -71,7 +71,6 @@ fi
 if [[ -s "$OUTDIR/perf.script" ]]; then
   "$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/stackcollapse_perf.py" "$OUTDIR/perf.script" >"$OUTDIR/stacks.folded" || true
   if [[ -s "$OUTDIR/stacks.folded" ]]; then
-    chmod +x "$ROOT/tools/host_profiler/make_flames.sh"
     "$ROOT/tools/host_profiler/make_flames.sh" "$OUTDIR" "7DTD pid=$PID CPU" || true
   fi
 fi

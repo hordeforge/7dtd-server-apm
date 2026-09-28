@@ -39,7 +39,7 @@ RULES: list[dict[str, Any]] = [
             "EAIManager.Update",
         ],
         "mod_apis": [
-            "EfficientServer: APM bridge DeepMode → find which section correlates with GC",
+            "EfficientServer: bridge `DeepMode` in Config/apmbridge.json → find which section correlates with GC",
             "Harmony: remove allocs in Prefix/Postfix on listed targets",
             "Pool List/Dictionary; avoid string.Format in entity tick",
             "XML: reduce entity count (MaxSpawnedZombies) to cut GC volume",
@@ -87,7 +87,7 @@ RULES: list[dict[str, Any]] = [
             "EfficientServer AiLodPatch / UpdateTasksLodPatch (aiActiveScale, far skip)",
             "loadgen shutdown after tests; lower MaxSpawnedZombies in serverconfig",
             "Harmony postfix EntityActivityUpdate for custom LOD",
-            "APM bridge DeepMode during horde to confirm EaiManagerUpdate cost",
+            "bridge `DeepMode` (Config/apmbridge.json) during horde to confirm EaiManagerUpdate cost",
         ],
     },
     {

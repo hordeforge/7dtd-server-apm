@@ -57,7 +57,8 @@ def force_utf8_stdio() -> None:
         except ValueError as error:
             # Already-detached or already-read stream: reconfigure refuses.
             # Its own encoding still applies, and a warning written through
-            # that same stream could raise again, so it goes out as bytes.
+            # the stream that just failed could raise again, so it goes out
+            # as bytes through stderr's buffer instead.
             _write_bytes(
                 getattr(sys.stderr, "buffer", sys.stderr),
                 f"WARNING: cannot pin stdio to UTF-8: {error}\n".encode(),

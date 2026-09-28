@@ -118,10 +118,12 @@ perf data, stderr, command lines, and executable paths, and scrub the host home
 prefix from JSON, JSONL, bpftrace output, flamegraph SVG, and other text
 artifacts. Event timelines carry only extracted bridge metrics, never raw
 console text (the telnet stream can contain player names, IPs, and Steam IDs).
-Exclusion is by what a file holds, not by extension: an operator-attached
-`app/efficientserver_log_excerpt.txt` is a slice of the same server log and
-stays out of bundles for the same reason `app/bridge.jsonl` does. Its section
-timings survive in `csharp_bridge.json`.
+Exclusion is by file name, not by extension: `app/bridge.jsonl`, `perf.data`,
+an operator-attached `app/efficientserver_log_excerpt.txt` (a slice of the same
+server log), and the source `manifest.json` all stay out of bundles. The
+excerpt's section timings survive in `csharp_bridge.json`. Any other text file
+an operator drops into a session is bundled, so check the archive before
+sharing.
 Inspect a bundle before sharing because game-derived artifacts may still
 contain player or world data.
 
@@ -192,7 +194,9 @@ but it does not replicate or back up the store by itself.
   still exits `0` if it ran with some files, and a store that stops growing is
   indistinguishable from a quiet server. Watch the store, not the job: alert on
   the age of the newest `session_*` directory and on a stalled `mtime` for
-  `<store>/index.html`, both of which `verify-store` lists.
+  `<store>/index.html`. `verify-store` confirms the sessions and the store
+  entries are intact, but reports no ages, so age the store yourself (for
+  example `ls -lt --time=ctime ~/.local/share/7dtd-server-apm | head`).
 
 ## Related docs
 

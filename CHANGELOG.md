@@ -36,6 +36,25 @@ to 2.3.0 and 2.2.4 stays skipped.
 
 ## Unreleased - host CLI
 
+- Export: `app/efficientserver_log_excerpt.txt` now stays out of a support
+  bundle. The exclusion list named it in `docs/APM.md` but the code excluded
+  `FINALIZE.txt`, which nothing in the repository has ever produced, so an
+  operator-attached slice of the same server log as `app/bridge.jsonl` was
+  scrubbed and shipped. Its section timings survive in `csharp_bridge.json`.
+- Export: a `meta.json` `utc` the session cannot spell no longer aborts the
+  export with a bare `ValueError` traceback after the evidence has already
+  been written into the bundle. The bundle manifest falls back the same way
+  the audit does, and the malformed value is still reported.
+- Correctness: the UTF-8 stdout/stderr pin actually runs again. Typer keeps a
+  single registered callback slot, and a second `@app.callback()` overwrote
+  the one that called `force_utf8_stdio`, so every command ran under the
+  process locale despite `tools/README.md` promising the pin. The pin moved
+  into the `root` callback and a test now fails if it is removed or if a
+  second callback shadows it.
+- Supply chain: the version-pinning guard for executed JS toolchain calls
+  covers `bunx` as well as `npx`. The build, `lint-webui.sh`, and `lint-html.sh`
+  all fetch and run through `bunx`, so guarding `npx` alone left the path
+  actually used uncovered; the guard now matches both runners.
 - Audit: `manifest.json` window stamps now describe the capture instead of the
   machine that read it. `started_at`/`ended_at` come from `meta.json`
   (`utc`, `utc + seconds`), and an export bundle carries the recorded stamps
@@ -181,9 +200,13 @@ to 2.3.0 and 2.2.4 stays skipped.
 
 ## Unreleased - bridge mod
 
-- (pending)
+No pending changes.
 
 ## 3.0.0 - bridge mod - 2026-09-28
+
+Major bump for one breaking config change; every other entry leaves the
+snapshot contract readable as before, so per the rule above they do not
+force a schema bump.
 
 - Config (breaking, 3.0.0): `Config/apmbridge.json` no longer accepts an
   unknown key. A misspelled `DeepMode` used to load as the default and leave

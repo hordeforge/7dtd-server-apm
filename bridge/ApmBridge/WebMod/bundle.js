@@ -2,9 +2,10 @@
 // 7dtd-server-apm-bridge WebMod (TypeScript source).
 // Compiled to bundle.js by `tsc -p WebMod/tsconfig.json` (wired into
 // scripts/build_bridge.sh). The dashboard loads /webmods/7dtd-server-apm-bridge/bundle.js
-// and reads window["7dtd-server-apm-bridge"]: routes render as direct sidebar entries,
-// settings as Settings tabs (both registered unconditionally; the panels
-// render their auth-required state when the session lacks admin rights).
+// and reads window["7dtd-server-apm-bridge"]: the one route renders as a direct
+// sidebar entry, and no Settings tab is registered (settings is empty). The
+// route is registered unconditionally and renders its auth-required state when
+// the session lacks admin rights.
 // Do not hand-edit bundle.js; regenerate from this file.
 //
 // The whole body is an IIFE on purpose: webmod bundles are plain <script> tags
@@ -665,8 +666,8 @@
     // item and every `settings` entry as a tab under Settings, unconditionally.
     // The session cookie is set HttpOnly (see ../7dtd-engine-research/docs), so it
     // is invisible to document.cookie and cannot gate registration here. Register
-    // both panels always: while logged out they poll once, get a 403, and render
-    // their auth-required state; the dashboard reloads the page after login.
+    // the route always: while logged out it polls once, gets a 403, and renders its
+    // auth-required state; the dashboard reloads the page after login.
     const webMod = {
         about: "Live, low-overhead managed telemetry from 7dtd-server-apm-bridge.",
         routes: { "APM": ApmPanel },

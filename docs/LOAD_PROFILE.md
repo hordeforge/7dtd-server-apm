@@ -33,7 +33,8 @@ knob is pinned so two runs are comparable.
 ## Tier ladder (`plans/profile.tiers.json`)
 
 For scaling analysis and regime coverage, a seed-locked ladder (run with
-`apm scenario matrix plans/profile.tiers.json`, then `apm scaling`):
+`7dtd-server-apm scenario matrix plans/profile.tiers.json`, then
+`7dtd-server-apm scaling`):
 
 | Tier | clients | zombies | Regime | MaxPlayers |
 |------|--------:|---------|--------|-----------:|
