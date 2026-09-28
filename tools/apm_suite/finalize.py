@@ -64,7 +64,7 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
         print(f">> finalize: {name}")
         try:
             action()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- a stage failure must not abort the rest
             traceback.print_exc()
             if required:
                 result.failed_stages.append(name)

@@ -36,6 +36,18 @@ to 2.3.0 and 2.2.4 stays skipped.
 
 ## Unreleased - host CLI
 
+- Tooling: a `.pre-commit-config.yaml` runs ruff, `ruff format --check`, mypy,
+  and shellcheck at commit time, and the WebMod, HTML, and pytest gates at
+  push time. Every hook calls the same `make` target CI runs, so the local and
+  remote rule sets cannot drift.
+- Tooling: ruff gained `SLOT`, `LOG`, `BLE`, and `ERA`. The only findings were
+  `finalize`'s stage wrapper, which catches every exception on purpose and
+  now says so on the line, and a section-nesting comment in
+  `analysis/bridge.py` that read as commented-out code and is now respelled as
+  prose.
+- Tooling: mypy gained `mutable-override`, `narrowed-type-not-subtype`, and
+  `unused-awaitable`, all clean across `tools/`, `scripts/`, and `plans/`.
+
 - Export: `app/efficientserver_log_excerpt.txt` now stays out of a support
   bundle. The exclusion list named it in `docs/APM.md` but the code excluded
   `FINALIZE.txt`, which nothing in the repository has ever produced, so an

@@ -1,0 +1,67 @@
+# Local gate. Every hook shells out to a Makefile target rather than
+# restating a command, so the commit-time check and CI's `make check-ci` can
+# never drift into two rule sets. `language: system` keeps pre-commit from
+# provisioning its own analyzers: the versions are the ones `uv sync --locked`
+# and the pinned shellcheck/oxlint/tsc installs resolve, which is also what CI
+# runs.
+#
+# Commit-time hooks are the fast always-available gates. The two that need
+# tools a contributor may not have (bunx + tsc for the WebMod, java + vnu for
+# rendered HTML) and the pytest suite are pre-push, so a missing optional
+# toolchain never blocks a commit while still blocking a push.
+#
+# bpftrace validation stays out of both: it needs a host kernel, which neither
+# a developer's laptop nor a runner has. `make check-bt` is the only way to run
+# it.
+#
+#   pre-commit install
+#   pre-commit run --all-files   # what `make check-ci` covers, locally
+default_install_hook_types: [pre-commit]
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-check
+        name: ruff check (make lint)
+        entry: make lint
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: ruff-format
+        name: ruff format --check (make format-check)
+        entry: make format-check
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: mypy
+        name: mypy strict (make typecheck)
+        entry: make typecheck
+        language: system
+        pass_filenames: false
+        types: [python]
+      - id: shellcheck
+        name: shellcheck (make lint-shell)
+        entry: make lint-shell
+        language: system
+        pass_filenames: false
+        types: [shell]
+      - id: webui
+        name: tsc + oxlint + bundle freshness (make lint-webui)
+        entry: make lint-webui
+        language: system
+        pass_filenames: false
+        files: ^bridge/ApmBridge/WebMod/|^scripts/lint-webui\.sh$|^scripts/build_bridge\.sh$
+        stages: [pre-push]
+      - id: html
+        name: Nu HTML checker (make lint-html)
+        entry: make lint-html
+        language: system
+        pass_filenames: false
+        files: \.html$|jinja2?$|\.j2$
+        stages: [pre-push]
+      - id: test
+        name: pytest + version gate (make test)
+        entry: make test
+        language: system
+        pass_filenames: false
+        types: [python]
+        stages: [pre-push]

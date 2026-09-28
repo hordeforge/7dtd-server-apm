@@ -33,11 +33,16 @@ Workspace root guide: [`hordeforge/.github` MODDING_BEST_PRACTICES.md](https://g
 uv sync
 uv run 7dtd-server-apm doctor
 make check                 # ruff, shellcheck, html/webui lint, format, mypy, pytest, bpftrace checks
+pre-commit install         # commit-time ruff, format, mypy, shellcheck; pre-push adds webui/html/pytest
 make bridge-build
 make bridge-install DS="/path/to/7 Days to Die Dedicated Server"
 make bridge-uninstall
 make clean
 ```
+
+The hooks in `.pre-commit-config.yaml` shell out to the same `make` targets CI
+runs, so there is no second rule set to keep in sync. Add a check to the
+Makefile, not to the hook file.
 
 ## Main CLI
 

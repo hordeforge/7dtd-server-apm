@@ -42,7 +42,8 @@ REQUIRED_LAYER = {rule_id: gate[0] for rule_id, gate in SIGNAL_GATES.items()}
 # bridge's deepSampleRate before summing.
 # Additive buckets use the outermost, non-sampled section of each call chain
 # so nested inclusive times are not double counted; the sampled inner chain
-# (TickEntity > OnUpdateEntity > OnUpdateLive > updateTasks > MoveHelper/paths)
+# (TickEntity, OnUpdateEntity, OnUpdateLive, updateTasks, MoveHelper/paths,
+# each nested in the one before it)
 # is reported separately as a drill-down.
 SUBSYSTEMS: dict[str, tuple[str, ...]] = {
     "entity_tick": (

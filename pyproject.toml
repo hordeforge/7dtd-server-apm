@@ -82,10 +82,17 @@ src = ["tools"]
 # zero violations: every suppression must already name its rule.
 # C4, PIE, ISC, EXE and the full RUF set joined 2026-09-28 after the fixes they
 # revealed landed; S (bandit) joined the same day, with only the four rules the
-# tool's own contract cannot satisfy carved out below.
+# tool's own contract cannot satisfy carved out below. SLOT and LOG joined
+# 2026-09-28 with zero violations: SLOT bans a mutable __slots__ attribute and
+# str subclasses that __init__ never sees, LOG bans the direct
+# logging.getLogger instantiation and the false-literal log calls.
+# BLE (blind except) and ERA (commented-out code) joined the same day with one
+# finding each: finalize's stage wrapper catches everything on purpose and
+# carries a scoped noqa, and the section-nesting prose in analysis/bridge.py
+# was respelled so it no longer reads as a commented-out chain.
 select = [
   "E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RET", "W", "DTZ", "PLE", "YTT", "PGH",
-  "C4", "PIE", "ISC", "EXE", "RUF", "S",
+  "C4", "PIE", "ISC", "EXE", "RUF", "S", "SLOT", "LOG", "BLE", "ERA",
 ]
 ignore = [
   "E501", # Formatter cannot wrap embedded HTML, regexes, and generated snippets safely.
@@ -126,6 +133,15 @@ enable_error_code = [
   "truthy-bool",
   "redundant-expr",
   "unimported-reveal",
+  # Added 2026-09-28, all three verified clean across tools/, scripts/, plans/:
+  # mutable-override rejects a read-write override of a read-only base member
+  # (a frozen dataclass field, an abstract property), narrowed-type-not-subtype
+  # catches a branch that narrows to a type its declared type cannot hold, and
+  # unused-awaitable names a coroutine created where a plain function was
+  # expected, which mypy otherwise reports only at the first await.
+  "mutable-override",
+  "narrowed-type-not-subtype",
+  "unused-awaitable",
 ]
 
 [tool.pytest.ini_options]
