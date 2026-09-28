@@ -104,6 +104,12 @@ make bridge-build
 make bridge-install
 ```
 
+`make bridge-install` upgrades in place: shipped files that a later release
+dropped are removed from the mod folder, and `Config/apmbridge.json` is never
+overwritten. `make bridge-uninstall` removes the mod folder but moves that
+config to `Mods/7dtd-server-apm-bridge-config.json` first, since the release
+zip ships only the `.example` and the tuned settings cannot be regenerated.
+
 Restart the dedicated server, then run `apm capabilities`, `apm status`, or
 `apm dump`. JSON is written under
 `Mods/7dtd-server-apm-bridge/telemetry/` using `7dtd.apm.app.v3`.

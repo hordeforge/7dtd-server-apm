@@ -67,7 +67,17 @@ bridge-install:
 	chmod +x scripts/build_bridge.sh scripts/install_bridge.sh
 	SEVENDTD_DS_DIR="$(DS)" ./scripts/install_bridge.sh
 bridge-uninstall:
+	@# The tuned config is the one file in the mod folder the operator cannot
+	@# regenerate: the release zip ships apmbridge.json.example, not a live
+	@# config. Move it beside the mod dir and print where it went instead of
+	@# letting rm -rf take the settings with the code.
+	@cfg="$(DS)/Mods/7dtd-server-apm-bridge/Config/apmbridge.json"; \
+	if [ -f "$$cfg" ]; then \
+	  mv -f "$$cfg" "$(DS)/Mods/7dtd-server-apm-bridge-config.json"; \
+	  echo "config kept -> $(DS)/Mods/7dtd-server-apm-bridge-config.json"; \
+	fi
 	rm -rf "$(DS)/Mods/7dtd-server-apm-bridge"
+	@echo "Uninstalled. Reinstall, then move the saved config back to Mods/7dtd-server-apm-bridge/Config/apmbridge.json to keep your settings."
 package:
 	chmod +x scripts/build_bridge.sh scripts/package.sh
 	./scripts/package.sh

@@ -26,6 +26,17 @@ to 2.3.0 and 2.2.4 stays skipped.
   bytes. A `meta.json` with no usable `utc` records `started_at: null` plus a
   warning; it no longer stamps the auditing host's wall clock as the capture
   start.
+- Packaging: the sdist now has an explicit include list. Hatchling's default
+  shipped the whole checkout (docs, plans, bridge sources, shell collectors);
+  the sdist exists to build the wheel, which carries `apm_suite` alone.
+- Packaging: `[project.urls]` gained `Homepage`, `Issues`, and `Changelog`.
+- Packaging: `make bridge-install` now prunes shipped files that the new build
+  no longer produces, so a dropped or renamed WebMod asset cannot linger in
+  `Mods/` and keep being served. `Config/` is never pruned.
+- Packaging: `make bridge-uninstall` moves the tuned
+  `Config/apmbridge.json` to `Mods/7dtd-server-apm-bridge-config.json` before
+  removing the mod folder, instead of deleting settings that the release zip
+  only ships as a `.example`.
 - Packaging: the build backend is now bounded to one major
   (`hatchling>=1.27,<2`). It is the one dependency `uv.lock` cannot hash-pin,
   because PEP 517 build isolation resolves it outside the lock on every
