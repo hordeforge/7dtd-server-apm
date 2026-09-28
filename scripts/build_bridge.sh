@@ -14,6 +14,8 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [[ -n "$SOURCE_DATE_EPOCH" ]] || unset SOURCE_DATE_EPOCH
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/tool_versions.sh"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/home.sh"
 # global.json names the SDK the release DLL is compiled with; the muxer only
 # warns when the pin is unmet, so select a matching SDK explicitly and fail loud
 # when none is installed.
@@ -23,7 +25,13 @@ dotnet_use_pinned_sdk "$ROOT" || exit 1
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/ds_paths.sh"
 DS="$SEVENDTD_DS_DIR"
-CLIENT="${SEVENDTD_GAME_DIR:-$HOME/.local/share/Steam/steamapps/common/7 Days To Die}"
+# The home fallback is taken only when no override was given, so a game install
+# named by SEVENDTD_GAME_DIR stays reachable on a host that exports no HOME.
+if [[ -z "${SEVENDTD_GAME_DIR:-}" ]]; then
+  CLIENT="$(apm_home_or_die)/.local/share/Steam/steamapps/common/7 Days To Die" || exit 1
+else
+  CLIENT="$SEVENDTD_GAME_DIR"
+fi
 if [[ -f "$DS/7DaysToDieServer_Data/Managed/Assembly-CSharp.dll" ]]; then
   MANAGED="$DS/7DaysToDieServer_Data/Managed"; HARMONY="$DS/Mods/0_TFP_Harmony/0Harmony.dll"
 elif [[ -f "$CLIENT/7DaysToDie_Data/Managed/Assembly-CSharp.dll" ]]; then

@@ -5,6 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/python.sh"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/home.sh"
 OUTDIR="${1:-}"
 SECONDS_N="${2:-30}"
 PID="${3:-}"
@@ -12,10 +14,15 @@ PID="${3:-}"
 if [[ -z "$PID" ]]; then
   PID="$("$ROOT/tools/host_profiler/find_server.sh")"
 fi
-if [[ -z "$OUTDIR" ]]; then
+if [[ -z "${OUTDIR:-}" ]]; then
   # Never write captures into the git tree (see README); default to the shared
   # APM data dir alongside sessions.
-  OUTDIR="${SEVENDTD_APM_DIR:-$HOME/.local/share/7dtd-server-apm}/perf_$(date -u +%Y%m%d_%H%M%S)"
+  if [[ -z "${SEVENDTD_APM_DIR:-}" ]]; then
+    OUTDIR="$(apm_home_or_die)/.local/share/7dtd-server-apm"
+  else
+    OUTDIR="$SEVENDTD_APM_DIR"
+  fi
+  OUTDIR="$OUTDIR/perf_$(date -u +%Y%m%d_%H%M%S)"
 fi
 mkdir -p "$OUTDIR"
 

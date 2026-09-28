@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from pathlib import Path
 
 from apm_suite.paths import REPO
 
@@ -421,3 +422,80 @@ def test_example_config_documents_the_keys_it_sets() -> None:
     assert "//" in text, "the example config should show the comment syntax it accepts"
     example = json.loads(strip_json_comments(text))
     assert set(example) == fields, "example config and BridgeConfig fields must match"
+
+
+HOME_SH = REPO / "scripts" / "lib" / "home.sh"
+DS_PATHS_SH = REPO / "scripts" / "lib" / "ds_paths.sh"
+
+
+def _source_without_home(fragment: Path, command: str) -> subprocess.CompletedProcess[str]:
+    """Run a source-and-print under `set -u` with HOME stripped from the env,
+    the shape a bare systemd unit, cron, or `env -i` invocation has."""
+    return subprocess.run(
+        ["bash", "-c", f'set -u; . "$1"; {command}', "_", str(fragment)],
+        env={"PATH": "/usr/bin:/bin"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_home_fallback_fails_loud_instead_of_aborting_on_unbound_variable() -> None:
+    # Every shell entry point runs `set -u`, and a bare systemd unit, cron, or
+    # `env -i` invocation carries no HOME. An unguarded $HOME there aborts with
+    # "HOME: unbound variable", which names neither the cause nor the fix; the
+    # fallback must fail with a message that names both. Sourcing the fragment
+    # must stay side-effect free so a caller holding an explicit override never
+    # pays for a home it does not need.
+    assert _source_without_home(HOME_SH, ":").returncode == 0, (
+        "sourcing home.sh must not fail; only taking the fallback may"
+    )
+    result = _source_without_home(HOME_SH, "apm_home_or_die")
+    assert result.returncode != 0
+    assert "HOME is unset" in result.stderr
+    assert "unbound variable" not in result.stderr
+
+
+def test_dedicated_dir_default_resolves_without_home() -> None:
+    # ds_paths.sh is the single default every SEVENDTD_DS_DIR consumer shares,
+    # and the Makefile evaluates it through $(shell) under /bin/sh. With no HOME
+    # it must still resolve the path from APM_HOME rather than aborting the
+    # whole make invocation on an unset-variable error.
+    result = subprocess.run(
+        ["sh", "-c", '. "$1" && printf "%s" "$SEVENDTD_DS_DIR"', "_", str(DS_PATHS_SH)],
+        env={"PATH": "/usr/bin:/bin", "APM_HOME": "/srv/operator"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == (
+        "/srv/operator/.local/share/Steam/steamapps/common/7 Days to Die Dedicated Server"
+    )
+
+
+def test_dedicated_dir_override_wins_over_the_home_fallback() -> None:
+    # An explicit SEVENDTD_DS_DIR must resolve even with no HOME at all, or a
+    # server installed outside any home directory would be unreachable.
+    result = subprocess.run(
+        ["bash", "-c", '. "$1" && printf "%s" "$SEVENDTD_DS_DIR"', "_", str(DS_PATHS_SH)],
+        env={"PATH": "/usr/bin:/bin", "SEVENDTD_DS_DIR": "/opt/dedicated"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "/opt/dedicated"
+
+
+def test_no_shell_entry_point_reads_home_unguarded() -> None:
+    # The regression this guards is a bare `$HOME`/`${HOME}` in any script: it
+    # aborts under `set -u` the moment a unit, cron job, or `env -i` drops the
+    # variable, and it diverges from the one resolution in scripts/lib/home.sh.
+    offenders = []
+    for path in sorted(REPO.glob("scripts/**/*.sh")) + sorted(REPO.glob("tools/**/*.sh")):
+        for line in path.read_text(encoding="utf-8").splitlines():
+            code = line.split("#", 1)[0]
+            if "$HOME" in code and "${HOME:-" not in code and "HOME_SH" not in code:
+                offenders.append(f"{path.relative_to(REPO)}: {line.strip()}")
+    assert offenders == [], f"unguarded $HOME under set -u: {offenders}"

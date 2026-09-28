@@ -33,7 +33,13 @@ oxlint_tsgolint_version="$OXLINT_TSGOLINT_VERSION"
 oxlint_plugins_version="$OXLINT_PLUGINS_VERSION"
 anti_slop_sha="$ANTI_SLOP_SHA"
 anti_slop_sha256="$ANTI_SLOP_SHA256"
-cache_dir="${XDG_CACHE_HOME:-$HOME/.cache}/7dtd-server-apm/oxlint-standards"
+# shellcheck disable=SC1091
+. "$root/scripts/lib/home.sh"
+if [ -n "${XDG_CACHE_HOME:-}" ]; then
+  cache_dir="$XDG_CACHE_HOME/7dtd-server-apm/oxlint-standards"
+else
+  cache_dir="$(apm_home_or_die)/.cache/7dtd-server-apm/oxlint-standards" || exit 1
+fi
 # The extracted plugin source is keyed by the pinned commit, not just by its
 # name: ANTI_SLOP_SHA is meant to be bumped, and a cache keyed without it
 # serves the previous commit's rules forever and skips the SHA256 check on

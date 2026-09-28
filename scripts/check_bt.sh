@@ -38,7 +38,7 @@ if [[ "$MONO_SO" == *" "* ]]; then
 fi
 
 fail=0
-while IFS= read -r script; do
+while IFS= read -r -d '' script; do
   name="$(basename "$script" .bt)"
   prepared="$WORK/$name.bt"
   if grep -q 'MONO_SO:' "$script" && [[ -z "$MONO_SO" ]]; then
@@ -53,6 +53,6 @@ while IFS= read -r script; do
     sed 's/^/     /' "$WORK/$name.err"
     fail=1
   fi
-done < <(find "$ROOT/tools/apm/collectors" -name '*.bt' | sort)
+done < <(find "$ROOT/tools/apm/collectors" -name '*.bt' -print0 | LC_ALL=C sort -z)
 
 exit "$fail"

@@ -2,7 +2,7 @@ ROOT := $(CURDIR)
 # Resolve the dedicated-server default through the shared shell fragment so
 # make targets, scripts, and doctor cannot disagree about the fallback path.
 # An environment SEVENDTD_DS_DIR or `make DS=/path ...` override still wins.
-DS ?= $(or $(SEVENDTD_DS_DIR),$(shell . "$(ROOT)/scripts/lib/ds_paths.sh" && printf '%s' "$$SEVENDTD_DS_DIR"))
+DS ?= $(or $(SEVENDTD_DS_DIR),$(shell APM_LIB_DIR="$(ROOT)/scripts/lib" . "$(ROOT)/scripts/lib/ds_paths.sh" && printf '%s' "$$SEVENDTD_DS_DIR"))
 # --locked makes every target fail instead of silently re-locking when
 # pyproject.toml drifted from uv.lock; dependency updates must go through
 # `uv lock` explicitly.

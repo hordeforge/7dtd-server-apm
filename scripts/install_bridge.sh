@@ -14,9 +14,11 @@ mkdir -p "$TARGET/WebMod"
 # work off this one list, so a build that produced nothing (or stopped halfway)
 # cannot be mistaken for a release that legitimately dropped files.
 staged=()
-while IFS= read -r rel; do
+# -print0 + read -d '' throughout: a staged path with a newline in it would
+# otherwise split into two bogus entries and the install would copy neither.
+while IFS= read -r -d '' rel; do
   staged+=("${rel#./}")
-done < <(cd "$SRC" && find . -type f -print | LC_ALL=C sort)
+done < <(cd "$SRC" && find . -type f -print0 | LC_ALL=C sort -z)
 [[ ${#staged[@]} -gt 0 ]] || { echo "ERROR: bridge build produced no files under $SRC" >&2; exit 1; }
 for rel in "${staged[@]}"; do
   [[ -r "$SRC/$rel" ]] || { echo "ERROR: staged file unreadable: $SRC/$rel" >&2; exit 1; }
@@ -27,10 +29,10 @@ done
 # one it replaced, because the next server start loads it as-is.
 BACKUP="$(mkdir -p "$ROOT/.scratch" && mktemp -d -p "$ROOT/.scratch")"
 trap 'rm -rf "$BACKUP"' EXIT
-while IFS= read -r rel; do
-  mkdir -p "$BACKUP/$(dirname "$rel")"
+while IFS= read -r -d '' rel; do
+  mkdir -p "$BACKUP/${rel%/*}"
   cp -p "$TARGET/$rel" "$BACKUP/$rel"
-done < <(cd "$TARGET" && find . -type f ! -path './Config/*' -print)
+done < <(cd "$TARGET" && find . -type f ! -path './Config/*' -print0)
 # Upgrade hygiene: build_bridge.sh rebuilds the staging tree from scratch, but
 # this script copies into a mod folder that already holds a previous release.
 # A file dropped from the mod (a renamed asset, a removed WebMod) would survive
@@ -41,12 +43,12 @@ declare -A staged_set=()
 for rel in "${staged[@]}"; do
   staged_set["$rel"]=1
 done
-while IFS= read -r stale; do
+while IFS= read -r -d '' stale; do
   rel="${stale#"$TARGET"/}"
   if [[ "$rel" != Config/* && -z "${staged_set["$rel"]:-}" ]]; then
     rm -f "$stale"
   fi
-done < <(find "$TARGET" -type f -print)
+done < <(find "$TARGET" -type f -print0)
 rollback() {
   echo "ERROR: install failed; rolling $TARGET back to the previous release" >&2
   # Drop what the failed install wrote, then restore the backup. Config/ is
@@ -56,10 +58,10 @@ rollback() {
   # whatever the delete could not remove.
   (cd "$TARGET" && find . -type f ! -path './Config/*' -delete) 2>/dev/null || true
   local rel
-  while IFS= read -r rel; do
-    mkdir -p "$TARGET/$(dirname "$rel")"
+  while IFS= read -r -d '' rel; do
+    mkdir -p "$TARGET/${rel%/*}"
     cp -p "$BACKUP/$rel" "$TARGET/$rel"
-  done < <(cd "$BACKUP" && find . -type f -print)
+  done < <(cd "$BACKUP" && find . -type f -print0)
 }
 # Replace via temp+rename: cp would truncate files in place, and a running
 # server may still have the old DLL mapped. Rename swaps the directory entry
