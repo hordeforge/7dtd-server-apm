@@ -271,7 +271,7 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
         epoch: float | None = None
         with contextlib.suppress(ValueError, TypeError):
             # Naive stamps (no offset) are UTC by repo convention, matching
-            # session._date and capture._ingest_bridge_snapshot: a bare
+            # capture._ingest_bridge_snapshot: a bare
             # .timestamp() would resolve them in this host's local zone and
             # shift every spike on a non-UTC analysis host.
             stamp = datetime.fromisoformat(str(spike.get("utc") or "").replace("Z", "+00:00"))

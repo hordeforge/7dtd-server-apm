@@ -3,8 +3,9 @@
 Every collector is one CollectorSpec. Token resolution (--only) goes through
 models.collector_requested so capture planning, the session audit, and summary
 scoring cannot disagree about what a token means (see models.LAYER_ALIASES).
-This module is a leaf: it imports only paths/models, never session/capture,
-so both orchestration and the audit store can consume the same catalog.
+This module is a leaf: it imports only paths/models/settings, never
+session/capture, so both orchestration and the audit store can consume the
+same catalog.
 """
 
 from __future__ import annotations

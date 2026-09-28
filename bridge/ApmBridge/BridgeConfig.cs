@@ -13,8 +13,10 @@ namespace DtdApmBridge
         public const int DefaultMaxSpikeRecords = 128;
         public const int DefaultDeepSampleRate = 16;
 
-        // A <=0 threshold marks EVERY frame a spike -> SampleWorld() + AddSpike
-        // every tick, a heavy per-frame cost on the server.
+        // A threshold at the 1.0 floor marks nearly every frame a spike. The
+        // _updateSpikes COUNTER still counts each one, and EndFrame's
+        // SpikeSampleMinSeconds rate limit bounds the per-spike
+        // SampleWorld() + AddSpike cost the server actually pays.
         public const double MinSpikeThresholdMs = 1.0;
         public const double MaxSpikeThresholdMs = 60000.0;
         // 0 disables periodic export; cap the upper end (1h) so a typo'd huge

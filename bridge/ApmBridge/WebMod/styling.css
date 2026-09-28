@@ -43,7 +43,7 @@
 .apm-btn:focus-visible, .apm-filter:focus-visible, .apm-sort-btn:focus-visible { outline: 2px solid rgb(var(--apm-link-rgb)); outline-offset: 2px; }
 
 /* Screen-reader-only text: carries state that the theme paints in color
-   (severity rows, staged ring) or that would otherwise be unnamed. */
+   (severity rows) or that would otherwise be unnamed. */
 .apm-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
 
 .apm-tick-budget { display: flex; align-items: center; gap: .6rem; margin: .75rem 0; }

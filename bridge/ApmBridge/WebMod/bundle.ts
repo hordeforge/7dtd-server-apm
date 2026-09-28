@@ -38,7 +38,7 @@ type TransferStat = {
   maxBytes: number;
 };
 
-// Dashboard-injected props (kl wrapper passes the stock React, an axios-ish
+// Dashboard-injected props (the webmod loader passes the stock React, an axios-ish
 // HTTP client, and the react-query useQuery hook).
 type CreateElement = (...args: Array<unknown>) => unknown;
 type QueryResult = {
@@ -806,7 +806,7 @@ function budgetBarClass(frac: number): string {
 
 // Screen-reader-only text (see .apm-visually-hidden in styling.css). Used to
 // put non-visual words on state that the theme otherwise paints (severity
-// colors, staged-change ring).
+// colors).
 function sr(h: CreateElement, text: string): unknown {
   return h("span", { className: "apm-visually-hidden" }, text);
 }
@@ -1071,7 +1071,8 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
 
 // The stock dashboard renders every webmod `routes` entry as a direct sidebar
 // item and every `settings` entry as a tab under Settings, unconditionally.
-// The session cookie is set HttpOnly (see ../7dtd-engine-research/docs), so it
+// The session cookie is set HttpOnly (see
+// ../../../7dtd-engine-research/docs/admin/webserver.md), so it
 // is invisible to document.cookie and cannot gate registration here. Register
 // the route always: while logged out it polls once, gets a 403, and renders its
 // auth-required state; the dashboard reloads the page after login.

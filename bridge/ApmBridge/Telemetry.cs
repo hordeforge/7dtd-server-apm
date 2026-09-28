@@ -202,7 +202,7 @@ namespace DtdApmBridge
         // main thread, so no main-thread timestamp has to be cached.
         // Ceiling, not truncation: the deadline is in whole Stopwatch ticks, and
         // a truncating cast turns any positive interval under one tick into 0.
-        // _nextExport = now + 0 leaves the deadline in the past, so BeginFrame
+        // _nextExport = now + 0 would leave the deadline in the past, so EndFrame
         // re-arms and exports on EVERY frame (each one a Process-handle walk
         // and a GC-window snapshot on the sim thread).
         static long Seconds(double seconds) =>

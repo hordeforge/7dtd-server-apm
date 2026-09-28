@@ -14,10 +14,10 @@
     "outDir": ".",
     "rootDir": ".",
     "sourceMap": false,
-    // The dashboard loads bundle.js on every page, so the emitted comments
-    // (10.5 KB of 44 KB raw, 4.0 KB of 12.9 KB gzipped) ship to every
-    // dashboard visitor and the browser never renders them. They stay in
-    // bundle.ts, which is the source of record.
+    // The dashboard loads bundle.js on every page, so without this the source
+    // comments (10.5 KB of 44 KB raw, 4.0 KB of 12.9 KB gzipped) would ship to
+    // every dashboard visitor and the browser would never render them. They
+    // stay in bundle.ts, which is the source of record.
     "removeComments": true
   },
   "files": ["bundle.ts"]

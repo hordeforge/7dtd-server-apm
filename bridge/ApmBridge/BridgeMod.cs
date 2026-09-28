@@ -51,7 +51,8 @@ namespace DtdApmBridge
         static Type GameType(string name) => AccessTools.TypeByName(name);
         static void PatchFrame()
         {
-            // Null-check the type first, like the other patch sites (114, 145):
+            // Null-check the type first, like the other patch sites
+            // (PatchMapTransfers, PatchSection):
             // if GameManager is absent on this build, mark unavailable instead of
             // risking an NRE that would take down the server at mod load.
             Type gm = GameType("GameManager");

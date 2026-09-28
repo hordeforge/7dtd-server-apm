@@ -139,8 +139,9 @@ contain player or world data.
 
 Raw sessions keep the full telnet drain in `app/bridge.jsonl` as owner-only
 evidence (captured, scenario-run, and `import`-restored sessions are 0700 from
-the creating syscall, store root included); raw evidence never enters export
-bundles. The scrape discards the
+the creating syscall; the store root is chmod'd 0700 as soon as it is created,
+and `index` does the same when it is the first command to create it); raw
+evidence never enters export bundles. The scrape discards the
 telnet banner and post-logon reply, and persists only the requested `apm`
 command responses. A streamed console-log line is cut at its timestamp
 wherever that timestamp falls in the received line, not only when the line

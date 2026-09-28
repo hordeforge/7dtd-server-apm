@@ -28,7 +28,7 @@ DEFAULT_BUDGET: dict[str, Any] = {
     "max_gross_alloc_mb_per_second": 15.0,  # gross GC_malloc churn -> Boehm STW pauses
     # Chunk bandwidth is gated on the kernel UDP send rate (always capture-
     # windowed = current steady state). The bridge mapTransfers MB/s is a
-    # since-reset lifetime average inflated by the join burst (see report R56),
+    # since-reset lifetime average inflated by the join burst (see TODO.md R56),
     # so it is NOT gated to avoid false FAILs.
     "max_udp_send_mb_per_second": 30.0,  # kernel udp send = current game traffic
     "max_section_heat": {

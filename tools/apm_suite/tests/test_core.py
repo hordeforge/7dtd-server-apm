@@ -855,6 +855,22 @@ def test_alloc_sites_rank_by_bytes_skip_noise(tmp_path: Path) -> None:
     assert "DoNotPick.Me" not in sites
 
 
+def test_top_stack_sites_stops_at_the_next_probe_section(tmp_path: Path) -> None:
+    from apm_suite.analysis.report import top_stack_sites
+
+    # futex.bt prints "by count" and "by total wait us" back to back, so a
+    # reader that runs to EOF ranks the second block's waiters under the first
+    # block's name.
+    (tmp_path / "sync").mkdir()
+    (tmp_path / "sync" / "futex.bt.out").write_text(
+        "=== waiter stacks by count (top) ===\n"
+        "        Lock.Wait+0x1c\n"
+        "\n=== waiter stacks by total wait us (top) ===\n"
+        "        Other.Blocked+0x2c\n"
+    )
+    assert top_stack_sites(tmp_path, "sync/futex.bt.out", "waiter stacks by count") == ["Lock.Wait"]
+
+
 def test_gc_slow_collect_not_double_counted() -> None:
     from apm_suite.analysis.report import _gc_layer
 
@@ -2844,7 +2860,7 @@ def test_bridge_spikes_become_timeline_events(tmp_path: Path) -> None:
 
 def test_bridge_spike_naive_stamp_reads_as_utc_not_local(tmp_path: Path) -> None:
     """A spike stamp without an offset is UTC by repo convention (matching
-    session._date and capture._ingest_bridge_snapshot); resolving it in the
+    capture._ingest_bridge_snapshot); resolving it in the
     analysis host's local zone would shift frame_spike epochs by the UTC
     offset and drop them from windowed views on non-UTC hosts."""
     from apm_suite.analysis.events import build_timeline

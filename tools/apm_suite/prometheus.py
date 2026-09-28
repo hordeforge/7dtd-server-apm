@@ -156,7 +156,7 @@ def export_metrics(session: Path, output: Path) -> None:
             f"sevendtd_apm_gc_stw_total_ms {stw_total:.3f}",
         ]
     # Kernel UDP send is the honest windowed chunk rate (bridge transfers is a
-    # join-burst-weighted lifetime average; see report R56).
+    # join-burst-weighted lifetime average; see TODO.md R56).
     net_meta = as_mapping(metadata.get("net"))
     udp_send = as_number(net_meta.get("udp_send_mb_per_second"))
     if udp_send is not None:

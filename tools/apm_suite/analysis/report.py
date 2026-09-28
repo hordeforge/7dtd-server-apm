@@ -77,7 +77,7 @@ def _has_content(path: Path) -> bool:
 
 
 def _has_bytes(path: Path, minimum: int) -> bool:
-    """A regular file carrying at least `minimum` bytes, without reading it."""
+    """A regular file carrying more than `minimum` bytes, without reading it."""
     return (regular_file_size(path) or 0) > minimum
 
 
@@ -849,6 +849,10 @@ def top_stack_sites(session: Path, rel: str, header: str, limit: int = 3) -> lis
     if not source.is_file():
         return []
     block = source.read_text(encoding="utf-8", errors="replace").partition(header)[2]
+    # Stop at the next "===" divider: a probe prints several labelled sections
+    # back to back, and without this the following block's frames are ranked
+    # under this header's name.
+    block = block.split("\n===", 1)[0]
     sites: list[str] = []
     for line in block.splitlines():
         frame = line.strip()

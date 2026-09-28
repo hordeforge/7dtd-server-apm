@@ -72,8 +72,8 @@ make check        # lint, shellcheck, HTML, WebMod, format, mypy, tests, probes
 make check-ci     # the same minus check-bt, which is exactly what CI runs
 ```
 
-CI runs `make check-ci` on every push and pull request, so a green
-`make check-ci` locally is the same verdict the pull request gets. `make
+CI runs `make check-ci` on every pull request and on every push to `main`, so a
+green `make check-ci` locally is the same verdict the pull request gets. `make
 coverage` is the one CI target with no local gate behind it: it re-runs the
 suite under coverage and writes the `.coverage` data the README badge is
 rendered from.

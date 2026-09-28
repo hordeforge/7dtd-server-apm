@@ -9,7 +9,10 @@ gaps found while profiling the 7DTD server (GC churn, player-scale network wall)
 ## A. Analysis + diagnosis
 1. [ ] Per-connection network cost breakdown (`taskSerialize` per player)
 2. [x] Detect super-linear (O(N^2)) scaling signature across a ramp
-3. [x] Death-spiral detection (tick interval growing monotonically + backlog)
+3. [x] Death-spiral detection (window tick interval past capacity: avg tick
+   >= 150 ms with >= 90% of ticks late, reported as `server_saturated` and a
+   `SATURATED (X TPS)` verdict; a per-tick monotone-growth detector with a
+   backlog term is still open)
 4. [x] Correlate each GC STW pause to its frame spike by timestamp
 5. [ ] Memory-leak detection across a session series (per-capture RSS slope and
    fd delta already feed the `memory_growth` lag cause; trend them over time)

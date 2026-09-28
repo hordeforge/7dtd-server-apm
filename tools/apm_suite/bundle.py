@@ -53,7 +53,7 @@ MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * 1024**3
 # handed to a stranger, so it stays on the host.
 MONO_BIND_MOUNT_NAME = "libmonobdwgc-2.0.so"
 EXCLUDED_MEMBER_NAMES = frozenset(
-    {"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json", MONO_BIND_MOUNT_NAME}
+    {"perf.data", "bridge.jsonl", "manifest.json", MONO_BIND_MOUNT_NAME}
 )
 # Membership is tested against the lowercased member name, so the set is
 # lowercased once here: a "Bridge.jsonl" or "PERF.DATA" must be excluded

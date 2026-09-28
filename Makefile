@@ -22,7 +22,7 @@ help:
 	@echo "  make lint-webui     tsc + oxlint + bundle freshness (needs bunx)"
 	@echo "  make format         ruff format tools/ scripts/ plans/ tests/   |   make format-check to verify"
 	@echo "  make typecheck      mypy strict"
-	@echo "  make check          full local gate = all of the above + check-bt"
+	@echo "  make check          full local gate = lint, lint-shell, lint-html, lint-webui, format-check, typecheck, test, check-bt"
 	@echo "  make check-ci       exactly what CI runs (= check minus check-bt)"
 	@echo "  make check-bt       bpftrace --dry-run over every probe (needs bpftrace + sudo -n; skips visibly)"
 	@echo "  make bridge-build   build bridge DLL + WebMod (needs dotnet SDK + bunx)"
