@@ -36,6 +36,17 @@ class FinalizeResult:
         return 1 if self.failed_stages else 0
 
 
+def _record_manifest(session: Path) -> None:
+    """(Re)write manifest.json for the finalized session, reporting findings."""
+    from .session import audit_session
+
+    manifest, _valid = audit_session(session)
+    for error in manifest.errors:
+        print(f"finalize: audit error: {error}", file=sys.stderr)
+    for warning in manifest.warnings:
+        print(f"finalize: audit warning: {warning}", file=sys.stderr)
+
+
 def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
     result = FinalizeResult(session=session)
 
@@ -59,6 +70,10 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
     # `budget` command; finalize's exit code tracks failed stages only.
     stage("budget", lambda: check_budget(session), required=False)
     stage("render", lambda: render_session(session), required=True)
+    # Every session ships an integrity manifest (README "Sessions"), and a
+    # re-finalize rewrites artifacts a previous audit recorded: re-stamp last so
+    # the manifest describes the session as it stands after this run.
+    stage("manifest", lambda: _record_manifest(session), required=False)
     stage("index", lambda: write_index(), required=False)
 
     if result.failed_stages:

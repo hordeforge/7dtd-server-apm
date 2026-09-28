@@ -163,6 +163,15 @@ def check(
                 )
             else:
                 lines.append(f"ok   late_ticks {late:g}/{window:g} = {share:.3f} <= {max_late}")
+        elif late > 0:
+            # Fail closed: late ticks with no update count to divide by is
+            # UNKNOWN, never a pass. A zero numerator is a genuine "no late
+            # ticks" observation and needs no denominator.
+            ok = False
+            lines.append(
+                f"UNKNOWN late_ticks: {late:g} late ticks with "
+                f"windowUpdates={window:g} (no denominator)"
+            )
         else:
             lines.append("skip late_ticks (no bridge frame data)")
 

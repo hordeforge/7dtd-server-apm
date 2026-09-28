@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -10,11 +11,13 @@ import unicodedata
 import zipfile
 import zlib
 from contextlib import suppress
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
 import typer
+from pydantic import ValidationError
 from rich.console import Console
 from rich.markup import escape
 
@@ -31,7 +34,15 @@ from .capture import (
     write_plan_text,
 )
 from .io import atomic_json, atomic_text, claim_dir, claim_file, load_json, member_is_safe
-from .models import as_number, layer_signals
+from .models import (
+    SERVER_COMM,
+    Artifact,
+    ManifestV2,
+    Target,
+    as_number,
+    layer_signals,
+    schema_dict,
+)
 from .paths import REPO, apm_root, require_backends
 from .runner import backend_python, run, terminate_tree
 from .session import (
@@ -393,6 +404,66 @@ def _stream_scrubbed_member(
     return True
 
 
+def _bundle_artifacts(bundle: Path) -> list[Artifact]:
+    """Size and hash of every member actually stored in the bundle.
+
+    Read back from the finished archive, not from the session: bundled members
+    are scrubbed and re-serialized, so the source files' hashes describe bytes
+    the bundle does not contain.
+    """
+    artifacts: list[Artifact] = []
+    with zipfile.ZipFile(bundle) as archive:
+        for info in archive.infolist():
+            if info.is_dir():
+                continue
+            digest = hashlib.sha256()
+            with archive.open(info) as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    digest.update(block)
+            artifacts.append(
+                Artifact(path=info.filename, bytes=info.file_size, sha256=digest.hexdigest())
+            )
+    return artifacts
+
+
+def _bundle_manifest(session: Path, artifacts: list[Artifact]) -> ManifestV2:
+    """Integrity manifest describing the bundle, not the source session.
+
+    The session's own manifest is the descriptive base when it exists; the
+    artifact list always comes from the archive. Members the export drops on
+    purpose (raw perf.data, telnet bridge.jsonl) must not be recorded, or a
+    hand-extracted bundle audits as tampered.
+    """
+    with suppress(ValueError, OSError, ValidationError):
+        recorded = ManifestV2.model_validate(load_json(session / "manifest.json"))
+        return recorded.model_copy(
+            update={
+                "session_id": session.name,
+                "ended_at": datetime.now(UTC),
+                "artifacts": artifacts,
+            }
+        )
+    meta: dict[str, Any] = {}
+    with suppress(ValueError, OSError):
+        meta = load_json(session / "meta.json")
+    only = str(meta.get("only") or "all")
+    return ManifestV2(
+        session_id=session.name,
+        started_at=datetime.fromisoformat(str(meta["utc"]))
+        if meta.get("utc")
+        else datetime.now(UTC),
+        ended_at=datetime.now(UTC),
+        target=Target(
+            pid=int(as_number(meta.get("pid")) or 1),
+            comm=str(meta.get("comm") or SERVER_COMM),
+            exe=str(meta.get("exe") or ""),
+            cmdline=str(meta.get("cmdline") or ""),
+        ),
+        requested_layers=only.split(","),
+        artifacts=artifacts,
+    )
+
+
 def _copy_member(archive: zipfile.ZipFile, source: Path, relative: Path) -> None:
     """Raw-copy one artifact into the archive; an unreadable source names the
     file instead of surfacing as a bare traceback mid-export (the .json branch
@@ -413,13 +484,18 @@ def export_session(
     """Create a sanitized support bundle without raw command lines or telnet text."""
     if not session.is_dir():
         raise typer.BadParameter("session directory does not exist")
-    excluded = {"perf.data", "bridge.jsonl", "FINALIZE.txt"}
+    # manifest.json is excluded too: it describes the source session, and the
+    # bundle carries its own manifest describing the bundle (below).
+    excluded = {"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json"}
     output.parent.mkdir(parents=True, exist_ok=True)
+    # An output inside the session would otherwise be swept up by the walk below
+    # (a truncated copy of the archive being written, or a prior export of it).
     # Build under a temp path in the destination dir and os.replace on success, so
     # a malformed input never truncates the target or clobbers a prior bundle.
     fd, tmp_zip = tempfile.mkstemp(suffix=".zip", dir=output.parent)
     os.close(fd)
     tmp_zip_path = Path(tmp_zip)
+    self_output = {output.resolve(), tmp_zip_path.resolve()}
     try:
         # Scrubbed text members stream straight into the archive: each one is
         # already fully resident for scrubbing, so a temp-dir copy would add a
@@ -443,6 +519,7 @@ def export_session(
                     or source.is_symlink()
                     or source.name in excluded
                     or source.suffix == ".err"
+                    or source.resolve() in self_output
                 ):
                     continue
                 relative = source.relative_to(session)
@@ -471,6 +548,18 @@ def export_session(
                         _copy_member(archive, source, relative)
                 else:
                     _copy_member(archive, source, relative)
+        # The integrity manifest travels with the evidence it describes: hash
+        # the members as stored and record those, so a hand-extracted bundle
+        # audits clean and a tampered member is still detectable.
+        with zipfile.ZipFile(tmp_zip_path, "a", zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(
+                "manifest.json",
+                json.dumps(
+                    schema_dict(_bundle_manifest(session, _bundle_artifacts(tmp_zip_path))),
+                    indent=2,
+                )
+                + "\n",
+            )
         os.replace(tmp_zip_path, output)
     finally:
         tmp_zip_path.unlink(missing_ok=True)
@@ -564,6 +653,11 @@ def import_bundle(
         else f"{len(manifest.errors)} error(s), {len(manifest.warnings)} warning(s)"
     )
     console.print(f"restored {escape(str(target))} ({outcome})")
+    # A restored session is evidence in the store: an existing index must list
+    # it instead of waiting for the next capture or a manual `index`. A store
+    # that was never indexed stays unindexed (import writes no index files).
+    if (store_root / "index.json").is_file():
+        write_index(store_root)
 
 
 @app.command("scaling")
@@ -944,6 +1038,10 @@ def prune_sessions(
                 f"[red]could not remove {escape(str(entry))}: {escape(str(error))}[/red]"
             )
     if doomed:
+        # The index lists every session directory: without a refresh, a pruned
+        # store keeps index.json entries (and index.html links) for evidence
+        # that no longer exists.
+        write_index(apm_root())
         trash = apm_root() / ".trash"
         window = (
             f"for {prune_grace_hours():g}h"
@@ -1158,7 +1256,7 @@ def scenario_run(
         "LOADGEN_SPAWN_PER_PLAYER": str(spawn_per_player) if spawn_per_player else "",
         "LOADGEN_SPAWN_EVERY_MS": str(spawn_every_ms) if spawn_every_ms else "",
         "LOADGEN_HORDE_EVERY_MS": str(horde_every_ms) if horde_every_ms else "",
-        "LOADGEN_HORDE_WAVES": str(horde_waves) if horde_every_ms else "",
+        "LOADGEN_HORDE_WAVES": str(horde_waves) if horde_waves else "",
         "LOADGEN_MAX_DYNAMITE": str(max_dynamite) if max_dynamite else "",
         "LOADGEN_NO_SPAWN": "1" if no_spawn else "",
     }
@@ -1363,7 +1461,9 @@ def scenario_matrix(
         if not isinstance(entry, dict):
             err_console.print(f"[red]plan entry {position} is not a JSON object[/red]")
             raise typer.Exit(2)
-        unknown = set(entry) - allowed
+        # `_`-prefixed keys are plan commentary (the shipped plans document each
+        # experiment with one) and carry no runner meaning.
+        unknown = {key for key in set(entry) - allowed if not key.startswith("_")}
         if unknown:
             # Plan keys are attacker-controlled in imported plans; escape them.
             err_console.print(

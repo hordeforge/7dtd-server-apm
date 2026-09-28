@@ -1177,14 +1177,6 @@ def build_summary(session: Path) -> SummaryV2:
     threads = thread_summary(session)
     _apply_main_thread_pressure(layers, threads)
 
-    measured = [layer for layer in layers if layer.score is not None]
-    top = measured[0] if measured else None
-    recommendation = (
-        f"Focus on **{top.layer}** (pressure {top.score}). " + "; ".join(top.optimize[:2])
-        if top
-        else "No measured layer has sufficient evidence for a recommendation."
-    )
-
     metadata: dict[str, Any] = {}
     snapshot_path = session / "app/apm_app.json"
     snapshot: dict[str, Any] | None = None
@@ -1246,6 +1238,18 @@ def build_summary(session: Path) -> SummaryV2:
                     json.loads(prior_bridge.read_text(encoding="utf-8")).get("attribution") or {}
                 )
     metadata["lag_diagnosis"] = diagnose_lag(layers, metadata, threads, attribution, session)
+
+    # Every pressure adjustment above raises scores after layer_scores() sorted
+    # them, so the stored order and the recommendation must be recomputed here:
+    # naming the pre-adjustment maximum points operators at the wrong layer.
+    layers.sort(key=lambda layer: -(layer.score if layer.score is not None else -1))
+    measured = [layer for layer in layers if layer.score is not None]
+    top = measured[0] if measured else None
+    recommendation = (
+        f"Focus on **{top.layer}** (pressure {top.score}). " + "; ".join(top.optimize[:2])
+        if top
+        else "No measured layer has sufficient evidence for a recommendation."
+    )
 
     perf_dir = session / "cpu" / "perf"
     flames = {
