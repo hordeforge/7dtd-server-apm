@@ -90,6 +90,11 @@ class ImportResult:
     valid: bool
     errors: int
     warnings: int
+    # The audit findings verbatim, so a caller can name WHICH member drifted
+    # instead of printing a count. A restored bundle is the one place the
+    # operator learns whether the evidence they just took delivery of is the
+    # evidence that was sent.
+    findings: tuple[str, ...] = ()
 
 
 # Keys that carry the raw launch command / binary path. Redacted wherever they
@@ -370,10 +375,17 @@ def import_bundle(bundle: Path, store: Path) -> ImportResult:
                 ) from None
     except zipfile.BadZipFile as error:
         raise BundleError(f"{bundle} is not a readable zip bundle: {error}") from None
-    manifest, valid = audit_session(target)
+    # verify_recorded: the bundle carries the manifest that describes its own
+    # members, and the plain audit re-stamps manifest.json unconditionally, so
+    # an unmodified re-stamp would absorb exactly the drift that manifest
+    # exists to find and leave the restored session with no baseline at all.
+    # Verifying first keeps a tampered member a reported finding; a clean
+    # bundle re-stamps to the local manifest as before.
+    manifest, valid = audit_session(target, verify_recorded=True)
     return ImportResult(
         session=target,
         errors=len(manifest.errors),
         warnings=len(manifest.warnings),
         valid=valid,
+        findings=tuple(manifest.errors),
     )

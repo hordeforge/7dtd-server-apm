@@ -27,6 +27,7 @@ from .models import (
     MetaV2,
     SummaryV2,
     Target,
+    effective_seconds,
     layer_requested,
     schema_dict,
 )
@@ -85,11 +86,15 @@ def capture_window(meta: dict[str, Any]) -> tuple[datetime | None, datetime | No
 
     Both stamps are evidence about the captured window, not about the machine
     that read the session, so replaying an audit or an export of the same bytes
-    rewrites the same manifest.
+    rewrites the same manifest. The length is the window the collectors
+    actually ran (models.effective_seconds), not the one they were asked for:
+    an interrupted capture records the full requested `seconds`, and a manifest
+    claiming a 60s end for a 10s window states a time nobody measured - the
+    same reason `compare` gates on the observed length.
     """
     started = parse_stamp(meta.get("utc"))
-    seconds = _int(meta.get("seconds"), 0)
-    ended = started + timedelta(seconds=seconds) if started and seconds > 0 else None
+    window = effective_seconds(meta)
+    ended = started + timedelta(seconds=window) if started and window > 0 else None
     return started, ended
 
 

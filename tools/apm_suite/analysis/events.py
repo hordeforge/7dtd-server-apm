@@ -2,13 +2,15 @@
 
 Parses SLOW_* lines, managed bridge spikes, thread wchan snapshots, and proc
 samples into events.json/events.jsonl. Raw event materialization is bounded
-per source, and the final retention bound keeps the most severe events rather
-than the first; aggregate counts always cover every parsed event.
+per source and the total is bounded again below, both keeping the most severe
+events (recency breaking the tie) rather than the first; aggregate counts
+always cover every parsed event.
 """
 
 from __future__ import annotations
 
 import contextlib
+import heapq
 import json
 import re
 from datetime import UTC, datetime
@@ -44,23 +46,38 @@ _BRIDGE_AVG = re.compile(r"avg=([\d.]+)ms")
 
 
 class EventSink:
-    """Counts every event but materializes at most PER_SOURCE_MAX per source."""
+    """Counts every event but materializes at most PER_SOURCE_MAX per source.
+
+    The per-source bound keeps the same events build_timeline's global bound
+    would: the most severe, the most recent breaking the tie. A first-N window
+    would let one chatty source decide what survives, and a source that floods
+    routine warnings before reporting the errors that ended the capture would
+    have exactly those errors discarded - the one thing the bound exists to
+    keep. Each source's retained set is a bounded heap keyed on that same
+    ranking, so the memory stays O(sources x PER_SOURCE_MAX) whatever the
+    collector emitted.
+    """
 
     def __init__(self) -> None:
         self.count = 0
         self.by_kind: dict[str, int] = {}
-        self.events: list[dict[str, Any]] = []
-        self._per_source: dict[str, int] = {}
+        # heapq key per retained event: (-severity_rank, sequence). The root of
+        # a min-heap is then the worst survivor candidate - the least severe
+        # entry, and among equals the earliest - so evicting is one
+        # heapreplace rather than a scan, and a better newcomer compares
+        # greater than the root.
+        self._retained: dict[str, list[tuple[int, int, dict[str, Any]]]] = {}
+        self._sequence = 0
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        """Every materialized event, in a deterministic order."""
+        return [event for heap in self._retained.values() for _rank, _seq, event in heap]
 
     def add(self, event: dict[str, Any]) -> None:
         self.count += 1
         kind = str(event.get("kind") or "unknown")
         self.by_kind[kind] = self.by_kind.get(kind, 0) + 1
-        source = str(event.get("source") or "")
-        seen = self._per_source.get(source, 0)
-        if seen >= PER_SOURCE_MAX:
-            return
-        self._per_source[source] = seen + 1
         # Every source funnels through here, so the declared numeric fields are
         # normalized once instead of at each parser: `t` and `value` are copied
         # straight out of unvalidated collector JSONL, and a digit run past the
@@ -69,7 +86,14 @@ class EventSink:
         # magnitude reads as absent, exactly like any other collector field.
         event["t"] = as_number(event.get("t"))
         event["value"] = as_number(event.get("value"))
-        self.events.append(event)
+        severity = _SEVERITY_RANK.get(str(event.get("severity")), 3)
+        entry = (-severity, self._sequence, event)
+        self._sequence += 1
+        heap = self._retained.setdefault(str(event.get("source") or ""), [])
+        if len(heap) < PER_SOURCE_MAX:
+            heapq.heappush(heap, entry)
+        elif entry[:2] > heap[0][:2]:
+            heapq.heapreplace(heap, entry)
 
 
 def parse_bt_slow(sink: EventSink, path: Path, kind: str) -> None:

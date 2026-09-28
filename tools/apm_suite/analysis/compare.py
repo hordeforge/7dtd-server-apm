@@ -78,6 +78,19 @@ def _attribution_totals(session: Path) -> dict[str, float]:
     return totals
 
 
+def requested_tokens(summary: dict[str, Any]) -> frozenset[str]:
+    """The --only token SET a session was captured with.
+
+    meta.json stores the raw --only string the operator typed, so two plans
+    that resolve to the same collectors read differently: "io,sync" against
+    "sync,io", "io" against "io, sync". The compatibility gate is about
+    whether both sides collected the same evidence, and the collector catalog
+    resolves tokens to a set, so the comparison is made on the set.
+    """
+    raw = str(as_mapping(summary.get("meta")).get("only") or "all")
+    return frozenset(token.strip() for token in raw.split(",") if token.strip())
+
+
 def _winner(delta_value: float) -> str:
     if delta_value < -0.01:
         return "B"
@@ -125,7 +138,7 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
     meta_a, meta_b = as_mapping(summary_a.get("meta")), as_mapping(summary_b.get("meta"))
     if meta_a.get("analyzer_version") != meta_b.get("analyzer_version"):
         raise ValueError("analyzer versions differ; re-finalize both sessions with one version")
-    if str(meta_a.get("only") or "all") != str(meta_b.get("only") or "all"):
+    if requested_tokens(summary_a) != requested_tokens(summary_b):
         raise ValueError("incompatible collector selection")
     # The window the collectors actually ran, not the one they were asked
     # for: an interrupted capture records the full requested seconds, so

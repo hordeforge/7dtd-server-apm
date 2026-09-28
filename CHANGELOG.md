@@ -41,6 +41,24 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+- Import: the restored session is audited against the manifest the bundle
+  carries before a new one is written, and the findings are printed one per
+  line. A bundle that drifted since the export is now reported by name instead
+  of re-stamped: the plain audit rewrites `manifest.json` unconditionally, so
+  a tampered member was absorbed by the very command meant to restore it, and
+  the restored session was left with no baseline to re-check against.
+- Events: the per-source retention bound keeps the most severe events, recency
+  breaking the tie, instead of the first ones parsed. The bound decides what
+  reaches the global one, so a source that flooded routine warnings before
+  reporting the error that ended the capture had exactly that error discarded.
+- Compare: the collector-selection gate matches the `--only` tokens as a set,
+  so `cpu,io` and `io, cpu` are the same plan. The gate is about whether both
+  sides collected the same evidence, and the collector catalog resolves tokens
+  to a set; a genuine mismatch is still rejected.
+- Audit: `manifest.json` reports the window the collectors actually ran. A
+  capture cut short still records the seconds it asked for, so the end stamp
+  named a time nobody measured, on the same rule `compare` already gates on.
+
 - Export: server console lines are dropped from every text member by content,
   not only files whose name the exclusion list happens to know. An operator who
   drops a console capture or a chat log into a session under a neutral name

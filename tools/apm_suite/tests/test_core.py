@@ -1217,6 +1217,55 @@ def test_import_bundle_restores_owner_only_perms(
     assert stat.S_IMODE(store.stat().st_mode) == 0o700
 
 
+def test_import_bundle_reports_a_tampered_member(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The manifest the bundle carries is the import's baseline.
+
+    Export writes a manifest describing the members as stored, "so a
+    hand-extracted bundle audits clean and a tampered member is still
+    detectable". An import that re-stamped manifest.json before checking it
+    would absorb exactly that drift and leave the restored session with no
+    baseline, so the finding must be reported and the recorded manifest kept.
+    """
+    import zipfile
+
+    session = tmp_path / "session_tampered"
+    (session / "io").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    atomic_json(session / "summary.json", _summary("session_tampered", []))
+    (session / "io/vfs.bt.out").write_text("openat /steamapps/common\n")
+
+    bundle = tmp_path / "session_tampered.zip"
+    assert runner.invoke(app, ["export", str(session), "--output", str(bundle)]).exit_code == 0
+    with zipfile.ZipFile(bundle) as source:
+        recorded_bytes = source.read("manifest.json").decode("utf-8")
+
+    # Rebuild the archive with the same manifest but a rewritten evidence file.
+    tampered = tmp_path / "session_tampered_tampered.zip"
+    with zipfile.ZipFile(bundle) as source, zipfile.ZipFile(tampered, "w") as out:
+        for info in source.infolist():
+            if info.filename == "manifest.json":
+                out.writestr("manifest.json", recorded_bytes)
+            elif info.filename == "io/vfs.bt.out":
+                # Same byte length as the original, so the size check cannot
+                # catch it and the content hash is what has to.
+                out.writestr("io/vfs.bt.out", "openat /tmp/attacker_pad\n")
+            else:
+                out.writestr(info.filename, source.read(info.filename))
+
+    store = tmp_path / "store"
+    store.mkdir()
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(store))
+    result = runner.invoke(app, ["import", str(tampered)])
+    restored = store / "session_tampered_tampered"
+    assert restored.is_dir()
+    assert (restored / "io/vfs.bt.out").read_text() == "openat /tmp/attacker_pad\n"
+    # The bundle's own manifest survives the import instead of being absorbed.
+    assert (restored / "manifest.json").read_text() == recorded_bytes
+    assert "differs from its recorded hash" in result.output
+
+
 def test_import_rejects_zip_slip_and_corrupt_bundles(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2313,6 +2362,50 @@ def test_events_bound_materialization_but_count_everything(tmp_path: Path) -> No
     assert len(doc.events) == PER_SOURCE_MAX
     assert doc.by_kind["futex"] == 600
     assert doc.dropped == 600 - PER_SOURCE_MAX
+
+
+def test_events_per_source_bound_keeps_the_worst_not_the_first() -> None:
+    """One source past PER_SOURCE_MAX must still give up its quietest events.
+
+    The per-source bound decides what reaches the global one, so a first-N
+    window there discards exactly the evidence the timeline exists to keep: a
+    probe that floods routine warnings and only reports the stall that ended
+    the capture would lose that error. Severity decides, recency breaks the
+    tie, the same rule build_timeline applies to the whole timeline.
+    """
+    from apm_suite.analysis.events import EventSink
+
+    sink = EventSink()
+    for i in range(PER_SOURCE_MAX):
+        sink.add(
+            {
+                "kind": "futex",
+                "severity": "warn",
+                "message": f"wait={i}ms",
+                "source": "futex.bt.out",
+                "t": float(i),
+            }
+        )
+    sink.add(
+        {
+            "kind": "frame_spike",
+            "severity": "error",
+            "message": "gmUpdate 4200ms",
+            "source": "futex.bt.out",
+            "t": float(PER_SOURCE_MAX),
+        }
+    )
+    assert sink.count == PER_SOURCE_MAX + 1
+    assert sink.by_kind == {"futex": PER_SOURCE_MAX, "frame_spike": 1}
+    events = sink.events
+    assert len(events) == PER_SOURCE_MAX
+    # The error outranks every warning its source produced, so it survives and
+    # the oldest warning is the one evicted.
+    assert [e["message"] for e in events if e["severity"] == "error"] == ["gmUpdate 4200ms"]
+    warnings = {e["message"] for e in events if e["severity"] == "warn"}
+    assert len(warnings) == PER_SOURCE_MAX - 1
+    assert "wait=0ms" not in warnings
+    assert f"wait={PER_SOURCE_MAX - 1}ms" in warnings
 
 
 def test_events_bound_keeps_the_worst_events_not_the_first(tmp_path: Path) -> None:
@@ -3856,10 +3949,11 @@ def _cmp_session(
     layers: tuple[tuple[str, float], ...] = (("cpu", 40.0),),
     workload: dict[str, object] | None = None,
     observed_seconds: float | None = None,
+    only: str = "all",
 ) -> Path:
     session = root / name
     session.mkdir()
-    meta: dict[str, object] = {"analyzer_version": version, "only": "all", "seconds": seconds}
+    meta: dict[str, object] = {"analyzer_version": version, "only": only, "seconds": seconds}
     if observed_seconds is not None:
         meta["observed_seconds"] = observed_seconds
     atomic_json(
@@ -3930,6 +4024,27 @@ def test_compare_rejects_a_truncated_capture_against_a_full_length_one(
     # Two captures that both ran the same (short) window still compare.
     c = _cmp_session(tmp_path, "cmp_short_c", observed_seconds=6.0)
     assert compare_sessions(a, c)["schema"] == "7dtd.apm.compare.v2"
+
+
+def test_compare_matches_collector_selection_as_a_token_set(tmp_path: Path) -> None:
+    """meta.json stores the --only string the operator typed, and the collector
+    catalog resolves it to a SET: order and surrounding whitespace name the same
+    plan. The compatibility gate is about whether both sides collected the same
+    evidence, so two spellings of one plan must not be rejected as mismatched
+    (and a genuinely different selection still must be)."""
+    from apm_suite.analysis.compare import compare_sessions
+
+    layers = (("cpu", 40.0), ("io", 10.0))
+    a = _cmp_session(tmp_path, "cmp_tokens_a", only="cpu,io", layers=layers)
+    b = _cmp_session(tmp_path, "cmp_tokens_b", only=" io ,cpu", layers=layers)
+    assert compare_sessions(a, b)["schema"] == "7dtd.apm.compare.v2"
+
+    c = _cmp_session(tmp_path, "cmp_tokens_c", only="cpu", layers=(("cpu", 40.0),))
+    with pytest.raises(ValueError, match="incompatible layer coverage"):
+        compare_sessions(a, c)
+    d = _cmp_session(tmp_path, "cmp_tokens_d", only="all", layers=layers)
+    with pytest.raises(ValueError, match="incompatible collector selection"):
+        compare_sessions(a, d)
 
 
 def test_effective_seconds_prefers_the_observed_window() -> None:
@@ -6937,6 +7052,25 @@ def test_audit_manifest_is_replay_stable(tmp_path: Path, monkeypatch: pytest.Mon
     manifest = ManifestV2.model_validate(load_json(first / "manifest.json"))
     assert manifest.started_at == datetime(2026, 1, 1, tzinfo=UTC)
     assert manifest.ended_at == datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC)
+
+
+def test_audit_manifest_window_ends_when_the_collectors_stopped(tmp_path: Path) -> None:
+    """A capture cut short still records the seconds it asked for, so a
+    manifest built from that field alone claims an end time nobody measured.
+    The observed window is the measured one, and it is what the manifest must
+    report for the same reason `compare` gates on it."""
+    meta = _meta(seconds=60)
+    meta["observed_seconds"] = 12.5
+    interrupted = _session(tmp_path / "session_window")
+    atomic_json(interrupted / "meta.json", meta)
+
+    manifest, _ = audit_session(interrupted)
+    assert manifest.ended_at == datetime(2026, 1, 1, 0, 0, 12, 500000, tzinfo=UTC)
+    # A full-length run is unchanged: the observed window never exceeds the
+    # requested one, and when it is absent the requested window stands.
+    full = _session(tmp_path / "session_window_full")
+    full_manifest, _ = audit_session(full)
+    assert full_manifest.ended_at == datetime(2026, 1, 1, 0, 0, 10, tzinfo=UTC)
 
 
 def test_audit_records_unknown_start_instead_of_the_auditing_clock(tmp_path: Path) -> None:

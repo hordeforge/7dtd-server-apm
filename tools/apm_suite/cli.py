@@ -578,6 +578,11 @@ def import_bundle_command(
         else f"{result.errors} error(s), {result.warnings} warning(s)"
     )
     console.print(f"restored {escape(str(result.session))} ({outcome})")
+    # Named findings, not a count: the count cannot tell an operator whether a
+    # required document is missing or a recorded artifact hash drifted, and
+    # those two call for different next steps.
+    for finding in result.findings:
+        console.print(f"  {escape(finding)}", style="yellow" if result.valid else "red")
     # A restored session is evidence in the store: an existing index must list
     # it instead of waiting for the next capture or a manual `index`. A store
     # that was never indexed stays unindexed (import writes no index files).

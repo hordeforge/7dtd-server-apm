@@ -200,8 +200,11 @@ but it does not replicate or back up the store by itself.
   newest `APM_KEEP_SESSIONS` (default 40, `0` disables). Expired trash is purged
   on later prune runs; trash never appears in listings or indexes.
 - **Proven restore path:** `7dtd-server-apm import BUNDLE.zip` unpacks a sanitized
-  export into the store, refuses unsafe archive members, runs the same audit
-  as `finalize`, and writes a fresh integrity manifest. Exported bundles are
+  export into the store, refuses unsafe archive members, and audits the result
+  against the manifest the bundle carries before writing a fresh one: a member
+  that drifted since the export is reported by name and the recorded manifest
+  is kept, so a tampered bundle cannot be absorbed by the restore. Findings
+  are printed one per line. Exported bundles are
   lossy by design (no raw telnet drain, perf data, or stderr), so prefer
   whole-directory copies for archival fidelity and bundles for sharing.
 - **Restore drill (whole-store copies):** the `backup` copy is the archival
