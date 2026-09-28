@@ -1549,6 +1549,76 @@ def test_audit_survives_torn_meta_json(tmp_path: Path) -> None:
     assert any("meta.json" in e for e in manifest.errors)
 
 
+# --- unit: store restore verification -----------------------------------------
+
+
+def test_verify_store_reports_copied_back_store_without_writing(tmp_path: Path) -> None:
+    """A restored copy is only proven by a check that cannot heal itself: the
+    verdict must come from the recorded hashes, and no manifest may be
+    rewritten while verifying (a re-stamp would absorb the drift being looked
+    for)."""
+    root = tmp_path / "restored"
+    root.mkdir()
+    session = _session(root / "session_copy")
+    audit_session(session)
+    baseline = load_json(session / "manifest.json")
+    (session / "summary.json").write_text('{"tampered": true}\n')
+
+    result = runner.invoke(app, ["verify-store", str(root)])
+    assert result.exit_code == 1
+    assert "INVALID" in result.stdout
+    assert "summary.json" in result.stderr
+    # Read-only: the recorded baseline the failed check compared against stays.
+    assert load_json(session / "manifest.json") == baseline
+
+
+def test_verify_store_passes_intact_copy_and_flags_incomplete_sessions(tmp_path: Path) -> None:
+    root = tmp_path / "restored"
+    root.mkdir()
+    intact = _session(root / "session_intact")
+    audit_session(intact)
+    # A capture still running, or one copied before finalize: required documents
+    # missing, but nothing contradicts a recorded hash.
+    partial = root / "session_partial"
+    partial.mkdir()
+    atomic_json(partial / "meta.json", _meta())
+
+    result = runner.invoke(app, ["verify-store", str(root)])
+    assert result.exit_code == 0
+    # Rich wraps the summary line at the console width; compare unwrapped.
+    assert "1 ok, 1 incomplete, 0 invalid" in " ".join(result.stdout.split())
+    assert "incomplete  session_partial" in result.stdout
+    assert "missing or empty: report.html" in result.stderr
+
+    # --strict turns "copy what is there" into a failed drill.
+    strict = runner.invoke(app, ["verify-store", str(root), "--strict"])
+    assert strict.exit_code == 1
+
+
+def test_verify_store_reports_a_session_never_audited(tmp_path: Path) -> None:
+    """A session with no manifest.json has no integrity baseline: it must not
+    count as verified, or a copy that silently lost the manifests still looks
+    green."""
+    root = tmp_path / "restored"
+    root.mkdir()
+    session = _session(root / "session_unbaselined")
+
+    result = runner.invoke(app, ["verify-store", str(root)])
+    assert result.exit_code == 0
+    assert "incomplete" in result.stdout
+    assert "no manifest.json recorded" in result.stderr
+    assert runner.invoke(app, ["verify-store", str(root), "--strict"]).exit_code == 1
+    # The command stays read-only on a healthy store too.
+    assert not (session / "manifest.json").exists()
+
+
+def test_verify_store_rejects_a_path_that_is_not_a_store(tmp_path: Path) -> None:
+    missing = tmp_path / "not-a-store"
+    result = runner.invoke(app, ["verify-store", str(missing)])
+    assert result.exit_code == 2
+    assert "not a store directory" in result.stderr
+
+
 # --- parser fixtures ----------------------------------------------------------
 
 
@@ -4687,15 +4757,14 @@ def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
 
     (tmp_path / "session_a").mkdir()
     real_stat = Path.stat
-    seen_b = {"n": 0}
 
     def flaky_stat(self: Path, *args: Any, **kwargs: Any) -> Any:
-        # The race window sits between the listing's is_dir() (first stat) and
-        # the sort-key stat (second): only the second one finds it gone.
+        # The race window is the sort-key stat: Path.is_dir() goes through
+        # os.stat, not Path.stat, so the first Path.stat call on a listed
+        # session is the one _mtime makes. Failing on the second (as this did)
+        # never fired, and the test silently asserted plain mtime ordering.
         if self == tmp_path / "session_b":
-            seen_b["n"] += 1
-            if seen_b["n"] >= 2:
-                raise FileNotFoundError(2, "No such file or directory", str(self))
+            raise FileNotFoundError(2, "No such file or directory", str(self))
         return real_stat(self, *args, **kwargs)
 
     (tmp_path / "session_b").mkdir()

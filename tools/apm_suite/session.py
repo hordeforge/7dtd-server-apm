@@ -473,6 +473,41 @@ def verify_recorded_hashes(session: Path) -> list[str]:
     return errors
 
 
+MISSING_PREFIX = "missing or empty: "
+
+
+def missing_required_documents(session: Path) -> list[str]:
+    """Required documents that are absent or zero-length in `session`."""
+    errors: list[str] = []
+    for rel in REQUIRED:
+        try:
+            missing_or_empty = not (session / rel).is_file() or not (session / rel).stat().st_size
+        except OSError:
+            # Vanished between is_file() and stat() (concurrent prune): count
+            # it as missing, never raise.
+            missing_or_empty = True
+        if missing_or_empty:
+            errors.append(f"{MISSING_PREFIX}{rel}")
+    return errors
+
+
+def verify_session(session: Path) -> list[str]:
+    """Read-only integrity verdict for a stored session.
+
+    Checks the recorded manifest hashes, the required document set, and the
+    versioned schemas, and writes nothing. `audit_session` is the right tool
+    for the live store (it records a baseline for sessions that lack one), but
+    it rewrites manifest.json on every clean run, so it cannot answer whether
+    a restored copy is intact: the re-stamp would absorb exactly the drift the
+    check exists to find. This function is the read-only form `verify-store`
+    runs against a store copied back from backup.
+    """
+    errors = missing_required_documents(session)
+    errors += verify_recorded_hashes(session)
+    errors += _validate_documents(session)
+    return errors
+
+
 def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[ManifestV2, bool]:
     # Same untrusted-input contract as _int above: torn/hand-edited JSON must
     # degrade to "no metadata" (and a schema-validation error from
@@ -481,16 +516,7 @@ def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[Mani
     if (session / "meta.json").is_file():
         with suppress(ValueError):  # load_json raises ValueError for non-object JSON too
             meta = load_json(session / "meta.json")
-    errors: list[str] = []
-    for rel in REQUIRED:
-        try:
-            missing_or_empty = not (session / rel).is_file() or not (session / rel).stat().st_size
-        except OSError:
-            # Vanished between is_file() and stat() (concurrent prune): same
-            # contract as the artifacts walk below - count it, don't raise.
-            missing_or_empty = True
-        if missing_or_empty:
-            errors.append(f"missing or empty: {rel}")
+    errors: list[str] = missing_required_documents(session)
     # Read the baseline before anything below rewrites manifest.json.
     tampered = verify_recorded_hashes(session) if verify_recorded else []
     errors += tampered

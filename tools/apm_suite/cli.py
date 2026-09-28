@@ -35,11 +35,13 @@ from .models import as_number, layer_signals
 from .paths import REPO, apm_root, require_backends
 from .runner import backend_python, run, terminate_tree
 from .session import (
+    MISSING_PREFIX,
     audit_session,
     list_sessions,
     prune_grace_hours,
     prune_store,
     sessions_beyond_budget,
+    verify_session,
 )
 
 app = typer.Typer(help="Host-only APM for 7 Days to Die dedicated servers.", no_args_is_help=True)
@@ -251,6 +253,72 @@ def audit(
     for error in manifest.errors:
         err_console.print(f"[red]{escape(error)}[/red]")
     _exit(1 if not valid or (strict and manifest.warnings) else 0)
+
+
+# Verdict labels, aligned for readable store listings.
+_VERDICT_WIDTH = 11
+_STORE_EXTRAS = (".scenario", ".trash", "index.html")
+
+
+@app.command("verify-store")
+def verify_store(
+    store: Annotated[
+        Path | None,
+        typer.Argument(help="Store directory to verify (default: the APM session store)."),
+    ] = None,
+    strict: Annotated[
+        bool, typer.Option(help="Exit 1 for incomplete sessions too, not only invalid ones.")
+    ] = False,
+) -> None:
+    """Audit every session in a store read-only (restore drill for a copied-back store).
+
+    `audit` re-stamps manifest.json on a clean session, so it cannot answer
+    whether a restored copy is intact: the re-stamp absorbs the very drift the
+    check exists to find. This command never writes, so it can be pointed at a
+    copy pulled back from backup and its verdict trusted.
+    """
+    root = store or apm_root()
+    if not root.is_dir():
+        err_console.print(f"[red]not a store directory: {escape(str(root))}[/red]")
+        raise typer.Exit(2)
+    sessions = list_sessions(root)
+    ok = incomplete = invalid = 0
+    for session in sessions:
+        errors = verify_session(session)
+        if not (session / "manifest.json").is_file():
+            errors.append("no manifest.json recorded; artifact hashes unverified")
+        # A session whose only findings are absent required documents or a
+        # never-recorded manifest is a capture still running (or one copied
+        # before finalize), not corruption: it is reported, and only --strict
+        # fails on it.
+        unverified = bool(errors) and all(
+            error.startswith(MISSING_PREFIX) or error.startswith("no manifest.json")
+            for error in errors
+        )
+        if not errors:
+            ok += 1
+            label = "ok"
+        elif unverified:
+            incomplete += 1
+            label = "incomplete"
+        else:
+            invalid += 1
+            label = "INVALID"
+        console.print(f"{label:>{_VERDICT_WIDTH}}  {escape(session.name)}")
+        for error in errors:
+            err_console.print(f"{' ' * _VERDICT_WIDTH}  {escape(error)}")
+    # Non-session store state the copy must carry too: loadgen manifests under
+    # .scenario and the soft-delete window under .trash are both evidence.
+    present = [name for name in _STORE_EXTRAS if (root / name).exists()]
+    console.print(
+        f"verified {len(sessions)} session(s) in {escape(str(root))}: "
+        f"{ok} ok, {incomplete} incomplete, {invalid} invalid"
+    )
+    if present:
+        console.print("store entries present: " + ", ".join(present))
+    else:
+        console.print("no .scenario, .trash, or index.html in this store")
+    _exit(1 if invalid or (strict and incomplete) else 0)
 
 
 @app.command()

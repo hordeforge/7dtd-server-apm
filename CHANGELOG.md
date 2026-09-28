@@ -34,6 +34,17 @@ to 2.3.0 and 2.2.4 stays skipped.
   the bad argument instead of quietly benchmarking the default iteration
   count, and `apm jitmap FULL` matches its case-insensitive verb.
 
+## Unreleased - host CLI
+
+- `verify-store [STORE]`: read-only integrity audit of every session in a
+  session store, so a whole-store copy-back can be proven instead of assumed.
+  Reports `ok` / `incomplete` (no recorded manifest, or required documents
+  still missing) / `INVALID` (hash drift, schema failure, escaping recorded
+  path) per session, exits non-zero on `INVALID` (`--strict` also on
+  `incomplete`), and writes nothing. `audit` cannot serve this role: it
+  re-stamps `manifest.json` on a clean session, so on a restored copy it would
+  absorb the drift it is meant to detect.
+
 ## 2.2.0 - host CLI - 2026-08-26
 
 First CLI version bump since the initial drop. Everything below accumulated

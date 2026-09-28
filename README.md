@@ -188,6 +188,7 @@ uv run 7dtd-server-apm monitor --interval 5
 uv run 7dtd-server-apm compare BASELINE CANDIDATE
 uv run 7dtd-server-apm budget CANDIDATE --baseline BASELINE
 uv run 7dtd-server-apm export SESSION -o support-bundle.zip
+uv run 7dtd-server-apm verify-store ~/.local/share/7dtd-server-apm   # restore drill
 uv run 7dtd-server-apm prune --keep 20 --dry-run
 uv run 7dtd-server-apm flame build SESSION_DIR
 uv run 7dtd-server-apm bridge --help

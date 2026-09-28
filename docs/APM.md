@@ -125,6 +125,7 @@ requested `apm` command responses.
 
 ```bash
 uv run 7dtd-server-apm export SESSION -o support.zip
+uv run 7dtd-server-apm verify-store            # read-only restore check
 uv run 7dtd-server-apm prune --keep 20 --dry-run
 ```
 
@@ -161,6 +162,26 @@ but it does not replicate or back up the store by itself.
   as `finalize`, and writes a fresh integrity manifest. Exported bundles are
   lossy by design (no raw telnet drain, perf data, or stderr), so prefer
   whole-directory copies for archival fidelity and bundles for sharing.
+- **Restore drill (whole-store copies):** a `rsync` copy-back is the archival
+  path, and its integrity claim is only as good as the last drill.
+  `7dtd-server-apm verify-store [STORE]` audits every session in a store
+  against its recorded `manifest.json` and the versioned schemas, then exits
+  non-zero when any session is invalid. It writes nothing: `audit` re-stamps
+  `manifest.json` on a clean session, which would absorb the very drift a
+  restore check looks for, so it cannot be used on a restored copy. Run it on
+  the copy after every restore, and periodically against the live store.
+  - `ok`: every recorded artifact matches its hash, required documents present,
+    schemas valid.
+  - `INVALID`: hash drift, a schema failure, or a recorded path that escapes the
+    session. Restore is incomplete; re-copy the affected session.
+  - `incomplete`: a session still capturing, or one copied before `finalize`
+    and with no `manifest.json` recorded, so its hashes were never baselined.
+    Not a failure, and `--strict` fails the drill on it.
+- **Silent backup failure:** an `rsync` job that dies on a permissions error
+  still exits `0` if it ran with some files, and a store that stops growing is
+  indistinguishable from a quiet server. Watch the store, not the job: alert on
+  the age of the newest `session_*` directory and on a stalled `mtime` for
+  `<store>/index.html`, both of which `verify-store` lists.
 
 ## Related docs
 
