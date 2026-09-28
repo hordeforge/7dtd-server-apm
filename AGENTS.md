@@ -33,6 +33,7 @@ Workspace root guide: [`hordeforge/.github` MODDING_BEST_PRACTICES.md](https://g
 uv sync
 uv run 7dtd-server-apm doctor
 make check                 # ruff, shellcheck, html/webui lint, format, mypy, pytest, bpftrace checks
+uv tool install pre-commit # not a project dep; hooks use language: system and call make
 pre-commit install         # commit-time ruff, format, mypy, shellcheck; pre-push adds webui/html/pytest
 make bridge-build
 make bridge-install DS="/path/to/7 Days to Die Dedicated Server"
@@ -121,10 +122,7 @@ Do not silently install or rewrite sibling trees.
 
 ## Stock-game research -> 7dtd-engine-research
 
-Anything that studies the **stock** dedicated server belongs in
-[`../7dtd-engine-research/`](../7dtd-engine-research/), not here: reverse-engineering
-narratives (`docs/`), the Mono.Cecil dump tooling (`tools/`), wire/protocol
-analysis, and engine cost/loop RE. This repo owns host measurement, profiling, and budgeting;
-it does not host stock-game RE docs or dumpers. When RE is needed, add it
-under `../7dtd-engine-research/` and link back. How to RE:
-[`../7dtd-engine-research/docs/meta/re-methodology.md`](../7dtd-engine-research/docs/meta/re-methodology.md).
+Stock-server RE (narratives, Cecil dumps, wire and loop analysis) lives in
+[`../7dtd-engine-research/`](../7dtd-engine-research/), per the workspace rule
+of the same name. This repo owns host measurement, profiling, and budgeting.
+Method: [`re-methodology.md`](../7dtd-engine-research/docs/meta/re-methodology.md).
