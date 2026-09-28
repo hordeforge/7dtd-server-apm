@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import stat
 import sys
 import time
 from collections.abc import Callable, Iterable, Iterator
@@ -216,12 +217,14 @@ def sessions_beyond_budget(
     def _size(path: Path) -> int:
         total = 0
         for f in path.rglob("*"):
-            if not f.is_file():
-                continue
+            # One stat per entry: is_file() then stat() is two syscalls and a
+            # racy pair, and a file can vanish between them.
             try:
-                total += f.stat().st_size
+                info = f.stat()
             except OSError:
                 continue
+            if stat.S_ISREG(info.st_mode):
+                total += info.st_size
         return total
 
     sizes = {p: _size(p) for p in sessions}

@@ -24,6 +24,8 @@ from .flame_delta import load_weights
 # Thresholds: evidence below these never fires a rule (no word-matching noise).
 NATIVE_SHARE_MIN = 0.005  # >= 0.5% of total sampled frame weight
 SECTION_SCORE_MIN = 1.0  # >= 1 ms per call (p95 preferred)
+# Frames named per rule in a bridge's native evidence block.
+NATIVE_FRAMES_MAX = 10
 
 # rule id -> (layer, ((signal name, minimum), ...)); any signal at/over its
 # minimum counts as structured evidence for the rule.
@@ -395,6 +397,11 @@ def load_speedscope_frames(session: Path) -> list[tuple[str, int]]:
 def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, Any]]:
     """Extract section stats from managed bridge JSON dumps or app scrapes."""
     sections: list[dict[str, Any]] = []
+    # Dedup by canonical form, not by name: two same-named sections with
+    # different counters both reach section_rank, which keeps the best-scoring
+    # one. A list `not in` scan would be quadratic in the sections collected,
+    # and a deep-mode snapshot carries thousands.
+    seen: set[str] = set()
 
     def ingest_obj(obj: object) -> None:
         # Imported app/*.json sweeps and named dumps are re-read without schema
@@ -403,7 +410,11 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
         if not isinstance(obj, dict):
             return
         for section in obj.get("sections") or []:
-            if isinstance(section, dict) and section.get("name") and section not in sections:
+            if not isinstance(section, dict) or not section.get("name"):
+                continue
+            key = json.dumps(section, sort_keys=True)
+            if key not in seen:
+                seen.add(key)
                 sections.append(section)
 
     def ingest_file(path: Path) -> None:
@@ -510,19 +521,52 @@ def layer_state(summary: dict[str, Any]) -> tuple[set[str], dict[str, dict[str, 
     return collected, signals
 
 
-def _native_evidence(
-    rule: dict[str, Any], frames: list[tuple[str, int]], total_weight: int
-) -> tuple[list[dict[str, Any]], float]:
-    patterns = rule.get("native_any") or []
-    if not patterns or not total_weight:
-        return [], 0.0
-    matched: list[dict[str, Any]] = [
-        {"frame": name, "weight": weight}
-        for name, weight in frames
-        if any(pattern in name for pattern in patterns)
-    ]
-    share = sum(int(m["weight"]) for m in matched) / total_weight
-    return matched[:10], share
+_NATIVE_SCAN: tuple[re.Pattern[str], list[tuple[str, tuple[int, ...]]]] | None = None
+
+
+def _native_scanner() -> tuple[re.Pattern[str], list[tuple[str, tuple[int, ...]]]]:
+    """Every rule's `native_any` pattern as one alternation, plus the rule
+    indexes each pattern feeds. Matching rule by rule re-tested every pattern
+    against every frame once per rule, and a folded profile carries hundreds
+    of thousands of unique frames.
+    """
+    global _NATIVE_SCAN
+    if _NATIVE_SCAN is None:
+        pattern_rules: dict[str, set[int]] = {}
+        for index, rule in enumerate(RULES):
+            for pattern in rule.get("native_any") or []:
+                pattern_rules.setdefault(str(pattern), set()).add(index)
+        scanner = re.compile("|".join(re.escape(pattern) for pattern in pattern_rules))
+        _NATIVE_SCAN = (scanner, [(p, tuple(sorted(i))) for p, i in pattern_rules.items()])
+    return _NATIVE_SCAN
+
+
+def _native_evidence_by_rule(
+    frames: list[tuple[str, int]], total_weight: int
+) -> dict[int, tuple[list[dict[str, Any]], float]]:
+    """Rule index -> (top frames, share of total sampled weight), one pass.
+
+    The alternation is a prefilter: a frame that matches no pattern skips the
+    per-pattern substring tests entirely, so the common case costs one C-level
+    scan instead of one per pattern per rule.
+    """
+    if not total_weight:
+        return {}
+    scanner, pattern_rules = _native_scanner()
+    top: dict[int, list[dict[str, Any]]] = {}
+    weights: dict[int, int] = {}
+    for name, weight in frames:
+        if not scanner.search(name):
+            continue
+        for pattern, indexes in pattern_rules:
+            if pattern not in name:
+                continue
+            for index in indexes:
+                weights[index] = weights.get(index, 0) + int(weight)
+                matched = top.setdefault(index, [])
+                if len(matched) < NATIVE_FRAMES_MAX:
+                    matched.append({"frame": name, "weight": weight})
+    return {index: (top[index], weight / total_weight) for index, weight in weights.items()}
 
 
 def _signal_evidence(rule_id: str, signals: dict[str, dict[str, Any]]) -> dict[str, float]:
@@ -561,6 +605,7 @@ def match_rules(
 ) -> list[dict[str, Any]]:
     total_weight = sum(weight for _, weight in frames)
     section_score = _section_scores(top_sections)
+    native_by_rule = _native_evidence_by_rule(frames, total_weight)
     hits = []
 
     def score_of(token: str) -> float:
@@ -569,12 +614,12 @@ def match_rules(
             return direct
         return section_score.get(token.rsplit(".", 1)[-1], 0.0)
 
-    for rule in RULES:
+    for index, rule in enumerate(RULES):
         required = REQUIRED_LAYER.get(str(rule["id"]))
         if required and required not in collected_layers:
             continue
 
-        native_frames, native_share = _native_evidence(rule, frames, total_weight)
+        native_frames, native_share = native_by_rule.get(index, ([], 0.0))
         signal_hits = _signal_evidence(str(rule["id"]), layer_signals)
 
         sec_hits = [

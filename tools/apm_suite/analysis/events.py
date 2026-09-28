@@ -27,6 +27,11 @@ _COUNTER_PATTERNS = (
     (r"@little_n:\s*(\d+)", "gc_little"),
     (r"@gc_n:\s*(\d+)", "gc_collect"),
 )
+# Compiled once: these run per line of a probe output, and the scrape patterns
+# run per record of a bridge.jsonl that carries whole telnet replies.
+_COUNTERS = tuple(re.compile(pattern) for pattern, _ in _COUNTER_PATTERNS)
+_GM_SPIKE = re.compile(r"gmUpdateDuration=([\d.]+)ms")
+_BRIDGE_AVG = re.compile(r"avg=([\d.]+)ms")
 
 
 class EventSink:
@@ -56,8 +61,8 @@ def parse_bt_slow(sink: EventSink, path: Path, kind: str) -> None:
     # One streamed pass instead of read-all + splitlines + three extra
     # full-text regex scans; per-line matching is equivalent because bpftrace
     # prints each map record on a single line.
-    counters = [re.compile(pattern) for pattern, _ in _COUNTER_PATTERNS]
-    counter_last: list[str | None] = [None] * len(counters)
+    counters = _COUNTERS
+    counter_last: list[str | None] = [None] * len(_COUNTERS)
     with path.open("r", encoding="utf-8", errors="replace") as stream:
         for i, line in enumerate(stream):
             if "SLOW_" in line or "SLOW " in line or "STALL_MAIN" in line or "STW_PAUSE" in line:
@@ -169,7 +174,7 @@ def parse_app_scrape(sink: EventSink, path: Path) -> None:
             # Steam IDs) with bridge output; embed only the extracted duration,
             # never the raw console text. bridge.jsonl stays the owner-only
             # evidence store and is excluded from export bundles.
-            match = re.search(r"gmUpdateDuration=([\d.]+)ms", text)
+            match = _GM_SPIKE.search(text)
             spike_ms = as_number(match.group(1)) if match else None
             duration = f"{spike_ms:.1f}ms" if spike_ms is not None else None
             sink.add(
@@ -186,7 +191,7 @@ def parse_app_scrape(sink: EventSink, path: Path) -> None:
                     **({"value": spike_ms} if spike_ms is not None else {}),
                 }
             )
-        avg_match = re.search(r"avg=([\d.]+)ms", text)
+        avg_match = _BRIDGE_AVG.search(text)
         if avg_match is not None:
             avg_ms = as_number(avg_match.group(1))
             if avg_ms is not None and avg_ms >= 33:

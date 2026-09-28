@@ -32,14 +32,28 @@ FLAME_SRC="$ANNOTATED"
   -o "$OUTDIR/profile.raw.speedscope.json" \
   --name "$TITLE (raw)" \
   --tree "$OUTDIR/flame.raw.tree.json" 2>/dev/null || true
-"$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/interactive_flame.py" "$FLAME_SRC" \
-  -o "$OUTDIR/flame.html" \
-  --title "$TITLE (annotated)" \
-  --speedscope-name "profile.speedscope.json"
-"$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/interactive_flame.py" "$FOLDED" \
-  -o "$OUTDIR/flame.raw.html" \
-  --title "$TITLE (raw)" \
-  --speedscope-name "profile.raw.speedscope.json" 2>/dev/null || true
+# The HTML builder reuses the d3 tree folded_to_speedscope.py already wrote
+# instead of re-folding and re-aggregating the same stacks; the raw tree is
+# best-effort, so fall back to the folded input when it is missing.
+emit_flame() {
+  local tree="$1" folded="$2" out="$3" title="$4" scope_name="$5"
+  if [[ -s "$tree" ]]; then
+    "$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/interactive_flame.py" --tree "$tree" \
+      -o "$out" --title "$title" --speedscope-name "$scope_name"
+  else
+    "$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/interactive_flame.py" "$folded" \
+      -o "$out" --title "$title" --speedscope-name "$scope_name"
+  fi
+}
+emit_flame "$OUTDIR/flame.tree.json" "$FLAME_SRC" "$OUTDIR/flame.html" \
+  "$TITLE (annotated)" "profile.speedscope.json"
+emit_flame "$OUTDIR/flame.raw.tree.json" "$FOLDED" "$OUTDIR/flame.raw.html" \
+  "$TITLE (raw)" "profile.raw.speedscope.json" 2>/dev/null || true
+
+# Completion marker. The capture driver re-runs this script when a previous
+# pass did not finish; without it a partially written flame set is
+# indistinguishable from a complete one.
+: >"$OUTDIR/flames.done"
 
 # helper launcher note
 cat >"$OUTDIR/OPEN_FLAMES.txt" <<EOF

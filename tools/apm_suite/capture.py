@@ -836,7 +836,15 @@ def run_capture(
     _ingest_bridge_snapshot(session, pid, no_app, started_at, seconds)
 
     folded = session / "cpu/perf/stacks.folded"
-    if folded.is_file() and folded.stat().st_size:
+    # perf_record.sh already built the flame set from this same folded file, and
+    # every step in it is another full pass over a tens-of-MB artifact for
+    # byte-identical output. The marker separates a finished build from one
+    # that died partway.
+    if (
+        folded.is_file()
+        and folded.stat().st_size
+        and not (session / "cpu/perf/flames.done").exists()
+    ):
         # A hung flame build must not block finalize.
         with suppress(subprocess.TimeoutExpired, OSError):
             subprocess.run(

@@ -10,6 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import stat
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +25,23 @@ from ..models import (
     schema_dict,
 )
 from .bridge import attribute_document, attribute_snapshot
+
+# Probe outputs are megabytes and several of these run per build; keep the
+# per-line patterns compiled and stream the matches instead of materializing
+# one list per artifact.
+_LITTLE_N = re.compile(r"@little_n:\s*(\d+)")
+_STW_SUM = re.compile(r"@stw_sum:\s*(\d+)")
+_STW_PAUSE = re.compile(r"STW_PAUSE (\d+) us")
+
+
+def _has_content(path: Path) -> bool:
+    """One stat per path: is_file() followed by stat() is two syscalls for
+    one answer, and layer availability stats every source path."""
+    try:
+        info = path.stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_size > 0
 
 
 def parse_perf_stat(text: str) -> dict[str, float]:
@@ -275,16 +293,18 @@ def _gc_layer(texts: dict[str, str]) -> LayerScore:
     # prefix of it, so counting both double-counts every slow-collect line.
     slow_gc = gc_text.count("SLOW mono_gc_collect")
     # @little_n is printed each interval as a growing cumulative; take the LAST.
-    little_hits = re.findall(r"@little_n:\s*(\d+)", gc_text)
-    little = int(little_hits[-1]) if little_hits else 0
+    little = 0
+    for match in _LITTLE_N.finditer(gc_text):
+        little = int(match.group(1))
     # Direct stop-the-world freeze: total us all threads (incl. main tick) were
     # suspended, and worst single pause. This IS the "laggy without CPU" time.
-    stw_sum = re.search(r"@stw_sum:\s*(\d+)", gc_text)
+    stw_sum = _STW_SUM.search(gc_text)
     stw_ms = int(stw_sum.group(1)) / 1000 if stw_sum else 0.0
     stw_pauses = gc_text.count("STW_PAUSE")
-    worst_stw_ms = max(
-        (int(m) / 1000 for m in re.findall(r"STW_PAUSE (\d+) us", gc_text)), default=0.0
-    )
+    worst_us = 0
+    for match in _STW_PAUSE.finditer(gc_text):
+        worst_us = max(worst_us, int(match.group(1)))
+    worst_stw_ms = worst_us / 1000
     score = min(100, slow_gc * 25 + min(40, little // 50))
     if worst_stw_ms >= 100:  # a >=100ms freeze is 2+ missed 50ms ticks
         score = max(score, 85)
@@ -310,10 +330,12 @@ def _gc_layer(texts: dict[str, str]) -> LayerScore:
 
 def _app_layer(texts: dict[str, str]) -> LayerScore:
     app = texts.get("app", "")
+    # One lowered copy: app is the joined bridge.jsonl text, megabytes.
+    lowered = app.lower()
     score = 0
-    if "TickEntities" in app or "tick" in app.lower():
+    if "TickEntities" in app or "tick" in lowered:
         score += 10
-    if "spike" in app.lower():
+    if "spike" in lowered:
         score += 30
     return LayerScore(
         layer="app_sim",
@@ -360,7 +382,7 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
     }
     for score in scores:
         wanted = layer_requested(score.layer, requested)
-        present = any(p.is_file() and p.stat().st_size for p in sources[score.layer])
+        present = any(_has_content(p) for p in sources[score.layer])
         if (
             present
             and score.layer == "app_sim"
@@ -370,7 +392,7 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
             # bridge reply. Availability is the contract here, so report the
             # layer as unavailable instead of a confidently empty one. The
             # ingested snapshot, when there is one, is still real evidence.
-            present = any(p.is_file() and p.stat().st_size for p in sources[score.layer][:1])
+            present = any(_has_content(p) for p in sources[score.layer][:1])
         score.state = "collected" if present else "unavailable" if wanted else "skipped"
         score.confidence = "medium" if score.state == "collected" else "low"
         if score.state != "collected":
