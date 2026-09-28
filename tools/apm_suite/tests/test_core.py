@@ -10,6 +10,7 @@ import stat
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -110,6 +111,41 @@ def _session(root: Path, only: str = "all") -> Path:
         if not path.is_file():
             path.write_text("ok")
     return root
+
+
+def _scaling_ladder(
+    root: Path,
+    clients: tuple[int, ...] = (100, 200, 400),
+    sections: Callable[[int], list[dict[str, object]]] | None = None,
+) -> list[Path]:
+    """A finalized-ladder fixture: one session per load level, each carrying
+    the section table `sections(load)` builds for it.
+
+    analyze_scaling needs three distinct load levels before it can fit
+    anything, so a one-session call returns no sections whatever the section
+    records contain. Ladder assertions must therefore span a real ladder or
+    they hold vacuously.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    sessions: list[Path] = []
+    # Indexed by position, not by load: a ladder may repeat a level on
+    # purpose, and the directory names still have to be distinct.
+    for index, n in enumerate(clients):
+        session = _session(root / f"session_n{index}_{n}")
+        summary = load_json(session / "summary.json")
+        summary["metadata"] = {"world": {"clients": n}}
+        atomic_json(session / "summary.json", summary)
+        atomic_json(
+            session / "csharp_bridge.json",
+            {
+                "schema": "7dtd.apm.bridge.v2",
+                "top_managed_sections": sections(n)
+                if sections is not None
+                else [{"name": "Sect", "avgMs": 2.0, "totalMs": 2.0 * n}],
+            },
+        )
+        sessions.append(session)
+    return sessions
 
 
 # --- unit: CLI + models -----------------------------------------------------
@@ -1490,7 +1526,21 @@ def test_readers_tolerate_non_object_records_in_bridge_output(tmp_path: Path) ->
     assert ranked_section_heats(session) == {"AI": 2.0}
     atomic_json(session / "csharp_bridge.json", {"top_managed_sections": {"AI": {}}})
     assert ranked_section_heats(session) == {}
-    assert analyze_scaling([session])["sections"] == []
+    # The ladder fit spans a real three-level ladder, so it is capable of
+    # returning findings: the junk record shapes are dropped and the one
+    # well-formed section still comes back ranked. A bare string, a record
+    # with no name, and a record missing totalMs are all skipped; an empty
+    # result here would mean the filter ate the valid record too.
+    ladder = _scaling_ladder(
+        tmp_path / "ladder_shape",
+        sections=lambda n: [
+            "World.TickEntities",
+            {"name": "AI", "avgMs": 2.0, "totalMs": 2.0 * n},
+            {"no_avg": 1},
+        ],
+    )
+    found = analyze_scaling(ladder)["sections"]
+    assert [f["section"] for f in found] == ["AI"]
 
 
 def test_scaling_and_compare_tolerate_malformed_record_blocks(tmp_path: Path) -> None:
@@ -1501,10 +1551,17 @@ def test_scaling_and_compare_tolerate_malformed_record_blocks(tmp_path: Path) ->
     summary["metadata"] = {"world": {"entities": 4, "players": 2}}
     summary["layers"] = ["cpu"]
     atomic_json(session / "summary.json", summary)
-    result = analyze_scaling([session])
-    assert result["scales"] == [2.0]
-    assert result["sections"] == []
     assert layer_state(summary) == (set(), {})
+    # The junk layer list must not cost the load level either: the fit reads
+    # world counts out of metadata, which is well-formed here.
+    assert analyze_scaling([session])["scales"] == [2.0]
+    # A whole ladder with a well-formed layer list yields the same scales and
+    # a ranked section, so the single-session call above is checked against a
+    # fit that is actually capable of producing findings.
+    ladder = _scaling_ladder(tmp_path / "ladder_ok", clients=(2, 3, 4))
+    result = analyze_scaling(ladder)
+    assert result["scales"] == [2.0, 3.0, 4.0]
+    assert [f["section"] for f in result["sections"]] == ["Sect"]
 
 
 def test_prometheus_label_escapes_every_line_terminator() -> None:
@@ -5147,35 +5204,104 @@ def test_scaling_classify_boundaries(exponent: float, expected: str) -> None:
     assert classify(exponent) == expected
 
 
-def test_scaling_zero_ms_section_does_not_crash(tmp_path: Path) -> None:
+def test_scaling_zero_ms_section_is_excluded_and_the_rest_still_fit(tmp_path: Path) -> None:
     from apm_suite.analysis.scaling import analyze_scaling
 
     # A section that is 0 ms at every load would hit math.log(0); the y>0 filter
-    # in _loglog_slope must keep analyze_scaling from crashing.
-    sessions = []
-    for n in (100, 200, 400):
-        s = tmp_path / f"session_z{n}"
-        s.mkdir()
-        atomic_json(
-            s / "summary.json",
-            {
-                "schema": "7dtd.apm.summary.v2",
-                "session_id": s.name,
-                "metadata": {"world": {"clients": n}},
-            },
-        )
-        atomic_json(
-            s / "csharp_bridge.json",
-            {
-                "schema": "7dtd.apm.bridge.v2",
-                "top_managed_sections": [{"name": "Idle.Section", "avgMs": 0.0, "totalMs": 0.0}],
-            },
-        )
-        sessions.append(s)
+    # in _loglog_slope must keep analyze_scaling from crashing. A measurable
+    # sibling rides along so the findings list is non-empty: an all-zero
+    # ladder returning [] would satisfy "Idle is absent" whatever the filter
+    # did, and a filter that dropped every section would pass unnoticed.
+    sessions = _scaling_ladder(
+        tmp_path / "ladder_zero",
+        sections=lambda n: [
+            {"name": "Idle.Section", "avgMs": 0.0, "totalMs": 0.0},
+            {"name": "Measured.Section", "avgMs": 2.0, "totalMs": 2.0 * n},
+        ],
+    )
     result = analyze_scaling(sessions, "players")  # must not raise
     assert result["schema"] == "7dtd.apm.scaling.v1"
-    # No fittable exponent for an all-zero section -> excluded from findings.
-    assert all(f["section"] != "Idle.Section" for f in result["sections"])
+    # No fittable exponent for an all-zero section -> excluded from findings,
+    # and its sibling survives the same pass.
+    assert [f["section"] for f in result["sections"]] == ["Measured.Section"]
+
+
+def test_scaling_command_ranks_a_ladder_and_writes_the_json_ranking(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`scaling` is the operator-facing wrapper over analyze_scaling, and its
+    two output channels are separate: the console table and the --output JSON
+    a downstream tool reads. Both must carry the same ranking, worst first,
+    and the console table must escape section names that come from an
+    untrusted imported bundle."""
+    sessions = _scaling_ladder(
+        tmp_path / "ladder_cli",
+        sections=lambda n: [
+            {"name": "Flat.Section", "avgMs": 2.0, "totalMs": 2.0 * n},
+            {"name": "Net[green]X", "avgMs": (n / 100) ** 2, "totalMs": (n / 100) ** 3},
+        ],
+    )
+    output = tmp_path / "ranking.json"
+    result = runner.invoke(
+        app,
+        ["scaling", *(str(s) for s in sessions), "--output", str(output)],
+        env={"COLUMNS": "4096"},
+    )
+
+    assert result.exit_code == 0, result.output
+    ranking = load_json(output)
+    assert ranking["schema"] == "7dtd.apm.scaling.v1"
+    assert ranking["scale_key"] == "players"
+    # Worst-scaling section first in both channels, not insertion order.
+    assert [f["section"] for f in ranking["sections"]][0] == "Net[green]X"
+    assert "Net[green]X" in result.stdout
+    # The bracketed name is escaped, so the table shows the literal section
+    # rather than rich consuming the tag as markup.
+    assert "[green]" not in result.stdout.replace("Net[green]X", "")
+    assert "super-linear" in result.stdout
+
+
+def test_scaling_command_rejects_a_ladder_of_fewer_than_three_distinct_loads(
+    tmp_path: Path,
+) -> None:
+    """Three sessions at two load levels cannot support a log-log fit, and the
+    operator has to be told which value collapsed so they recapture rather than
+    read a fit off two points."""
+    sessions = _scaling_ladder(tmp_path / "ladder_two_levels", clients=(100, 200, 200))
+    result = runner.invoke(
+        app, ["scaling", *(str(s) for s in sessions)], env={"COLUMNS": "4096"}
+    )
+
+    assert result.exit_code == 2
+    assert result.stdout == "", "error leaked to stdout"
+    squashed = _squashed(result.stderr)
+    assert "only2distinctplayersvalue(s)" in squashed
+    # The levels that survived name what the operator has to recapture.
+    assert "100.0,200.0" in squashed
+
+
+def test_finalize_command_skip_bridge_writes_no_bridge_analysis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--skip-bridge is the operator's opt-out from managed correlation; the
+    rest of the finalize chain must still run and write its artifacts, and no
+    csharp_bridge.json may appear for a stage that was skipped."""
+    monkeypatch.setenv("SEVENDTD_APM_DIR", str(tmp_path / "store"))
+    session = tmp_path / "session_skip_bridge"
+    (session / "sync").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "sync/futex.bt.out").write_text("SLOW_FUTEX tid=1 wait=9ms\n")
+
+    def boom(_session: Path) -> None:
+        raise AssertionError("the bridge stage ran despite --skip-bridge")
+
+    monkeypatch.setattr("apm_suite.finalize.analyze", boom)
+    result = runner.invoke(app, ["finalize", str(session), "--skip-bridge"])
+
+    assert result.exit_code == 0, result.output
+    for artifact in REQUIRED:
+        assert (session / artifact).is_file(), f"missing {artifact}"
+    assert not (session / "csharp_bridge.json").exists()
 
 
 # --- compare sessions ------------------------------------------------------------
@@ -7291,32 +7417,22 @@ def test_run_echo_survives_markup_like_arguments(capsys: pytest.CaptureFixture[s
 def test_scaling_tied_exponents_rank_deterministically(tmp_path: Path) -> None:
     from apm_suite.analysis.scaling import analyze_scaling
 
-    # Every section fits the same exponent (all linear), so the rounded sort
-    # key ties everywhere; name order (not per-process set order) must decide.
-    sessions = []
-    for n in (100, 200, 400):
-        s = tmp_path / f"session_n{n}"
-        s.mkdir()
-        atomic_json(
-            s / "summary.json",
-            {
-                "schema": "7dtd.apm.summary.v2",
-                "session_id": s.name,
-                "metadata": {"world": {"clients": n}},
-            },
-        )
-        atomic_json(
-            s / "csharp_bridge.json",
-            {
-                "schema": "7dtd.apm.bridge.v2",
-                "top_managed_sections": [
-                    {"name": f"Sect{c}", "avgMs": float(10 - c), "totalMs": float(10 - c) * n}
-                    for c in range(10)
-                ],
-            },
-        )
-        sessions.append(s)
+    # Every section fits the same exponents (constant per-call cost, linear
+    # total), so the rounded sort key ties everywhere; name order (not
+    # per-process set order) must decide.
+    sessions = _scaling_ladder(
+        tmp_path / "ladder_tied",
+        sections=lambda n: [
+            {"name": f"Sect{c}", "avgMs": float(10 - c), "totalMs": float(10 - c) * n}
+            for c in range(10)
+        ],
+    )
     result = analyze_scaling(sessions, "players")
+    # Guard the ranking assertion: an empty findings list is trivially sorted,
+    # so a fit that dropped every section would satisfy the check below.
+    assert len(result["sections"]) == 10
+    assert {f["per_call_exponent"] for f in result["sections"]} == {0.0}
+    assert {f["total_exponent"] for f in result["sections"]} == {1.0}
     names = [f["section"] for f in result["sections"]]
     assert names == sorted(names)
 
