@@ -60,8 +60,14 @@ exclude = ["tools/apm_suite/tests"]
 # (the wheel carries apm_suite alone, and the collector backends are documented
 # as checkout-only). The sdist exists to build that wheel, so its inputs are
 # listed here and nowhere else.
+#
+# The top-level files are anchored with a leading slash on purpose: an
+# unanchored "README.md" matches by filename at any depth, so it dragged
+# tools/README.md, tools/apm/README.md, tools/host_profiler/README.md, and
+# bridge/README.md into the sdist. Hatchling also force-adds the root
+# .gitignore, which is harmless and cannot be filtered out.
 [tool.hatch.build.targets.sdist]
-include = ["tools/apm_suite", "pyproject.toml", "README.md", "LICENSE", "CHANGELOG.md"]
+include = ["tools/apm_suite", "/pyproject.toml", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 exclude = ["tools/apm_suite/tests"]
 
 [tool.ruff]

@@ -77,6 +77,10 @@ to 2.3.0 and 2.2.4 stays skipped.
 - Packaging: the sdist now has an explicit include list. Hatchling's default
   shipped the whole checkout (docs, plans, bridge sources, shell collectors);
   the sdist exists to build the wheel, which carries `apm_suite` alone.
+- Packaging: the sdist's top-level file patterns are anchored, so `README.md`
+  no longer matches by name at any depth and pulls `tools/README.md`,
+  `tools/apm/README.md`, `tools/host_profiler/README.md`, and
+  `bridge/README.md` into the archive the wheel does not need.
 - Packaging: `[project.urls]` gained `Homepage`, `Issues`, and `Changelog`.
 - Packaging: `make bridge-install` now prunes shipped files that the new build
   no longer produces, so a dropped or renamed WebMod asset cannot linger in
