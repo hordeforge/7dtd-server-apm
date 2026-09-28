@@ -159,7 +159,10 @@ namespace DtdApmBridge
         }
         public static bool ShouldSample(int id, bool deep)
         {
-            if (id < 0 || id >= _metricCount) return false;
+            // Volatile read: _metricCount grows only under Gate, but this guard
+            // runs on the hot path for every instrumented call without the
+            // lock, so the bound must be a defined read, not a cached one.
+            if (id < 0 || id >= Volatile.Read(ref _metricCount)) return false;
             if (!deep) return true;
             int sequence = Interlocked.Increment(ref _sampleSequence);
             return sequence % BridgeMod.Config.DeepSampleRate == 0;
@@ -214,17 +217,20 @@ namespace DtdApmBridge
         }
         public static void EndFrame()
         {
-            // Local copy: Reset() zeroes _updateStart from the console thread
-            // between the check and the math below would turn ms into
-            // time-since-boot and fire a bogus spike + export.
-            long updateStart = _updateStart;
-            if (updateStart == 0) return;
-            double ms = (Stopwatch.GetTimestamp() - updateStart) * 1000.0 / Stopwatch.Frequency;
-            bool spike = ms >= BridgeMod.Config.SpikeThresholdMs;
+            // _updateStart is written under Gate by BeginFrame (main thread) and
+            // by Reset (console thread), so it is read under Gate here too: an
+            // unsynchronized read can observe the pre-Reset value after a
+            // concurrent `apm reset` zeroed it, turning ms into time-since-boot
+            // and firing a bogus spike + export. The frame math is a few
+            // arithmetic ops, cheap enough to keep inside the lock.
             long now = Stopwatch.GetTimestamp();
-            bool export; double lastTick;
+            double ms, lastTick; bool spike, export;
             lock (Gate)
             {
+                long updateStart = _updateStart;
+                if (updateStart == 0) return;
+                ms = (now - updateStart) * 1000.0 / Stopwatch.Frequency;
+                spike = ms >= BridgeMod.Config.SpikeThresholdMs;
                 _updateStart = 0; _lastUpdate = ms; _updates++; _updateTotal += ms; if (ms > _updateMax) _updateMax = ms;
                 if (spike) _updateSpikes++;
                 export = BridgeMod.Config.PeriodicExportSeconds > 0 && (_nextExport == 0 || now >= _nextExport);

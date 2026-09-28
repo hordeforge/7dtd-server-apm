@@ -280,6 +280,21 @@ def _move_into_trash(trash: Path, session: Path) -> OSError | None:
     still surfaces. A vanished source means a concurrent prune won outright:
     reported as success, matching the store-race contract of the callers.
     """
+    # Stamp the grace clock BEFORE the entry becomes visible in the trash: the
+    # directory mtime is the capture date, so a long-lived session would look
+    # expired the moment it is trashed. Stamping after the rename leaves a
+    # window where a concurrent purge_expired_trash stats the freshly renamed
+    # entry, still sees the capture date, and rmtree's it inside the grace
+    # window (its own stamp then raises on the vanished path). rename(2)
+    # carries the mtime across, so the entry is correct the instant it appears.
+    try:
+        os.utime(session, None)
+    except FileNotFoundError:
+        return None  # a concurrent prune got there first; the end state holds
+    except OSError:
+        # Untouchable mtime (perms, exotic fs) is not a prune failure: the
+        # rename below still decides the outcome, exactly as before.
+        pass
     for _ in range(16):
         candidate = _free_trash_target(trash, session.name)
         try:
@@ -292,10 +307,6 @@ def _move_into_trash(trash: Path, session: Path) -> OSError | None:
             if candidate.exists():
                 continue  # lost that name to a racing prune; take the next
             return error
-        # Stamp the grace clock at trash time: the directory mtime is the
-        # capture date, which would expire long-lived evidence the moment
-        # it is trashed.
-        os.utime(candidate, None)
         # The rename itself must survive power loss like every write.
         sync_parent_directory(candidate)
         return None

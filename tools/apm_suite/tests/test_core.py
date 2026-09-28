@@ -4929,6 +4929,44 @@ def test_remove_sessions_retries_trash_name_lost_to_concurrent_prune(
     assert not doomed.exists()
 
 
+def test_remove_sessions_stamps_grace_clock_before_the_entry_is_visible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The trash mtime must already be current when the rename publishes the
+    entry. A capture-date mtime stamped after the rename leaves a window where a
+    concurrent purge_expired_trash reads it as long expired and rmtree's the
+    session inside its own grace window (and makes the stamp raise)."""
+    import time as time_mod
+
+    from apm_suite.session import remove_sessions
+
+    store = tmp_path / "store"
+    doomed = store / "session_old"
+    doomed.mkdir(parents=True)
+    (doomed / "summary.json").write_text("x")
+    captured = 1_700_000_000  # deterministic capture date, years before the cutoff
+    os.utime(doomed, (captured, captured))
+
+    real_replace = os.replace
+    seen: list[float] = []
+
+    def observing_replace(src: str | os.PathLike[str], dst: str | os.PathLike[str]) -> None:
+        # Stand in for a concurrent purge that stats the entry the instant
+        # rename(2) publishes it.
+        real_replace(src, dst)
+        seen.append(Path(dst).stat().st_mtime)
+
+    monkeypatch.setattr("apm_suite.session.os.replace", observing_replace)
+    results = list(remove_sessions([doomed], grace_hours=24))
+
+    assert results == [(doomed, None)]
+    # Kernel file timestamps come from a coarse clock, so compare against the
+    # capture date, not the wall clock read a moment ago.
+    assert seen and seen[0] > captured + 3600
+    assert seen[0] <= time_mod.time()
+    assert (store / ".trash" / "session_old" / "summary.json").read_text() == "x"
+
+
 def test_purge_expired_trash_treats_entry_gone_mid_purge_as_success(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
