@@ -37,6 +37,11 @@ def _sudo() -> dict[str, Any]:
             "ok": False,
             "fix": "sudo -n true timed out after 3s; check sudo/PAM configuration",
         }
+    except OSError as error:
+        # which() found it a moment ago, so this is a launch failure (a lost +x
+        # bit, an unreadable interpreter, a bind mount that went away): one
+        # failed check, not a reason to abort the whole doctor report.
+        return {"ok": False, "fix": f"cannot run {path}: {error}"}
     return {
         "ok": result.returncode == 0,
         "fix": None

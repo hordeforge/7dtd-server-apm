@@ -65,9 +65,13 @@ def export_metrics(session: Path, output: Path) -> None:
     health_path = session / "health.json"
     health: dict[str, object] = {}
     if health_path.is_file():
+        # OSError alongside ValueError, as on the summary.json read above: a
+        # document that vanished under a concurrent prune after the is_file()
+        # gate is a read failure, and letting it escape would reach the CLI's
+        # output-write handler and blame the destination path instead.
         try:
             health = load_json(health_path)
-        except ValueError as error:
+        except (ValueError, OSError) as error:
             raise MetricError(f"unreadable {health_path}: {error}") from None
     if not health:
         health = summary.get("health") or {}
@@ -82,7 +86,7 @@ def export_metrics(session: Path, output: Path) -> None:
     if bridge_path.is_file():
         try:
             attribution = load_json(bridge_path).get("attribution") or {}
-        except ValueError as error:
+        except (ValueError, OSError) as error:
             raise MetricError(f"unreadable {bridge_path}: {error}") from None
     subsystems = object_list(attribution.get("subsystems"))
     if subsystems:

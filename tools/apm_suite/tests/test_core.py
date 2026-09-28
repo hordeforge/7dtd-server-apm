@@ -5615,6 +5615,67 @@ def test_prometheus_rejects_corrupt_health_json_cleanly(tmp_path: Path) -> None:
     assert str(session / "health.json") in _squashed(result.stderr)
 
 
+def test_prometheus_unreadable_bridge_json_names_the_input(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A csharp_bridge.json that cannot be read is a read failure naming its
+    path, not a write failure blaming --output: the two OSError sites (this and
+    health.json) have to match the guarded summary read."""
+    session = _session(tmp_path / "session_unreadable_bridge")
+    (session / "csharp_bridge.json").write_text('{"attribution": {}}')
+    original = Path.open
+
+    def deny(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name == "csharp_bridge.json":
+            raise PermissionError(13, "Permission denied")
+        return original(self, *args, **kwargs)
+
+    out = tmp_path / "metrics.txt"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(Path, "open", deny)
+        result = runner.invoke(
+            app, ["prometheus", str(session), "--output", str(out)], env={"COLUMNS": "4096"}
+        )
+    assert result.exit_code == 2
+    stderr = _squashed(result.stderr)
+    assert str(session / "csharp_bridge.json") in stderr
+    assert str(out) not in stderr
+    assert not out.exists()
+
+
+def test_collector_result_write_failure_does_not_abort_the_launch_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Recording a result must not be able to take the pipeline down: the launch
+    loop writes a result for every skipped and unavailable collector, so a full
+    disk there aborts the loop and loses every collector that had not started
+    yet. The failure is warned and the remaining collectors still launch."""
+    session = tmp_path / "session_result_write"
+    for sub in ("app", "runtime", "threads", "sync", "scheduler", "cpu", "memory", "io", "bt"):
+        (session / sub).mkdir(parents=True, exist_ok=True)
+    ctx = CaptureContext(session=session, pid=1234, comm="7DaysToDieServe", seconds=5)
+    launched: list[str] = []
+    real_popen = subprocess.Popen
+
+    def failing_json(path: Path, value: Any) -> None:
+        if path.name == "app.result.json":
+            raise OSError(28, "No space left on device")
+        atomic_json(path, value)
+
+    def fake_popen(cmd: list[str], *args: Any, **kwargs: Any) -> Any:
+        launched.append(Path(cmd[1]).name)
+        return real_popen(["true"], *args, **kwargs)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(capture, "atomic_json", failing_json)
+        patch.setattr(subprocess, "Popen", fake_popen)
+        capture._launch_collectors(ctx, "threads", False, [])
+    captured = capsys.readouterr()
+    assert "threads.py" in launched
+    assert "No space left on device" in captured.err
+    assert "app.result.json" in (session / "WARN.txt").read_text(encoding="utf-8")
+
+
 def test_ingest_bridge_snapshot_copy_failure_warns_not_raises(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

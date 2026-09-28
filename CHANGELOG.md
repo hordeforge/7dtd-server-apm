@@ -52,6 +52,33 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 - Export: `app/bridge.jsonl` is created 0600 even when `app_scrape.py` runs
   standalone against a caller-chosen `--out`; a capture session was already
   0700, so this only closes the non-capture invocation.
+- Capture: a collector result that cannot be written (full disk, unwritable
+  session directory) is warned into `WARN.txt` and the launch loop continues.
+  The loop records a result for every skipped and unavailable collector, so the
+  write used to abort the loop and lose every collector that had not started
+  yet, before finalize or the audit ran.
+- Capture: the launch loop and the per-collector classification now take one
+  stat to decide an artifact is a regular file with content, so an entry
+  removed by a concurrent prune reads as no evidence instead of raising.
+- Prometheus: an unreadable `health.json` or `csharp_bridge.json` is reported
+  by its own path, as the `summary.json` read already was. A read failure
+  reached the command's output-write handler and blamed `--output` for a
+  destination that was never touched.
+- Scenario: a loadgen manifest that cannot be statted, read, or written is
+  reported and the attach is skipped, matching the stats copy above it. The
+  capture and its evidence were already on disk; a manifest that lost the race
+  with a concurrent store cleanup no longer aborts the audit and the scenario
+  exit code with a traceback.
+- Report: a summary, health, events, or bridge document that cannot be read is
+  named on stderr while the report renders without it. The page is a summary,
+  not a source of truth, so a malformed document still degrades rather than
+  failing the render stage; it just no longer degrades silently.
+- Doctor: a `sudo` that cannot be launched (lost `+x`, unreadable interpreter)
+  reports as a failed check with its own reason instead of aborting the whole
+  report on an unhandled `OSError`.
+- Collectors: `proc_sample.py` bounds its `find_server.sh` pid lookup, so a
+  wedged locator is reported as a missing pid instead of hanging the collector
+  before its first sample.
 
 - Events: past the 2000-event retention bound the timeline keeps the most
   severe events, newest first within a severity, instead of the first ones

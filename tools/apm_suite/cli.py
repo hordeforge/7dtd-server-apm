@@ -1152,11 +1152,23 @@ def _attach_workload_manifest(session: Path, workload: Path, label: str, bot_mod
     the loadgen actually wrote it: a torn, non-object, or empty write (loadgen
     killed mid-flush) must not crash the attach after the capture succeeded.
     """
-    if workload.stat().st_size == 0:
+    try:
+        empty = workload.stat().st_size == 0
+    except OSError as error:
+        # The store can disappear under this run (unmounted volume, an operator
+        # clearing .scenario). The capture itself already succeeded, so this
+        # reports the missing manifest and leaves the session and its audit to
+        # run, like every other attach failure below.
+        err_console.print(
+            f"[red]loadgen manifest unreadable, not attached: "
+            f"{escape(str(workload))}: {escape(str(error))}[/red]"
+        )
+        return False
+    if empty:
         return False
     try:
         doc = json_loads(read_text(workload), workload)
-    except ValueError as error:
+    except (ValueError, OSError) as error:
         err_console.print(
             f"[red]loadgen manifest unreadable, not attached: "
             f"{escape(str(workload))}: {escape(str(error))}[/red]"
@@ -1173,7 +1185,17 @@ def _attach_workload_manifest(session: Path, workload: Path, label: str, bot_mod
     doc.setdefault("workload", {})["botMode"] = bot_mode or doc.get("workload", {}).get(
         "botMode", "auto"
     )
-    atomic_json(session / "workload.json", doc)
+    try:
+        atomic_json(session / "workload.json", doc)
+    except OSError as error:
+        # Same contract as the read above: the capture and its evidence are
+        # already on disk, so a failed attach is reported, not raised through
+        # the audit and the scenario exit code.
+        err_console.print(
+            f"[red]workload manifest not written: "
+            f"{escape(str(session / 'workload.json'))}: {escape(str(error))}[/red]"
+        )
+        return False
     return True
 
 

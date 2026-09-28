@@ -28,6 +28,12 @@ from typing import IO, Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.io import force_utf8_stdio
 
+# Bounded pid discovery: without --pid the sampler shells out to find_server.sh,
+# and an unbounded child (a wedged /proc walk, a stuck pager on the same pty)
+# would hang the collector before its first sample. Long enough for a slow
+# host, short enough that a stuck locator is reported rather than waited on.
+FIND_SERVER_TIMEOUT_SECONDS = 10.0
+
 
 @dataclass
 class Sample:
@@ -188,9 +194,10 @@ def main() -> int:
                     text=True,
                     encoding="utf-8",
                     errors="replace",
+                    timeout=FIND_SERVER_TIMEOUT_SECONDS,
                 ).strip()
             )
-        except (OSError, subprocess.CalledProcessError, ValueError) as error:
+        except (OSError, subprocess.SubprocessError, ValueError) as error:
             print(f"need --pid or running server: {error}", file=sys.stderr)
             return 1
 

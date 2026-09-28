@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -16,12 +17,19 @@ ENV = Environment(
 
 def _load(path: Path) -> dict[str, Any]:
     """Best-effort JSON load. A malformed artifact must not crash rendering (the
-    report is a summary, not a source of truth) - degrade to an empty dict."""
+    report is a summary, not a source of truth) - degrade to an empty dict, and
+    say so: an empty page that reads as a healthy session is the one outcome a
+    render fallback must not produce silently. load_json already names the file
+    and the parse failure in its message."""
     if not path.is_file():
         return {}
     try:
         return load_json(path)
-    except (ValueError, OSError):
+    except (ValueError, OSError) as error:
+        print(
+            f"finalize: report input unusable, rendering without {path.name}: {error}",
+            file=sys.stderr,
+        )
         return {}
 
 

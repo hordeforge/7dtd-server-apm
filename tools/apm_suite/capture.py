@@ -142,6 +142,17 @@ def count_samples(artifact: Path) -> int | None:
         return None
 
 
+def _has_bytes(path: Path) -> bool:
+    """One stat for "is a regular file carrying data": is_file() then stat() is
+    two syscalls and a racy pair, and a concurrent prune can remove the entry
+    between them. An unreadable or vanished artifact is not evidence."""
+    try:
+        info = path.stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_size > 0
+
+
 def _mono_library(pid: int) -> Path | None:
     maps = Path(f"/proc/{pid}/maps")
     try:
@@ -383,7 +394,7 @@ def _result(
     message: str = "",
 ) -> CollectorResult:
     artifact = ctx.session / spec.artifact
-    produced = artifact.is_file() and artifact.stat().st_size > 0
+    produced = _has_bytes(artifact)
     result = CollectorResult(
         name=spec.name,
         layer=spec.layer,
@@ -396,7 +407,15 @@ def _result(
         artifacts=[spec.artifact] if produced else [],
         message=message,
     )
-    atomic_json(artifact.parent / f"{spec.name}.result.json", schema_dict(result))
+    # Recording a result must never be able to take the pipeline down: it runs
+    # for skipped, unavailable, and failed collectors too, so a full disk or an
+    # unwritable session directory here would abort the launch loop and lose
+    # every collector that had not started yet. The record is reported as lost
+    # instead, and the returned result still drives the operator's console line.
+    try:
+        atomic_json(artifact.parent / f"{spec.name}.result.json", schema_dict(result))
+    except OSError as error:
+        _warn(ctx.session, f"{spec.name}: cannot record {spec.name}.result.json: {error}")
     return result
 
 
@@ -418,8 +437,7 @@ MISSING_RC = (126, 127)
 
 def _produced_bytes(session: Path, item: _Running) -> bool:
     """Whether the collector left a non-empty primary artifact behind."""
-    artifact = session / item.spec.artifact
-    return bool(artifact.is_file() and artifact.stat().st_size)
+    return _has_bytes(session / item.spec.artifact)
 
 
 def _classify(rc: int | None, produced: bool, interrupted: bool) -> tuple[CollectorStatus, str]:
