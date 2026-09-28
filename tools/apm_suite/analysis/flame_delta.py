@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from collections.abc import Iterator
+from heapq import nsmallest
 from pathlib import Path
 from typing import Any
 
@@ -47,17 +49,23 @@ def load_weights(path: Path) -> dict[str, int]:
 
 
 def delta(a: dict[str, int], b: dict[str, int], top: int = 30) -> list[dict[str, Any]]:
+    # nsmallest over a generator, not a materialized list of every frame: a
+    # perf capture holds hundreds of thousands of unique frame names, and
+    # building (then sorting) one dict per name to return the top 30 cost
+    # seconds of CPU and ~200 MB of garbage on a mid-size session.
+    #
     # Iterate a deterministic name order, not set(a) | set(b): str hashing is
     # per-process randomized, so equal-|delta| frames would survive the stable
     # sort into a run-dependent top-N and make compare output irreproducible.
-    rows: list[dict[str, Any]] = [
-        {
-            "frame": name,
-            "a": a.get(name, 0),
-            "b": b.get(name, 0),
-            "delta": b.get(name, 0) - a.get(name, 0),
-        }
-        for name in sorted(set(a) | set(b))
-    ]
-    rows.sort(key=lambda r: (-abs(int(r["delta"])), str(r["frame"])))
-    return rows[:top]
+    # nsmallest is documented as equivalent to sorted(..., key=key)[:n], so
+    # the names, the tiebreak, and the returned rows are unchanged.
+    def rows() -> Iterator[dict[str, Any]]:
+        for name in sorted(set(a) | set(b)):
+            yield {
+                "frame": name,
+                "a": a.get(name, 0),
+                "b": b.get(name, 0),
+                "delta": b.get(name, 0) - a.get(name, 0),
+            }
+
+    return nsmallest(top, rows(), key=lambda r: (-abs(int(r["delta"])), str(r["frame"])))

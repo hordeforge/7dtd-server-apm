@@ -90,6 +90,28 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
   lands in the same window, and the newest-session pick wrote the manifest
   into a session the run did not create, breaking that session's recorded
   hashes and reporting it INVALID.
+- Performance: `compare`'s flame-frame delta built and sorted one dict per
+  unique frame to return the top 20, which on a mid-size session cost ~12 s of
+  CPU and ~200 MB of garbage. It now selects with `heapq.nsmallest` over a
+  generator; the names, the tiebreak, and the returned rows are unchanged.
+- Performance: reading a session document scrubbed it for lone surrogates by
+  rebuilding every nested list and dict, several times the cost of the parse
+  itself on a multi-hundred-KB `summary.json`, and a store full of sessions is
+  read once per session per `index` write. A lone surrogate can only enter a
+  document through a `\uD800-\uDFFF` escape, so one scan of the raw text now
+  decides whether the scrub has anything to find.
+- Performance: the on-CPU ustack histogram was read into memory as text only
+  to ask whether it carried more than a header. It is now a file-size check,
+  and `summary` no longer holds a multi-megabyte copy of it for the build.
+- Performance: `prune --max-bytes` walked the whole tree of every session the
+  count policy had already doomed, only to subtract those bytes again. The
+  budget freed is what the kept sessions occupy, so only they are measured.
+- Performance: the integrity audit spent three stat calls per artifact
+  (`is_file`, `is_symlink`, `stat`) and the required-document check two, for
+  one answer each. Both are single `lstat`/`stat` calls now.
+- Fix: `scenario matrix` stubbed `capture.telnet_command` in its test instead
+  of the name `cli` calls, so the telnet-target routing the test asserts was
+  never observed and the test failed. The stub follows every other CLI test.
 
 ## 2.3.0 - host CLI - 2026-09-28
 

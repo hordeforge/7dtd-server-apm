@@ -35,7 +35,10 @@ def load_map(map_path: Path) -> tuple[list[int], list[tuple[int, str]]]:
                 continue
             starts.append(start)
             entries.append((start + size, parts[2]))
-    order = sorted(range(len(starts)), key=lambda i: starts[i])
+    # C-level key: a full-mode map carries hundreds of thousands of entries and
+    # a Python lambda per comparison dominates the sort. Stable, so entries
+    # sharing a start address keep their file order.
+    order = sorted(range(len(starts)), key=starts.__getitem__)
     return [starts[i] for i in order], [entries[i] for i in order]
 
 

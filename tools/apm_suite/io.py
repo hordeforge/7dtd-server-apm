@@ -16,6 +16,10 @@ from typing import IO, Any
 # every atomic_* writer downstream. Untrusted readers scrub them here, once,
 # instead of each consumer guessing whether its text is encodable.
 _SURROGATE_RE = re.compile("[\ud800-\udfff]")
+# A lone surrogate can only ENTER a parsed document through a \uD800-\uDFFF
+# escape: every reader here decodes UTF-8 strictly (or replaces undecodable
+# bytes), so no raw surrogate code unit survives to be handed to json.loads.
+_SURROGATE_ESCAPE = re.compile(r"\\u[dD][89abcdefABCDEF][0-9a-fA-F]{2}")
 _SURROGATE_MAP = dict.fromkeys(range(55296, 57344), "�")
 
 # Characters that must never appear in an untrusted path this tool will create
@@ -42,6 +46,20 @@ def _sans_surrogates(value: Any) -> Any:
     if isinstance(value, dict):
         return {_clean_str(key): _sans_surrogates(item) for key, item in value.items()}
     return value
+
+
+def loads_scrubbed(text: str) -> Any:
+    """json.loads with lone surrogates scrubbed, skipping the scrub when the
+    document cannot hold one.
+
+    _sans_surrogates rebuilds every nested list and dict, which costs several
+    times the parse itself on a multi-hundred-KB session document, and a
+    session store is full of them (one summary per retained session for the
+    index, plus the render and audit passes). One C-level scan of the raw text
+    decides whether that walk has anything to find.
+    """
+    value = json.loads(text)
+    return _sans_surrogates(value) if _SURROGATE_ESCAPE.search(text) else value
 
 
 def force_utf8_stdio() -> None:
@@ -201,11 +219,11 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
             if not line.strip():
                 continue
             try:
-                record = json.loads(line)
+                record = loads_scrubbed(line)
             except json.JSONDecodeError:
                 continue
             if isinstance(record, dict):
-                yield _sans_surrogates(record)
+                yield record
 
 
 def scrape_succeeded(path: Path) -> bool:
@@ -231,7 +249,7 @@ def load_json(path: Path) -> dict[str, Any]:
     # lone surrogates: imported bundles plant JSON here, and a survivor would
     # crash the writers and path joins every caller feeds it into.
     try:
-        value = _sans_surrogates(json.loads(path.read_text(encoding="utf-8")))
+        value = loads_scrubbed(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
         raise ValueError(f"cannot parse {path}: {error}") from None
     if not isinstance(value, dict):
@@ -290,7 +308,7 @@ def load_jsonc(path: Path) -> Any:
     """
     text = path.read_text(encoding="utf-8")
     try:
-        return json.loads(strip_json_comments(text))
+        return loads_scrubbed(strip_json_comments(text))
     except json.JSONDecodeError as error:
         raise ValueError(f"cannot parse {path}: {error}") from None
 

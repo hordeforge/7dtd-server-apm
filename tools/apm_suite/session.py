@@ -228,8 +228,12 @@ def sessions_beyond_budget(
                 total += info.st_size
         return total
 
-    sizes = {p: _size(p) for p in sessions}
-    total = sum(sizes.values()) - sum(sizes[p] for p in doomed)
+    # Only the sessions that SURVIVE the count policy are measured: the freed
+    # budget is the total the kept ones occupy, so walking a doomed session's
+    # whole tree only to subtract it again cost one full stat pass per session
+    # the policy had already decided to delete.
+    sizes = {p: _size(p) for p in sessions[:keep]}
+    total = sum(sizes.values())
     for session in reversed(sessions[:keep]):  # oldest kept first
         if total <= max_bytes:
             break
@@ -536,12 +540,14 @@ def missing_required_documents(session: Path) -> list[str]:
     errors: list[str] = []
     for rel in REQUIRED:
         try:
-            missing_or_empty = not (session / rel).is_file() or not (session / rel).stat().st_size
+            # One stat per document: is_file() followed by stat() is two
+            # syscalls and a racy pair for one answer.
+            info = (session / rel).stat()
         except OSError:
-            # Vanished between is_file() and stat() (concurrent prune): count
-            # it as missing, never raise.
-            missing_or_empty = True
-        if missing_or_empty:
+            # Vanished under a concurrent prune: count it as missing, never raise.
+            errors.append(f"{MISSING_PREFIX}{rel}")
+            continue
+        if not stat.S_ISREG(info.st_mode) or not info.st_size:
             errors.append(f"{MISSING_PREFIX}{rel}")
     return errors
 
@@ -612,23 +618,30 @@ def audit_session(session: Path, *, verify_recorded: bool = False) -> tuple[Mani
                 warnings.append(f"{spikes} frame spikes >= bridge threshold during capture")
     artifacts = []
     for p in sorted(session.rglob("*")):
-        # Skip symlinks: a crafted link would otherwise pull a file outside the
-        # session into the integrity manifest (and a dir-symlink cycle would hang
-        # the walk). Session artifacts are always real files.
-        if not p.is_file() or p.is_symlink() or p.name == "manifest.json":
+        if p.name == "manifest.json":
+            continue
+        try:
+            # One lstat answers all three questions is_file()/is_symlink()/stat()
+            # used to cost three syscalls for: a crafted link is skipped (it
+            # would pull a file outside the session into the integrity manifest,
+            # and a dir-symlink cycle would hang the walk), the size comes from
+            # the same call, and a concurrent prune that removed the entry
+            # mid-walk skips it (same contract as mtime_or_zero) instead of
+            # crashing every audit that overlaps a prune.
+            info = p.lstat()
+        except OSError:
+            continue
+        if not stat.S_ISREG(info.st_mode):
             continue
         try:
             artifacts.append(
                 Artifact(
                     path=p.relative_to(session).as_posix(),
-                    bytes=p.stat().st_size,
+                    bytes=info.st_size,
                     sha256=file_sha256(p),
                 )
             )
         except OSError:
-            # A concurrent prune removed the file between glob and read: skip it
-            # (same contract as mtime_or_zero) instead of crashing every audit that
-            # overlaps a prune.
             continue
     started_at, ended_at = capture_window(meta)
     if started_at is None:

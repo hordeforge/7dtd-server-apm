@@ -45,6 +45,15 @@ def _has_content(path: Path) -> bool:
     return stat.S_ISREG(info.st_mode) and info.st_size > 0
 
 
+def _has_bytes(path: Path, minimum: int) -> bool:
+    """A regular file carrying at least `minimum` bytes, without reading it."""
+    try:
+        info = path.stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_size > minimum
+
+
 def parse_perf_stat(text: str) -> dict[str, float]:
     """Parse `perf stat -o` output into name->value."""
     out: dict[str, float] = {}
@@ -82,17 +91,18 @@ def load_texts(session: Path) -> dict[str, str]:
         "runqlat": session / "scheduler/runqlat.bt.out",
         "states": session / "scheduler/states.bt.out",
         "offcpu": session / "scheduler/offcpu.bt.out",
-        "oncpu": session / "cpu/oncpu.bt.out",
         "mono_gc": session / "runtime/mono_gc.bt.out",
         "hw": session / "memory/hw_stat.txt",
     }
+    # mono_alloc and oncpu are deliberately absent: the (forensic-sized) alloc
+    # probe output is read once by _alloc_source_text in build_summary and
+    # shared with the site rankings, and the on-CPU ustack histogram is asked
+    # only whether it carries more than a header (a file-size check), so loading
+    # either here held megabytes resident for the whole build for nothing.
     texts = {
         key: path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
         for key, path in mapping.items()
     }
-    # mono_alloc is deliberately absent: the (forensic-sized) probe output is
-    # read once by _alloc_source_text in build_summary and shared with the
-    # site rankings; loading it here as well held two full copies resident.
     app_path = session / "app/bridge.jsonl"
     parts: list[str] = []
     if app_path.exists():
@@ -102,7 +112,12 @@ def load_texts(session: Path) -> dict[str, str]:
     return texts
 
 
-def _cpu_layer(hw: dict[str, float], texts: dict[str, str]) -> LayerScore:
+# The on-CPU ustack histogram is evidence only when the probe actually printed
+# stacks: a size test answers that, so the artifact never has to be read.
+ONCPU_MIN_BYTES = 500
+
+
+def _cpu_layer(hw: dict[str, float], oncpu_present: bool) -> LayerScore:
     cycles = hw.get("cycles") or hw.get("cpu-clock") or 0
     instructions = hw.get("instructions") or 0
     ipc = (instructions / cycles) if cycles else 0
@@ -111,7 +126,7 @@ def _cpu_layer(hw: dict[str, float], texts: dict[str, str]) -> LayerScore:
         score += 40
     elif ipc and ipc < 1.0:
         score += 20
-    if len(texts.get("oncpu", "")) > 500:
+    if oncpu_present:
         score += 15
     return LayerScore(
         layer="cpu",
@@ -355,7 +370,7 @@ def layer_scores(session: Path, hw: dict[str, float], texts: dict[str, str]) -> 
     meta = _load_meta(session)
     duration = max(1.0, effective_seconds(meta))
     scores = [
-        _cpu_layer(hw, texts),
+        _cpu_layer(hw, _has_bytes(session / "cpu/oncpu.bt.out", ONCPU_MIN_BYTES)),
         _cache_layer(hw),
         _sync_layer(texts, duration),
         _scheduler_layer(texts, duration),
