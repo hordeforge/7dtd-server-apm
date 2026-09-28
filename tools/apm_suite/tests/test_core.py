@@ -944,6 +944,34 @@ def test_export_bundle_scrubs_jsonl_and_path_bearing_text(tmp_path: Path) -> Non
         assert "203.0.113.7" not in name, f"{name} carried the scraped address in its name"
 
 
+def test_export_drops_server_console_lines_from_kept_text_members(tmp_path: Path) -> None:
+    """Name exclusion only covers the names the tool knows. A console capture or
+    chat log the operator attached under a neutral name stays a member, and its
+    lines name players: the timestamp shape has to be scrubbed by content."""
+    import zipfile
+
+    session = tmp_path / "session_pii_text"
+    (session / "app").mkdir(parents=True)
+    atomic_json(session / "meta.json", _meta())
+    (session / "app/console_capture.log").write_text(
+        "2026-08-23T10:00:00 4020.512 INF Player 'Alice' joined from 203.0.113.7\n"
+        "World.TickEntities=41.2ms(x100,max=99.0)\n"
+        "  2026-08-23T10:00:01 4021.0 INF <Alice> teleported\n"
+        "2026-08-23T10:00:02 4021.5 ERR orphan connection 198.51.100.9\n",
+        encoding="utf-8",
+    )
+
+    bundle = tmp_path / "bundle.zip"
+    result = runner.invoke(app, ["export", str(session), "--output", str(bundle)])
+    assert result.exit_code == 0, result.output
+    with zipfile.ZipFile(bundle) as archive:
+        assert "app/console_capture.log" in archive.namelist()  # kept, scrubbed
+        kept = archive.read("app/console_capture.log").decode()
+    assert kept == "World.TickEntities=41.2ms(x100,max=99.0)\n"
+    for token in ("Alice", "203.0.113.7", "198.51.100.9", "2026-08-23"):
+        assert token not in kept
+
+
 def test_export_survives_unparseable_meta_timestamp(tmp_path: Path) -> None:
     # meta.json is untrusted (hand-edited, imported bundle): a utc the session
     # cannot spell must not abort the export with a bare ValueError traceback

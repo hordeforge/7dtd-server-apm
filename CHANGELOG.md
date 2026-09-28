@@ -41,6 +41,18 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+- Export: server console lines are dropped from every text member by content,
+  not only files whose name the exclusion list happens to know. An operator who
+  drops a console capture or a chat log into a session under a neutral name
+  (`console_capture.log`) shipped a bundle carrying player names, connect IPs,
+  and Steam IDs; the line is recognized by the ISO-8601 timestamp the game
+  stamps on it, the same shape `app_scrape.py` already cuts at on the telnet
+  wire. JSONL members are untouched: a record there is the tool's own
+  structured telemetry, scrubbed field by field.
+- Export: `app/bridge.jsonl` is created 0600 even when `app_scrape.py` runs
+  standalone against a caller-chosen `--out`; a capture session was already
+  0700, so this only closes the non-capture invocation.
+
 - Events: past the 2000-event retention bound the timeline keeps the most
   severe events, newest first within a severity, instead of the first ones
   parsed. A busy window emits more than the bound and the first events are

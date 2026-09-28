@@ -111,7 +111,15 @@ def main() -> int:
     end = time.monotonic() + args.seconds
     cmds = ["apm status", "apm capabilities", "apm dump"]
 
-    with args.out.open("w", encoding="utf-8") as fh:
+    # Owner-only, like every other evidence file this suite writes: a capture
+    # session is 0700, but this collector also runs standalone against a
+    # caller-chosen --out, and the records hold replies read off the telnet
+    # wire. chmod after the open so a re-run over an existing file tightens it
+    # too; os.open's mode alone would only apply at creation.
+    descriptor = os.open(args.out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as fh:
+        with contextlib.suppress(OSError):
+            os.chmod(args.out, 0o600)
         while time.monotonic() < end:
             t = time.time()
             try:

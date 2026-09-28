@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import unicodedata
@@ -59,6 +60,17 @@ EXCLUDED_MEMBER_NAMES = frozenset(
 # exactly like the lowercase spellings the tool writes itself.
 _EXCLUDED_LOWERED = {name.lower() for name in EXCLUDED_MEMBER_NAMES}
 SERVER_LOG_NAME_MARKERS = ("efficientserver", "output_log")
+
+# Name exclusion is the first layer, not the only one: an operator who drops a
+# chat log or a console capture into the session names it whatever they like,
+# and every one of those lines is the game's own, carrying player names, connect
+# IPs, and Steam IDs. The server stamps every console line with an ISO-8601
+# local timestamp ("2026-08-23T10:00:00 4020.512 INF ..."), which no collector
+# artifact this tool writes starts a line with, so a streamed text member is
+# scrubbed by that shape as well as by its file name. app_scrape.py applies the
+# same test on the telnet wire before anything reaches the store; this is the
+# same classification one step later, for artifacts this tool did not write.
+SERVER_LOG_LINE = re.compile(r"\A\s*\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}")
 
 
 def _excluded_member(name: str) -> bool:
@@ -123,18 +135,27 @@ def _stream_scrubbed_member(
     Unlike str.splitlines this splits only on CR/LF, so exotic separators
     (form feed, NEL, line separator) pass through instead of becoming newlines;
     collector artifacts are line-oriented text and never contain them.
+
+    Server console lines are dropped from text members (SERVER_LOG_LINE): the
+    bundle is written to be handed to a stranger, and those lines name players.
+    The JSONL path is untouched: a record there is this tool's own structured
+    telemetry, already scrubbed field by field.
     """
     try:
         source_stream = source.open("r", encoding="utf-8", errors="replace")
     except OSError:
         return False
 
-    def scrub(line: str) -> str:
-        return _scrub_jsonl_line(line, home) if jsonl else line.replace(home, "~")
+    def scrub(line: str) -> str | None:
+        if jsonl:
+            return _scrub_jsonl_line(line, home)
+        return None if SERVER_LOG_LINE.match(line) else line.replace(home, "~")
 
     with source_stream, archive.open(member, "w") as member_stream:
         for line in source_stream:
             body = scrub(line[:-1] if line.endswith("\n") else line)
+            if body is None:
+                continue
             member_stream.write(body.encode("utf-8") + b"\n")
     return True
 

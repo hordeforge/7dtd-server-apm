@@ -125,9 +125,15 @@ out of bundles, as does any file whose name contains `efficientserver` or
 `output_log`, so an operator-attached slice of the server log
 (`app/efficientserver_log_excerpt.txt` or `OutputLog_2026-09-28.txt`) is dropped
 whichever name it carries. Symlinks are skipped rather than followed. The
-excerpt's section timings survive in `csharp_bridge.json`. Any other text file
-an operator drops into a session is bundled, so check the archive before
-sharing.
+excerpt's section timings survive in `csharp_bridge.json`. Name exclusion is
+the first layer, not the only one: every text member is also scrubbed by
+content, and a line the game stamped with its console timestamp
+(`2026-08-23T10:00:00 4020.512 INF ...`) is dropped whatever the file is
+called, so an operator-attached console capture or chat log reaches a bundle
+with its player lines removed. JSONL members are not line-filtered: a record
+there is the tool's own structured telemetry, scrubbed field by field. Any
+other text file an operator drops into a session is bundled, so check the
+archive before sharing.
 Inspect a bundle before sharing because game-derived artifacts may still
 contain player or world data.
 
