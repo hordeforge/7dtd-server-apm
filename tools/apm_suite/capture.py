@@ -990,11 +990,17 @@ def _ingest_bridge_snapshot(
     print(">> [app] ingested schema-validated bridge snapshot")
 
 
-def write_plan_text(ctx_args: dict[str, object], only: str) -> str:
-    """Dry-run helper: resolved collector plan without side effects."""
+def write_plan_text(ctx_args: dict[str, object], only: str, no_app: bool = False) -> str:
+    """Dry-run helper: resolved collector plan without side effects.
+
+    The plan must resolve the same way the launch does, including --no-app:
+    _launch_collectors skips the app collector (and records it as such) when
+    no_app is set, so a plan that still printed "run app" for
+    `capture --dry-run --no-app` would promise a layer the capture drops.
+    """
     lines = [f"capture plan (only={only}):"]
     for spec in SPECS:
-        state = "run" if wanted(spec, only) else "skip"
+        state = "run" if wanted(spec, only) and not (no_app and spec.name == "app") else "skip"
         lines.append(f"  {state:4s} {spec.name:8s} layer={spec.layer} -> {spec.artifact}")
     lines.append(f"args: {json.dumps(ctx_args, default=str)}")
     return "\n".join(lines)

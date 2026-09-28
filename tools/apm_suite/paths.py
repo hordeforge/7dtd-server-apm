@@ -31,7 +31,10 @@ def _env_path(name: str, default: Path) -> Path:
     """Resolve a directory override; an exported-but-empty value must not
     collapse to Path("") == cwd and point sessions or probes at the repo."""
     value = os.environ.get(name, "")
-    return Path(value) if value.strip() else default
+    # Strip the value the path is built from, not just the one that is tested:
+    # an override exported as "  /var/lib/apm  " must resolve to /var/lib/apm,
+    # not to a relative, space-padded path under the cwd.
+    return Path(value.strip()) if value.strip() else default
 
 
 def dedicated_dir() -> Path:

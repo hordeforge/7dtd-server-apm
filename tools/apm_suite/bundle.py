@@ -46,12 +46,16 @@ MAX_IMPORT_UNCOMPRESSED_BYTES = 2 * 1024**3
 # slice of it under any name must be excluded the same way bridge.jsonl is,
 # not merely home-scrubbed.
 EXCLUDED_MEMBER_NAMES = frozenset({"perf.data", "bridge.jsonl", "FINALIZE.txt", "manifest.json"})
+# Membership is tested against the lowercased member name, so the set is
+# lowercased once here: a "Bridge.jsonl" or "PERF.DATA" must be excluded
+# exactly like the lowercase spellings the tool writes itself.
+_EXCLUDED_LOWERED = {name.lower() for name in EXCLUDED_MEMBER_NAMES}
 SERVER_LOG_NAME_MARKERS = ("efficientserver", "output_log")
 
 
 def _excluded_member(name: str) -> bool:
     lowered = name.lower()
-    return name in EXCLUDED_MEMBER_NAMES or any(
+    return lowered in _EXCLUDED_LOWERED or any(
         marker in lowered for marker in SERVER_LOG_NAME_MARKERS
     )
 

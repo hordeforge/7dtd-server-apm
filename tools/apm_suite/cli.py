@@ -274,7 +274,9 @@ def capture(
     if dry_run:
         console.print(
             write_plan_text(
-                {"seconds": seconds, "pid": pid, "no_app": no_app, "telnet": telnet_host}, only
+                {"seconds": seconds, "pid": pid, "no_app": no_app, "telnet": telnet_host},
+                only,
+                no_app,
             )
         )
         return
@@ -528,9 +530,11 @@ def scaling(
     if result["super_linear"]:
         console.print(f"\n[yellow]super-linear ({len(result['super_linear'])}):[/yellow]")
         for f in result["super_linear"]:
+            call_exp = f["per_call_exponent"]
+            total_exp = f["total_exponent"]
             console.print(
-                f"  {escape(f['section'])} - per-call O(N^{f['per_call_exponent']}), "
-                f"total O(N^{f['total_exponent']})"
+                f"  {escape(f['section'])} - per-call O(N^{call_exp if call_exp is not None else '-'}), "
+                f"total O(N^{total_exp if total_exp is not None else '-'})"
             )
     else:
         console.print("\nno super-linear sections detected")

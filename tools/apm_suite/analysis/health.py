@@ -60,10 +60,14 @@ def compute_health(layers: dict[str, float]) -> HealthV2:
         )
     pressure = weighted / weight_sum if weight_sum else 0.0
     health = max(0.0, min(100.0, 100.0 - pressure))
+    rounded = round(health, 2)
     return HealthV2(
-        health=round(health, 2),
+        health=rounded,
         pressure=round(pressure, 2),
-        grade=grade_for(health),
+        # Graded on the value that is stored, not the unrounded float: the band
+        # edges are inclusive and declared to 2 decimals, so grading the raw
+        # number would write health=85.0 next to grade="B".
+        grade=grade_for(rounded),
         coverage=min(coverage, 1.0),
         confidence="medium",
         detail=detail,

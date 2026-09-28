@@ -158,12 +158,17 @@ def inspect(pid: int | None, host: str, port: int) -> dict[str, Any]:
         )
     perf_ok = checks["perf"]["ok"] and (paranoid is None or paranoid <= 2 or os.geteuid() == 0)
     ebpf_ok = checks["bpftrace"]["ok"] and checks["sudo"]["ok"] and process_ok
+    # The runtime_gc layer is mono_gc.bt, whose every probe is an uprobe on
+    # libmonobdwgc-2.0.so; without the mapping capture._bind_mono refuses to
+    # bind it and the layer comes out unavailable on every run. Reading
+    # readiness off bpftrace+sudo alone would print OK for a layer that can
+    # never produce evidence.
     layers = {
         "app_sim": checks["telnet"]["ok"],
         "cpu": perf_ok and process_ok,
         "memory_cache": perf_ok and process_ok,
         "threads": process_ok,
-        "runtime_gc": ebpf_ok,
+        "runtime_gc": ebpf_ok and checks["mono_gc_probe"]["ok"],
         "sync_locks": ebpf_ok,
         "scheduler": ebpf_ok,
         "io": ebpf_ok,

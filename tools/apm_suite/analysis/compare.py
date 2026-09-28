@@ -37,10 +37,16 @@ def load_sections(session: Path) -> dict[str, float]:
     if app.is_dir():
         for path in list(app.glob("apm_app*.json")) + list(app.glob("snapshot_*.json")):
             try:
-                obj = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
+                # load_json, not a bare json.loads: a snapshot that parses but is
+                # not an object would otherwise raise AttributeError past the
+                # CLI's except (OSError, ValueError) and print a traceback.
+                obj = load_json(path)
+            except (ValueError, OSError):
                 continue
-            for section in obj.get("sections") or []:
+            sections = obj.get("sections")
+            for section in sections if isinstance(sections, list) else []:
+                if not isinstance(section, dict):
+                    continue
                 name = section.get("name")
                 if not name:
                     continue
