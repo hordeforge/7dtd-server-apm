@@ -161,6 +161,49 @@ def test_cli_usage_errors_exit_2_on_stderr_never_stdout(tmp_path: Path) -> None:
         assert "[red]" not in result.stderr, f"raw markup leaked: {argv}"
 
 
+def test_cli_output_target_failures_are_clean_not_tracebacks(tmp_path: Path) -> None:
+    """An unusable --output/--json destination is an operator error naming the
+    flag: exit 2 on stderr, never a rich traceback with source frames."""
+    session = _session(tmp_path / "session_out")
+    as_dir = tmp_path / "a-directory"
+    as_dir.mkdir()
+    cases: list[list[str]] = [
+        ["export", str(session), "--output", str(as_dir)],
+        ["prometheus", str(session), "--output", str(as_dir)],
+        ["doctor", "--json", str(as_dir)],
+    ]
+    for argv in cases:
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 2, argv
+        assert result.stdout == "", f"error leaked to stdout: {argv}"
+        assert "Traceback" not in result.stderr, argv
+        assert "[red]" not in result.stderr, argv
+        assert "mustnotbeadirectory" in _squashed(result.stderr), argv
+        # The flag at fault is named, so the fix does not require a bisect.
+        assert any(flag in result.stderr for flag in ("--output", "--json")), argv
+
+
+def test_cli_index_takes_the_shared_store_flag(tmp_path: Path) -> None:
+    """index, import, and verify-store all name the same directory --store;
+    --root stays accepted as the spelling index shipped."""
+    store = tmp_path / "store"
+    for flag in ("--store", "--root"):
+        result = runner.invoke(app, ["index", flag, str(store)])
+        assert result.exit_code == 0, result.output
+        assert (store / "index.html").is_file()
+
+
+@pytest.mark.skipif(sys.stdout.isatty(), reason="help is rich-formatted at a terminal")
+def test_cli_help_is_plain_text_when_stdout_is_redirected() -> None:
+    """Piped help must stay greppable: no box drawing, no padded columns."""
+    result = runner.invoke(app, ["capture", "--help"])
+    assert result.exit_code == 0
+    assert "╭" not in result.output and "│" not in result.output
+    assert "Usage: root capture" in result.output
+    assert "--seconds" in result.output
+    assert all(line == line.rstrip() for line in result.output.splitlines())
+
+
 def test_capture_rejects_unknown_only_tokens_even_dry_run() -> None:
     bad = runner.invoke(app, ["capture", "--only", "cpu,memry", "--dry-run"])
     assert bad.exit_code == 2

@@ -4,11 +4,12 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from contextlib import suppress
 from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, NoReturn
 
 import typer
 from rich.console import Console
@@ -55,10 +56,26 @@ from .session import (
 DEFAULT_BRIDGE_EXPORT_SECONDS = 30.0
 MAX_BRIDGE_EXPORT_SECONDS = 3600.0
 
-app = typer.Typer(help="Host-only APM for 7 Days to Die dedicated servers.", no_args_is_help=True)
-flame_app = typer.Typer(help="Build and compare flame profiles.", no_args_is_help=True)
+# Rich help only where a terminal will render it. Redirected or piped, click's
+# plain formatter wins: `7dtd-server-apm capture --help | grep -- --seconds`
+# then returns the option instead of a box drawing and 100 columns of padding,
+# and help pasted into a doc or an issue keeps its line breaks. Typer picks
+# rich_markup_mode at import time, so the decision is made once here, before
+# the callback can touch stdio.
+_HELP_MARKUP: typer.core.MarkupMode | None = "rich" if sys.stdout.isatty() else None
+
+app = typer.Typer(
+    help="Host-only APM for 7 Days to Die dedicated servers.",
+    no_args_is_help=True,
+    rich_markup_mode=_HELP_MARKUP,
+)
+flame_app = typer.Typer(
+    help="Build and compare flame profiles.", no_args_is_help=True, rich_markup_mode=_HELP_MARKUP
+)
 scenario_app = typer.Typer(
-    help="Run an APM capture under sibling load generation.", no_args_is_help=True
+    help="Run an APM capture under sibling load generation.",
+    no_args_is_help=True,
+    rich_markup_mode=_HELP_MARKUP,
 )
 app.add_typer(flame_app, name="flame")
 app.add_typer(scenario_app, name="scenario")
@@ -117,19 +134,29 @@ def _exit(code: int) -> None:
         raise typer.Exit(code)
 
 
+def _fail(message: str, code: int = 1) -> NoReturn:
+    """Print one clean operator error on stderr and exit, never a traceback.
+
+    The single exit path for every failure this CLI reports itself: exit 2 for
+    a bad invocation (unusable path, unparseable input), 1 for a command that
+    ran and could not complete. The message embeds user-set paths, hostnames,
+    and artifact names, so it is escaped like every other untrusted echo.
+    """
+    err_console.print(f"[red]{escape(str(message))}[/red]")
+    raise typer.Exit(code)
+
+
 def _require_backends() -> None:
     """CLI boundary for paths.require_backends: clean error instead of a traceback."""
     try:
         require_backends()
     except RuntimeError as error:
-        err_console.print(f"[red]{escape(str(error))}[/red]")
-        raise typer.Exit(2) from None
+        _fail(str(error), 2)
 
 
 def _require_session_dir(session: Path) -> None:
     if not session.is_dir():
-        err_console.print(f"[red]not a session directory: {escape(str(session))}[/red]")
-        raise typer.Exit(2)
+        _fail(f"not a session directory: {session}", 2)
 
 
 def _version_callback(value: bool) -> None:
@@ -181,7 +208,12 @@ def doctor(
         write_stdout(json.dumps(result, indent=2, ensure_ascii=False) + "\n")
         return
     if json_output:
-        atomic_json(json_output, result)
+        if json_output.is_dir():
+            raise typer.BadParameter("must not be a directory", param_hint="--json")
+        try:
+            atomic_json(json_output, result)
+        except OSError as error:
+            _fail(f"cannot write {json_output}: {error}", 2)
     for layer, available in result["available_layers"].items():
         console.print(f"[green]OK[/green] {layer}" if available else f"[yellow]--[/yellow] {layer}")
     # Every populated fix prints, not only failed checks: _bridge_status sets a
@@ -234,11 +266,11 @@ def capture(
     if unknown := unknown_only_tokens(only):
         # The tokens are raw argv; a stray closing tag would otherwise raise
         # MarkupError out of the printer instead of reaching this exit-2 hint.
-        err_console.print(
-            f"[red]unknown --only value(s): {escape(', '.join(unknown))}; "
-            "use collector names or layers as listed by 'capture --dry-run'[/red]"
+        _fail(
+            f"unknown --only value(s): {', '.join(unknown)}; "
+            "use collector names or layers as listed by 'capture --dry-run'",
+            2,
         )
-        raise typer.Exit(2)
     if dry_run:
         console.print(
             write_plan_text(
@@ -259,9 +291,7 @@ def capture(
             symbolize=symbolize,
         )
     except RuntimeError as error:
-        # Message embeds user-set hostnames/paths; escape like every other echo.
-        err_console.print(f"[red]{escape(str(error))}[/red]")
-        raise typer.Exit(2) from None
+        _fail(str(error), 2)
     console.print(f"APM session: {escape(str(outcome.session))}")
     _exit(outcome.exit_code)
 
@@ -330,8 +360,7 @@ def verify_store(
     """
     root = store or apm_root()
     if not root.is_dir():
-        err_console.print(f"[red]not a store directory: {escape(str(root))}[/red]")
-        raise typer.Exit(2)
+        _fail(f"not a store directory: {root}", 2)
     sessions = list_sessions(root)
     ok = incomplete = invalid = 0
     for session in sessions:
@@ -373,13 +402,25 @@ def verify_store(
 
 @app.command()
 def index(
-    root: Annotated[
-        Path | None, typer.Option(help="Sessions directory (default: the APM data root).")
+    store: Annotated[
+        Path | None,
+        typer.Option(
+            "--store",
+            "--root",
+            help="APM session store to scan (default: the APM data root).",
+        ),
     ] = None,
 ) -> None:
     """Write the HTML session index over all finalized sessions."""
-    count = write_index(root)
-    console.print(f"indexed {count} sessions -> {escape(str((root or apm_root()) / 'index.html'))}")
+    try:
+        count = write_index(store)
+    except OSError as error:
+        # The store is created here when absent, so an unwritable parent is an
+        # operator error naming the path, not a bare PermissionError traceback.
+        _fail(f"cannot index {store or apm_root()}: {error}", 1)
+    console.print(
+        f"indexed {count} sessions -> {escape(str((store or apm_root()) / 'index.html'))}"
+    )
 
 
 @app.command("export")
@@ -390,10 +431,16 @@ def export_session(
     ],
 ) -> None:
     """Create a sanitized support bundle without raw command lines or telnet text."""
+    if output.is_dir():
+        raise typer.BadParameter("must not be a directory", param_hint="--output")
     try:
         written = export_bundle(session, output)
     except BundleError as error:
-        raise typer.BadParameter(str(error)) from None
+        _fail(str(error), 2)
+    except OSError as error:
+        # The bundle is written through a temp file and renamed: an unwritable
+        # destination or a full disk lands here as a bare OSError.
+        _fail(f"cannot write bundle {output}: {error}", 2)
     console.print(f"sanitized bundle: {escape(str(written))}")
 
 
@@ -413,8 +460,11 @@ def import_bundle_command(
     try:
         result = import_bundle(bundle, store_root)
     except BundleError as error:
-        err_console.print(f"[red]{escape(str(error))}[/red]")
-        raise typer.Exit(2) from None
+        _fail(str(error), 2)
+    except OSError as error:
+        # An unwritable store (permissions, a full disk) is an operator error
+        # naming the path, never a bare traceback.
+        _fail(f"cannot restore into {store_root}: {error}", 1)
     outcome = (
         "audit passed"
         if result.valid
@@ -446,21 +496,23 @@ def scaling(
 
     usable = [s for s in sessions if (s / "summary.json").is_file()]
     if len(usable) < 3:
-        err_console.print(
-            "[red]need >= 3 finalized sessions (different load levels) to fit scaling[/red]"
-        )
-        raise typer.Exit(2)
+        _fail("need >= 3 finalized sessions (different load levels) to fit scaling", 2)
     result = analyze_scaling(usable, scale_key=by.value)
     distinct = sorted(set(result["scales"]))
     if len(distinct) < 3:
-        err_console.print(
-            f"[red]sessions span only {len(distinct)} distinct {by.value} value(s) ({distinct}); "
+        _fail(
+            f"sessions span only {len(distinct)} distinct {by.value} value(s) ({distinct}); "
             f"a log-log fit needs >= 3 distinct load levels. Capture at different {by.value} "
-            "counts (e.g. via plans/profile.scale-ladder.json).[/red]"
+            "counts (e.g. via plans/profile.scale-ladder.json).",
+            2,
         )
-        raise typer.Exit(2)
     if output:
-        atomic_json(output, result)
+        if output.is_dir():
+            raise typer.BadParameter("must not be a directory", param_hint="--output")
+        try:
+            atomic_json(output, result)
+        except OSError as error:
+            _fail(f"cannot write {output}: {error}", 2)
     # Section names come from csharp_bridge.json (imported bundles are
     # untrusted); escape them so bracketed names cannot render as markup.
     console.print(f"scale ({by.value}): {escape(str(result['scales']))}")
@@ -493,10 +545,15 @@ def prometheus(
     ],
 ) -> None:
     """Export finalized, coverage-aware layer metrics in Prometheus text format."""
+    if output.is_dir():
+        raise typer.BadParameter("must not be a directory", param_hint="--output")
     try:
         export_metrics(session, output)
     except MetricError as error:
-        raise typer.BadParameter(str(error)) from None
+        _fail(str(error), 2)
+    except OSError as error:
+        # An unwritable destination or a full disk lands here as a bare OSError.
+        _fail(f"cannot write {output}: {error}", 2)
     console.print(f"Prometheus metrics: {escape(str(output))}")
 
 
@@ -532,8 +589,7 @@ def monitor(
     if pid is None:
         pid = find_server_pid()
     if pid is None or not psutil.pid_exists(pid):
-        err_console.print("[red]no unique running 7DaysToDieServe process; pass --pid[/red]")
-        raise typer.Exit(2)
+        _fail("no unique running 7DaysToDieServe process; pass --pid", 2)
     process = psutil.Process(pid)
     bridge_latest = bridge_telemetry_file(pid, "apm_app_latest.json")
     taken = 0
@@ -557,11 +613,11 @@ def monitor(
             except psutil.AccessDenied:
                 # The server commonly runs as another user; a permission wall
                 # must end the loop with a fix, not a bare traceback.
-                err_console.print(
-                    f"[red]cannot inspect pid {pid}: access denied "
-                    "(process owned by another user?); run monitor as that user[/red]"
+                _fail(
+                    f"cannot inspect pid {pid}: access denied "
+                    "(process owned by another user?); run monitor as that user",
+                    2,
                 )
-                raise typer.Exit(2) from None
             if bridge_latest.is_file():
                 try:
                     snapshot = json.loads(bridge_latest.read_text(encoding="utf-8"))
@@ -626,10 +682,15 @@ def monitor(
                 f"spikes={sample.get('spikes', '-')}{late_delta}{gc_delta}{stale}"
             )
             if output:
-                output.parent.mkdir(parents=True, exist_ok=True)
-                _rotate_monitor_log(output, max_bytes)
-                with output.open("a", encoding="utf-8") as stream:
-                    stream.write(json.dumps(sample) + "\n")
+                try:
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    _rotate_monitor_log(output, max_bytes)
+                    with output.open("a", encoding="utf-8") as stream:
+                        stream.write(json.dumps(sample) + "\n")
+                except OSError as error:
+                    # A dead --output path must end the run with a fix, not a
+                    # traceback that hides the samples already on screen.
+                    _fail(f"cannot append to {output}: {error}", 2)
             taken += 1
     except KeyboardInterrupt:
         # 130 = 128+SIGINT, matching scenario run's interrupt contract so
@@ -737,18 +798,14 @@ def compare(
     """Diff two finalized sessions and write compare.json/compare.md."""
     for name, path in (("before", before), ("after", after)):
         if not (path / "summary.json").is_file():
-            err_console.print(
-                f"[red]{name} session has no summary.json in {escape(str(path))}[/red]"
-            )
-            raise typer.Exit(2)
+            _fail(f"{name} session has no summary.json in {path}", 2)
     try:
         run_compare(before, after, output)
     except (OSError, ValueError) as error:
         # OSError: a session pruned between the is_file() gate above and the
         # reads inside (concurrent auto-prune) must fail like a corrupt one,
         # naming the path, never as a bare FileNotFoundError traceback.
-        err_console.print(f"[red]compare failed: {escape(str(error))}[/red]")
-        raise typer.Exit(1) from None
+        _fail(f"compare failed: {error}", 1)
 
 
 @app.command()
@@ -770,24 +827,18 @@ def budget(
 ) -> None:
     """Gate a finalized session against budgets; exits 1 on regression."""
     if not (session / "summary.json").is_file():
-        err_console.print(f"[red]missing summary.json in {escape(str(session))}[/red]")
-        raise typer.Exit(2)
+        _fail(f"missing summary.json in {session}", 2)
     if budget_file is not None and not budget_file.is_file():
-        err_console.print(f"[red]budget file not found: {escape(str(budget_file))}[/red]")
-        raise typer.Exit(2)
+        _fail(f"budget file not found: {budget_file}", 2)
     if baseline is not None and not (baseline / "summary.json").is_file():
-        err_console.print(
-            f"[red]baseline session has no summary.json in {escape(str(baseline))}[/red]"
-        )
-        raise typer.Exit(2)
+        _fail(f"baseline session has no summary.json in {baseline}", 2)
     try:
         passed = check_budget(session, budget_file, baseline, max_regression)
     except (OSError, ValueError) as error:
         # OSError: a vanished/unreadable summary under a concurrent prune (or
         # an unreadable budget file) is an operator error naming the path,
         # same contract as compare above.
-        err_console.print(f"[red]{escape(str(error))}[/red]")
-        raise typer.Exit(2) from None
+        _fail(str(error), 2)
     _exit(0 if passed else 1)
 
 
@@ -808,8 +859,7 @@ def bridge(
     except (OSError, ValueError) as error:
         # OSError: a session artifact pruned mid-analysis fails like a corrupt
         # one (same contract as compare/budget), never a bare traceback.
-        err_console.print(f"[red]bridge analysis failed: {escape(str(error))}[/red]")
-        raise typer.Exit(1) from None
+        _fail(f"bridge analysis failed: {error}", 1)
     # Playbook lines embed managed section names and frame names taken from
     # session evidence (server-side snapshots, imported bundles); escape them so
     # bracketed names cannot render as console markup.
@@ -895,8 +945,7 @@ def scenario_run(
     try:
         chosen_preset = CapturePreset(preset)
     except ValueError:
-        err_console.print("[red]preset must be one of: standard, deep, forensic[/red]")
-        raise typer.Exit(2) from None
+        _fail("preset must be one of: standard, deep, forensic", 2)
     presets = {
         CapturePreset.STANDARD: "app,threads,memory,cpu",
         CapturePreset.DEEP: "all",
@@ -904,10 +953,12 @@ def scenario_run(
     }
     loadgen = REPO.parent / "7dtd-loadgen" / "scripts" / "run_loadgen.sh"
     if not loadgen.is_file():
-        err_console.print(f"[red]sibling load generator not found: {escape(str(loadgen))}[/red]")
-        raise typer.Exit(2)
+        _fail(f"sibling load generator not found: {loadgen}", 2)
     run_dir = apm_root() / ".scenario"
-    run_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as error:
+        _fail(f"cannot create {run_dir}: {error}", 1)
     stamp = int(time.time())
     # Exclusive-create claim: a same-second duplicate invocation must not point
     # both loadgen runs at one manifest path.
@@ -961,11 +1012,7 @@ def scenario_run(
         # is_file() above does not prove executability or readability: a lost
         # +x bit or unreadable interpreter must fail like every other startup
         # problem here (clean message, exit 2), not a bare traceback.
-        err_console.print(
-            f"[red]cannot start sibling load generator {escape(str(loadgen))}: "
-            f"{escape(str(error))}[/red]"
-        )
-        raise typer.Exit(2) from None
+        _fail(f"cannot start sibling load generator {loadgen}: {error}", 2)
     session: Path | None = None
     capture_rc = 130
     load_rc = 130
@@ -1125,11 +1172,10 @@ def _coerce_matrix_entry(entry: dict[str, object], position: int) -> dict[str, A
         else:
             valid = isinstance(value, str)
         if not valid:
-            err_console.print(
-                f"[red]plan entry {position} field '{key}': expected "
-                f"{expected.__name__}, got {value!r}[/red]"
+            _fail(
+                f"plan entry {position} field '{key}': expected {expected.__name__}, got {value!r}",
+                2,
             )
-            raise typer.Exit(2)
     return entry
 
 
@@ -1147,30 +1193,26 @@ def scenario_matrix(
     # Secret via environment only (same contract as capture): no argv flag.
     telnet_password = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
     if not plan.is_file():
-        err_console.print(f"[red]plan file not found: {escape(str(plan))}[/red]")
-        raise typer.Exit(2)
+        _fail(f"plan file not found: {plan}", 2)
     try:
         entries = json.loads(plan.read_text(encoding="utf-8"))
     except json.JSONDecodeError as error:
-        raise typer.BadParameter(f"plan is not valid JSON ({plan}): {error}") from None
+        raise typer.BadParameter(f"not valid JSON: {error}", param_hint="plan") from None
+    except OSError as error:
+        _fail(f"cannot read {plan}: {error}", 2)
     if not isinstance(entries, list) or not entries:
-        err_console.print("[red]plan must be a non-empty JSON list of experiment objects[/red]")
-        raise typer.Exit(2)
+        _fail("plan must be a non-empty JSON list of experiment objects", 2)
     allowed = set(_MATRIX_ENTRY_TYPES)
     results: list[tuple[str, int]] = []
     for position, entry in enumerate(entries, 1):
         if not isinstance(entry, dict):
-            err_console.print(f"[red]plan entry {position} is not a JSON object[/red]")
-            raise typer.Exit(2)
+            _fail(f"plan entry {position} is not a JSON object", 2)
         # `_`-prefixed keys are plan commentary (the shipped plans document each
         # experiment with one) and carry no runner meaning.
         unknown = {key for key in set(entry) - allowed if not key.startswith("_")}
         if unknown:
-            # Plan keys are attacker-controlled in imported plans; escape them.
-            err_console.print(
-                f"[red]plan entry {position} has unknown keys: {escape(str(sorted(unknown)))}[/red]"
-            )
-            raise typer.Exit(2)
+            # Plan keys are attacker-controlled in imported plans; _fail escapes.
+            _fail(f"plan entry {position} has unknown keys: {sorted(unknown)}", 2)
         # Fail before the cleanup telnet round-trip: a mistyped entry must not
         # run the previous experiment's world-wiping console command for
         # nothing (and must never reach the loadgen with junk values).
