@@ -17,6 +17,18 @@ are expected to bump its major version.
 predates the tag gate and no 2.2.4 mod was ever built. The bridge goes 2.2.3
 to 2.3.0 and 2.2.4 stays skipped.
 
+## Unreleased - host CLI
+
+- Packaging: the build backend is now bounded to one major
+  (`hatchling>=1.27,<2`). It is the one dependency `uv.lock` cannot hash-pin,
+  because PEP 517 build isolation resolves it outside the lock on every
+  `uv sync` of the editable install.
+- Release: `make package` now writes `dist/sbom-python.txt` and
+  `dist/sbom-python.cdx.json` next to the zip, so every release carries the
+  production dependency inventory (name, version, artifact hashes, CycloneDX
+  graph) a scanner or downstream consumer can read. The inventory stays out of
+  the archive: it unzips into `<server>/Mods/`.
+
 ## Unreleased - bridge mod
 
 - API contract: `bridge/README.md` now documents the `GET /api/apm` response

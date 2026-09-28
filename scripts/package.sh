@@ -79,4 +79,9 @@ rm -f "$OUT"
 # (sha256sum -c). Rebuilt alongside the zip so it can never go stale.
 rm -f "$OUT.sha256"
 { cd "$(dirname "$OUT")" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256"; }
+# Dependency inventory beside the zip, never inside it: the archive unzips
+# into <server>/Mods/, so a BOM file there would install as mod content. The
+# target is the Makefile's, so the release inventory and `make sbom` cannot
+# drift apart.
+make -C "$ROOT" sbom
 echo "Packaged -> $OUT (+ .sha256)"

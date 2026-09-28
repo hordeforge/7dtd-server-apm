@@ -10,6 +10,18 @@ classifiers = [
   "Operating System :: POSIX :: Linux",
   "Programming Language :: Python :: 3 :: Only",
 ]
+# Five runtime dependencies, each earning its place; the default is zero new
+# ones. A dependency added without beating "we could write this" does not land.
+#   jinja2  - report and dashboard HTML templates (autoescaping is the point;
+#             hand-rolled escaping in capture output is a security surface).
+#   psutil  - per-process CPU/thread/memory accounting for the collectors;
+#             /proc parsing is Linux-version specific and easy to get wrong.
+#   pydantic - the capture summary schema, validated at load so a bad field
+#             reads as unavailable instead of a downstream AttributeError.
+#   rich    - console output, markup escaping for untrusted collector text.
+#   typer   - the CLI surface, argument parsing and help.
+# Everything else the tools need (metrics, yaml, statistics) is stdlib. Dev
+# tooling lives in [dependency-groups] and never reaches a release install.
 dependencies = [
   "jinja2>=3.1,<4",
   "psutil>=6,<8",
@@ -28,7 +40,11 @@ Repository = "https://github.com/hordeforge/7dtd-server-apm"
 dev = ["mypy>=1.14,<3", "pytest>=8.3,<10", "pytest-cov>=6,<8", "ruff>=0.9,<1", "types-psutil>=6,<8"]
 
 [build-system]
-requires = ["hatchling"]
+# The build backend is resolved in PEP 517 build isolation, so it is the one
+# dependency uv.lock cannot hash-pin: every `uv sync` of the editable install
+# downloads it. Bound it to one major so a fresh checkout cannot pick up an
+# unreviewed release of the tool that builds the artifact.
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
