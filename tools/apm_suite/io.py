@@ -14,7 +14,7 @@ from typing import Any
 # every atomic_* writer downstream. Untrusted readers scrub them here, once,
 # instead of each consumer guessing whether its text is encodable.
 _SURROGATE_RE = re.compile("[\ud800-\udfff]")
-_SURROGATE_MAP = {codepoint: "\ufffd" for codepoint in range(0xD800, 0xE000)}
+_SURROGATE_MAP = dict.fromkeys(range(55296, 57344), "�")
 
 
 def _clean_str(value: str) -> str:

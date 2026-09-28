@@ -68,8 +68,26 @@ src = ["tools"]
 # strptime carries a scoped noqa at tools/host_profiler/correlate.py.
 # PGH (blanket noqa / blanket type-ignore bans) was adopted on 2026-08-26 with
 # zero violations: every suppression must already name its rule.
-select = ["E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RET", "W", "DTZ", "PLE", "YTT", "PGH", "RUF100"]
-ignore = ["E501"] # Formatter cannot wrap embedded HTML, regexes, and generated snippets safely.
+# C4, PIE, ISC, EXE and the full RUF set joined 2026-09-28 after the fixes they
+# revealed landed; S (bandit) joined the same day, with only the four rules the
+# tool's own contract cannot satisfy carved out below.
+select = [
+  "E", "F", "I", "UP", "B", "SIM", "A", "ASYNC", "RET", "W", "DTZ", "PLE", "YTT", "PGH",
+  "C4", "PIE", "ISC", "EXE", "RUF", "S",
+]
+ignore = [
+  "E501", # Formatter cannot wrap embedded HTML, regexes, and generated snippets safely.
+  "RUF001", # Report and message text uses the typographic x and U+2212 on purpose.
+  "S603", # Every call site runs a literal argv list of the collector binaries this tool owns.
+  "S607", # sudo, bash, perf and bpftrace are resolved through PATH by design.
+  "S311", # Fuzz corpora are drawn with random, which is the point of a fuzzer.
+  "S108", # /tmp/perf-<pid>.map is the JIT map path perf itself requires.
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Test-only rules, scoped to the suite instead of switched off repo-wide.
+"tools/apm_suite/tests/*" = ["S101", "S106"] # assert statements, and the fake telnet password the password-leak test asserts on.
+
 
 [tool.mypy]
 python_version = "3.11"

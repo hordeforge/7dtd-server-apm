@@ -308,11 +308,11 @@ def unknown_only_tokens(only: str) -> list[str]:
 
 
 __all__ = [
+    "KNOWN_ONLY_TOKENS",
+    "SPECS",
+    "SPEC_BY_NAME",
     "CaptureContext",
     "CollectorSpec",
-    "KNOWN_ONLY_TOKENS",
-    "SPEC_BY_NAME",
-    "SPECS",
     "unknown_only_tokens",
     "wanted",
 ]

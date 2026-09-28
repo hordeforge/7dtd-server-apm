@@ -305,8 +305,7 @@ def verify_store(
         # before finalize), not corruption: it is reported, and only --strict
         # fails on it.
         unverified = bool(errors) and all(
-            error.startswith(MISSING_PREFIX) or error.startswith("no manifest.json")
-            for error in errors
+            error.startswith((MISSING_PREFIX, "no manifest.json")) for error in errors
         )
         if not errors:
             ok += 1

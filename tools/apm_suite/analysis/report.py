@@ -592,7 +592,7 @@ def _alloc_block_sites(
 
 def _is_game_frame(frame: str) -> bool:
     f = frame.strip()
-    if not f or f.startswith("[") or f.startswith("0x"):
+    if not f or f.startswith(("[", "0x")):
         return False  # [libc.so.6] / [unknown] / [jit] / raw hex
     if "." not in f and "::" not in f:
         return False  # native C symbol (GC_dirty_inner, __pthread_*)

@@ -1558,6 +1558,7 @@ def test_audit_survives_malformed_meta_types(tmp_path: Path) -> None:
     session = _session(tmp_path / "session_bad_meta")
     atomic_json(session / "meta.json", {"pid": "not-a-number", "only": [1, 2], "utc": "garbage"})
     manifest, valid = audit_session(session)
+    assert not valid, "unparseable meta.json must record the session as invalid"
     assert manifest.target.pid == 1
     assert manifest.requested_layers == ["all"]
 
@@ -2396,6 +2397,7 @@ def test_budget_absent_gross_is_skipped_not_passed(tmp_path: Path) -> None:
     )
     budget = {"max_gross_alloc_mb_per_second": 15.0}
     ok, lines = check(session, budget, None, 15.0)
+    assert ok, "a skipped metric must not fail the budget on absent evidence"
     # Absent gross must be reported as skipped, never silently passed as 0.
     assert any("skip max_gross_alloc_mb_per_second (no data)" in ln for ln in lines)
 
@@ -2968,7 +2970,7 @@ def test_compute_health_withholds_grade_below_and_at_eighty_percent_coverage() -
     from apm_suite.analysis.health import DEFAULT_WEIGHT, WEIGHTS, compute_health
 
     # sync_locks+runtime_gc+cpu+io+memory_cache = 0.72 weighted coverage.
-    partial = {name: 20.0 for name in ("sync_locks", "runtime_gc", "cpu", "io", "memory_cache")}
+    partial = dict.fromkeys(("sync_locks", "runtime_gc", "cpu", "io", "memory_cache"), 20.0)
     below = compute_health(partial)
     assert below.health is None and below.grade is None
     assert below.confidence == "insufficient"
@@ -3168,7 +3170,7 @@ def test_flame_delta_ties_rank_by_frame_name() -> None:
 
     # Every frame moves by exactly -3; only the name tiebreak can order them.
     names = ["zeta", "mu", "alpha", "kappa", "beta", "omega"]
-    a = {name: 3 for name in names}
+    a = dict.fromkeys(names, 3)
     rows = delta(a, {}, top=30)
     assert [r["frame"] for r in rows] == sorted(names)
     cut = delta(a, {}, top=2)

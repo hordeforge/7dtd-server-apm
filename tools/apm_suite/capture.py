@@ -931,8 +931,8 @@ def write_plan_text(ctx_args: dict[str, object], only: str) -> str:
 
 
 __all__ = [
-    "SPECS",
     "SERVER_COMM",
+    "SPECS",
     "CaptureContext",
     "CaptureOutcome",
     "CollectorSpec",

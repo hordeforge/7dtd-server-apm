@@ -242,12 +242,18 @@ def format_report(cmp: dict[str, Any]) -> str:
 
     lines += [
         "",
-        f"- **Late ticks (bridge tick overage >60ms):** A={cmp.get('late_ticks_a')} "
-        f"B={cmp.get('late_ticks_b')} (Δ {cmp.get('late_ticks_delta'):+})",
-        f"- **Gross GC alloc MB/s (churn):** A={cmp.get('alloc_mb_s_a')} "
-        f"B={cmp.get('alloc_mb_s_b')}",
-        f"- **Worst STW pause ms (main-thread freeze):** A={cmp.get('stw_worst_ms_a')} "
-        f"B={cmp.get('stw_worst_ms_b')}",
+        (
+            f"- **Late ticks (bridge tick overage >60ms):** A={cmp.get('late_ticks_a')} "
+            f"B={cmp.get('late_ticks_b')} (Δ {cmp.get('late_ticks_delta'):+})"
+        ),
+        (
+            f"- **Gross GC alloc MB/s (churn):** A={cmp.get('alloc_mb_s_a')} "
+            f"B={cmp.get('alloc_mb_s_b')}"
+        ),
+        (
+            f"- **Worst STW pause ms (main-thread freeze):** A={cmp.get('stw_worst_ms_a')} "
+            f"B={cmp.get('stw_worst_ms_b')}"
+        ),
         f"- **Chunk stream MB/s:** A={cmp.get('chunk_mb_s_a')} B={cmp.get('chunk_mb_s_b')}",
     ]
     if cmp.get("attribution_deltas"):
