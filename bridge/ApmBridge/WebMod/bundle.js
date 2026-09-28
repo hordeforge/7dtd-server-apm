@@ -466,7 +466,25 @@
         const lastAlloc = H.alloc[H.alloc.length - 1];
         return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "#57d977"), 
         // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined at runtime before the first sample
-        trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "#e6bd3a"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null));
+        trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "#e6bd3a"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "#8ab4f8"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null), cell(h, "API errors", `${num(health.apiErrors)} / ${num(health.apiRequests)}`, num(health.apiErrors) > 0 ? "apm-warn" : null));
+    }
+    // Every read the bridge could not complete, labeled with its source. A hidden
+    // host strip or a panel that stopped updating otherwise looks like a healthy
+    // server: nothing in the payload says which field went unmeasured.
+    function healthAlerts(h, health) {
+        const alerts = [];
+        const sources = [
+            ["export", strOrEmpty(health.lastExportError)],
+            ["world sample", strOrEmpty(health.lastSampleError)],
+            ["host", strOrEmpty(health.hostError)],
+            ["api", strOrEmpty(health.lastApiError)]
+        ];
+        for (const [source, detail] of sources) {
+            if (detail !== "") {
+                alerts.push(h("pre", { key: source, className: "apm-error", role: "alert" }, `${source}: ${detail}`));
+            }
+        }
+        return alerts;
     }
     function bySortKey(sort) {
         return (a, b) => {
@@ -677,7 +695,7 @@
         return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), 
         // Visible, not screen-reader-only: a click with no on-screen result reads
         // as a dead button. role=status still announces the change.
-        copyStatus === "" ? null : h("p", { className: "apm-status", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderTrendsChart(h, React, hist.current, depth, changeDepth), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
+        copyStatus === "" ? null : h("p", { className: "apm-status", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderTrendsChart(h, React, hist.current, depth, changeDepth), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), ...healthAlerts(h, health), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
     }
     // The stock dashboard renders every webmod `routes` entry as a direct sidebar
     // item and every `settings` entry as a tab under Settings, unconditionally.

@@ -154,6 +154,21 @@ namespace DtdApmBridge
         // only the read gives no ordering; volatile provides the acquire/release
         // barrier (reference assignment is already atomic, so no torn value).
         static volatile string _lastExportError = "";
+        // Every field a snapshot can fail to read owns its slot. They used to
+        // share _lastExportError, so a successful export write cleared a
+        // world-sample error another thread had just recorded: a field that
+        // was never measured read as healthy. A slot is set by its own failure
+        // and cleared only by its own next success.
+        static volatile string _lastSampleError = "";
+        static volatile string _lastHostError = "";
+        // GET /api/apm is the dashboard panel's only data source (it polls
+        // every 2 s), so a failure there blinds the operator while the server
+        // keeps running. The request is timed and counted like a measured
+        // section (apm.api.snapshot) and health carries the totals, the failure
+        // count, and the last failure.
+        static readonly Metric ApiMetric = new Metric("apm.api.snapshot");
+        static long _apiRequests, _apiErrors;
+        static volatile string _lastApiError = "";
         static readonly Dictionary<string, TransferCounter> Transfers = new Dictionary<string, TransferCounter>();
         // Serializes the latest.json swap between the export ThreadPool thread
         // and a console `apm dump`; without it both threads can pass the
@@ -293,17 +308,22 @@ namespace DtdApmBridge
         static WorldSample SampleWorld()
         {
             var sample = new WorldSample { utc = DateTime.UtcNow.ToString("o") };
+            // Both reads are attempted: naming only the second failure would
+            // hide the first, and each field that failed is reported together
+            // with the sample that left it unmeasured.
+            string error = "";
             try { sample.clients = SingletonMonoBehaviour<ConnectionManager>.Instance?.ClientCount() ?? 0; }
-            catch (Exception ex) { _lastExportError = "clients: " + ex.Message; }
+            catch (Exception ex) { error = "clients: " + ex.Message; }
             try
             {
                 World world = GameManager.Instance?.World;
                 if (world != null) { sample.entities = world.Entities?.list?.Count ?? 0; sample.players = world.Players?.list?.Count ?? 0; sample.entityAlives = world.EntityAlives?.Count ?? 0; }
             }
-            catch (Exception ex) { _lastExportError = "world: " + ex.Message; }
+            catch (Exception ex) { error = error == "" ? "world: " + ex.Message : error + "; world: " + ex.Message; }
             using (Process process = Process.GetCurrentProcess())
             { sample.workingSetBytes = process.WorkingSet64; sample.threadCount = process.Threads.Count; }
             sample.unityDeltaMs = UnityEngine.Time.unscaledDeltaTime * 1000.0;
+            _lastSampleError = error;
             return sample;
         }
         /// <summary>Rows the dashboard panel's spike table shows. The API
@@ -328,14 +348,20 @@ namespace DtdApmBridge
                     serverTickIntervalAvgMs = TickIntervalAvgMs(), serverTickIntervalMaxMs = _tickMax,
                     lateTicks = _lateTicks, tickStallMsTotal = _tickStallMs,
                     windowUpdates = _updates, totalSpikes = _updateSpikes, deep = BridgeMod.Config.DeepMode };
-                health = new { exportQueued = _exportQueued != 0, droppedExports = _droppedExports, lastExportError = _lastExportError };
+                health = new { exportQueued = _exportQueued != 0, droppedExports = _droppedExports,
+                    lastExportError = _lastExportError, lastSampleError = _lastSampleError, hostError = _lastHostError,
+                    apiRequests = _apiRequests, apiErrors = _apiErrors, lastApiError = _lastApiError };
                 transfers = Transfers.OrderBy(x => x.Key).Select(x => x.Value.Snapshot(x.Key)).ToArray();
                 world = _lastWorld;
                 gcWindow = GcWindow(); // reads shared window fields - stay under Gate
                 // Cheap memcpy per metric under the lock; the expensive percentile
                 // sorts run below, lock-free, so the sim thread never waits on them.
-                copies = new Metric.Copied[_metricCount];
+                // The API section is appended rather than registered: it measures
+                // the bridge, not a game method, so it carries no Harmony patch and
+                // no subsystem attribution on the host side.
+                copies = new Metric.Copied[_metricCount + 1];
                 for (int i = 0; i < _metricCount; i++) copies[i] = Metrics[i].CopyUnderLock(Deep[i]);
+                copies[_metricCount] = ApiMetric.CopyUnderLock(false);
             }
             // Oldest-first ring, so trimming from the front keeps the newest.
             if (spikeLimit > 0 && spikes.Count > spikeLimit) spikes.RemoveRange(0, spikes.Count - spikeLimit);
@@ -410,12 +436,43 @@ namespace DtdApmBridge
         }
         public static string SnapshotJson() => JsonConvert.SerializeObject(Snapshot(DashboardSpikeRecords));
 
+        /// <summary>Snapshot document for GET /api/apm, counted and timed.
+
+        /// The request is recorded whether it succeeds or throws: a panel that
+        /// stops updating looks identical to a server that stopped working
+        /// unless the failure is counted here and named in health. The failure
+        /// log carries the exception type, message, and stack trace, because
+        /// the HTTP response itself is a coded envelope with no detail in it.
+        /// </summary>
+        public static string ApiSnapshotJson()
+        {
+            long start = Stopwatch.GetTimestamp();
+            Interlocked.Increment(ref _apiRequests);
+            try
+            {
+                return SnapshotJson();
+            }
+            catch (Exception ex)
+            {
+                Interlocked.Increment(ref _apiErrors);
+                _lastApiError = ex.GetType().Name + ": " + ex.Message;
+                BridgeMod.Log("apm snapshot failed: " + ex);
+                throw;
+            }
+            finally
+            {
+                lock (Gate)
+                    ApiMetric.Add((Stopwatch.GetTimestamp() - start) * 1000.0 / Stopwatch.Frequency);
+            }
+        }
+
         /// <summary>
         /// Host OS metrics from /proc: the bridge runs inside the dedicated
         /// server process on the same machine, so /proc/loadavg and
         /// /proc/meminfo report the host (or container cgroup) state the sim
-        /// contends with. Unreadable or non-Linux hosts return null and the
-        /// dashboard hides the host strip.
+        /// contends with. Unreadable or non-Linux hosts return null, the
+        /// dashboard hides the host strip, and health.hostError names the
+        /// read that failed so a missing strip is not read as a healthy host.
         /// </summary>
         static object HostSample()
         {
@@ -432,6 +489,7 @@ namespace DtdApmBridge
                 if (up.Length > 0) double.TryParse(up[0], NumberStyles.Float, CultureInfo.InvariantCulture, out uptimeS);
                 using (Process process = Process.GetCurrentProcess())
                 {
+                    _lastHostError = "";
                     return new
                     {
                         load1, load5, load15,
@@ -446,7 +504,14 @@ namespace DtdApmBridge
             }
             catch (Exception ex)
             {
-                BridgeMod.Log("host sample failed: " + ex.Message);
+                string detail = ex.GetType().Name + ": " + ex.Message;
+                // Every snapshot re-reads /proc, so a host that stays unreadable
+                // (a container without /proc, a removed meminfo) would log once
+                // per dashboard poll for the process lifetime. Log the first
+                // failure of a streak; health.hostError keeps the reason until
+                // a read succeeds again.
+                if (_lastHostError != detail) BridgeMod.Log("host sample failed: " + detail);
+                _lastHostError = detail;
                 return null;
             }
         }
@@ -540,7 +605,10 @@ namespace DtdApmBridge
         {
             lock (Gate)
                 return "APM updates=" + _updates + " gmUpdateAvg=" + GmUpdateAvgMs().ToString("F2")
-                    + "ms tickAvg=" + TickIntervalAvgMs().ToString("F2") + "ms spikes=" + _updateSpikes + " sections=" + _metricCount;
+                    + "ms tickAvg=" + TickIntervalAvgMs().ToString("F2") + "ms spikes=" + _updateSpikes + " sections=" + _metricCount
+                    // The dashboard's own read path, so a console operator can
+                    // tell a dead panel from a healthy server without a browser.
+                    + " api=" + _apiRequests + " apiErrors=" + _apiErrors;
         }
         public static string Benchmark(int iterations)
         {
@@ -560,6 +628,8 @@ namespace DtdApmBridge
                 _updateTotal = _updateMax = _lastUpdate = _tickTotal = _tickMax = _lastTick = 0;
                 _nextExport = 0;
                 _lateTicks = 0; _tickStallMs = 0; _lastExportError = "";
+                _lastSampleError = ""; _lastHostError = ""; _lastApiError = "";
+                _apiRequests = 0; _apiErrors = 0; ApiMetric.Reset();
                 CaptureWindowBaseline();
                 Transfers.Clear();
             }

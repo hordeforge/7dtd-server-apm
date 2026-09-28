@@ -183,9 +183,22 @@ namespace DtdApmBridge
                     : GetLengthCache.GetOrAdd(package.GetType(), t => AccessTools.Method(t, "GetLength"));
                 int bytes = getLength == null ? 0 : Convert.ToInt32(getLength.Invoke(package, null));
                 Telemetry.RecordTransfer(__originalMethod.DeclaringType.Name, bytes);
+                _mapTransferError = "";
             }
-            catch (Exception ex) { Log("map transfer counter failed: " + ex.Message); }
+            catch (Exception ex)
+            {
+                // This postfix runs per network package (hundreds per second
+                // during joins and chunk streaming), so a persistently failing
+                // lookup used to write one log line per package. Log the first
+                // failure of a streak, then stay quiet until a package
+                // succeeds again; capabilities() reports the patch either way.
+                string detail = ex.GetType().Name + ": " + ex.Message;
+                if (_mapTransferError != detail) Log("map transfer counter failed: " + detail);
+                _mapTransferError = detail;
+            }
         }
+
+        static volatile string _mapTransferError = "";
         static string Describe(MethodInfo method) => method.DeclaringType.FullName + "." + method.Name
             + "(" + string.Join(",", method.GetParameters().Select(p => p.ParameterType.FullName)) + ")#" + method.MetadataToken;
         static void PatchSection(string spec, bool deep)

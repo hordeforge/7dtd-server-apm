@@ -205,6 +205,88 @@ def test_apm_get_sends_the_snapshot_before_the_error_envelope() -> None:
     assert body.index("SendEmptyResponse") < body.index("SendEnvelopedResult")
 
 
+def _telemetry_source() -> str:
+    return TELEMETRY_CS.read_text(encoding="utf-8")
+
+
+def test_api_request_path_is_counted_timed_and_logged_with_context() -> None:
+    # The panel polls GET /api/apm every 2 s, so the endpoint is a production
+    # request path: a failure has to be countable, timed, and logged with the
+    # stack trace, since the coded error envelope carries no detail.
+    body = _rest_api_class_bodies(WEB_API_CS.read_text(encoding="utf-8"))["Apm"]
+    assert "Telemetry.ApiSnapshotJson()" in body, (
+        "the handler must go through the instrumented entry point"
+    )
+    assert "apm snapshot failed" not in body, (
+        "the failure is logged once, where the exception is still in scope"
+    )
+    source = _telemetry_source()
+    timed = source[source.index("public static string ApiSnapshotJson()") :]
+    timed = timed[: timed.index("public static string Dump()")]
+    for needle in (
+        "Interlocked.Increment(ref _apiRequests)",
+        "Interlocked.Increment(ref _apiErrors)",
+        "ApiMetric.Add(",
+        "throw;",
+    ):
+        assert needle in timed, f"ApiSnapshotJson must contain {needle}"
+    assert 'BridgeMod.Log("apm snapshot failed: " + ex);' in timed, (
+        "the failure log must carry the exception (type, message, stack trace)"
+    )
+    assert "catch (Exception ex)\n            {" in timed and "ex.Message" in timed, (
+        "the failure must be named in the payload, not only in the log"
+    )
+
+
+def test_snapshot_reports_the_api_section_and_per_source_errors() -> None:
+    # An operator reads one document: the endpoint's latency belongs in
+    # sections (so the percentiles match every other measured section) and the
+    # failure counts in health, next to the other unmeasured-field errors.
+    source = _telemetry_source()
+    health = re.search(r"health = new \{(.*?)\};", source, re.DOTALL)
+    assert health
+    fields = set(re.findall(r"(\w+)\s*=", health.group(1)))
+    assert {
+        "apiRequests",
+        "apiErrors",
+        "lastApiError",
+        "lastExportError",
+        "lastSampleError",
+        "hostError",
+    } <= fields, f"health is missing {sorted(fields)}"
+
+
+def test_unmeasurable_fields_do_not_share_one_error_slot() -> None:
+    # A single shared slot let a successful export clear a world-sample error
+    # another thread had just recorded, so a field that was never measured
+    # read as healthy. Each source owns a field and only its own next success
+    # may clear it.
+    source = _telemetry_source()
+    slots = ("_lastExportError", "_lastSampleError", "_lastHostError", "_lastApiError")
+    for slot in slots:
+        assert f"volatile string {slot}" in source, f"{slot} must be a volatile field"
+    sampling = source[source.index("static WorldSample SampleWorld()") :]
+    sampling = sampling[: sampling.index("public const int DashboardSpikeRecords")]
+    assert "_lastExportError" not in sampling, (
+        "the world sample must report into its own slot, not the export's"
+    )
+    host = source[source.index("static object HostSample()") :]
+    host = host[: host.index("static long ParseMeminfo")]
+    assert "_lastExportError" not in host, (
+        "a failed /proc read must report into its own slot, not the export's"
+    )
+    assert '_lastHostError = "";' in host, "a successful host read clears its own error"
+    # The host read runs per snapshot (the panel polls every 2 s); a persistently
+    # unreadable /proc logged once per poll for the process lifetime.
+    assert 'if (_lastHostError != detail) BridgeMod.Log("host sample failed: " + detail);' in host
+    transfer = BRIDGE_MOD_CS.read_text(encoding="utf-8")
+    postfix = transfer[transfer.index("public static void MapTransferPostfix(") :]
+    postfix = postfix[: postfix.index("static string Describe(")]
+    assert 'if (_mapTransferError != detail) Log("map transfer counter failed: " + detail);' in (
+        postfix
+    ), "a failing per-package counter must not log once per network package"
+
+
 def _emitted_section_fields() -> set[str]:
     """Field names of the anonymous object Telemetry.Metric.Build returns."""
     source = TELEMETRY_CS.read_text(encoding="utf-8")

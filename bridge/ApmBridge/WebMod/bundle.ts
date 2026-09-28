@@ -689,7 +689,27 @@ function renderGrid(h: CreateElement, React: PanelProps["React"], g: Grade, H: S
     cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null),
     cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null),
     cell(h, "Threads", num(world.threadCount), null),
-    cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null));
+    cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null),
+    cell(h, "API errors", `${num(health.apiErrors)} / ${num(health.apiRequests)}`, num(health.apiErrors) > 0 ? "apm-warn" : null));
+}
+
+// Every read the bridge could not complete, labeled with its source. A hidden
+// host strip or a panel that stopped updating otherwise looks like a healthy
+// server: nothing in the payload says which field went unmeasured.
+function healthAlerts(h: CreateElement, health: Record<string, unknown>): Array<unknown> {
+  const alerts: Array<unknown> = [];
+  const sources: Array<[string, string]> = [
+    ["export", strOrEmpty(health.lastExportError)],
+    ["world sample", strOrEmpty(health.lastSampleError)],
+    ["host", strOrEmpty(health.hostError)],
+    ["api", strOrEmpty(health.lastApiError)]
+  ];
+  for (const [source, detail] of sources) {
+    if (detail !== "") {
+      alerts.push(h("pre", { key: source, className: "apm-error", role: "alert" }, `${source}: ${detail}`));
+    }
+  }
+  return alerts;
 }
 
 type SortState = { key: string; dir: number };
@@ -987,7 +1007,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
       renderBudgetGauge(h, update),
       renderGrid(h, React, g, hist.current, update, gc, world, health)),
     renderTopSections(h, sections),
-    strOrEmpty(health.lastExportError) === "" ? null : h("pre", { className: "apm-error", role: "alert" }, health.lastExportError),
+    ...healthAlerts(h, health),
     renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter),
     renderSpikesSection(h, spikes),
     renderTransfersSection(h, transfers));

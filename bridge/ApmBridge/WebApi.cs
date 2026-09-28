@@ -19,12 +19,13 @@ namespace DtdApmBridge
         {
             // Structured error envelope: a failed snapshot must answer a coded
             // 500, not an unhandled handler exception with no programmatic
-            // detail.
+            // detail. ApiSnapshotJson counts and times the request and logs the
+            // failure with its type and stack trace, which the coded envelope
+            // deliberately does not carry.
             string json;
-            try { json = Telemetry.SnapshotJson(); }
-            catch (Exception ex)
+            try { json = Telemetry.ApiSnapshotJson(); }
+            catch (Exception)
             {
-                BridgeMod.Log("apm snapshot failed: " + ex.Message);
                 SendEmptyResponse(context, HttpStatusCode.InternalServerError, null, "SNAPSHOT_FAILED", null);
                 return;
             }

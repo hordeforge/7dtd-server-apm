@@ -265,7 +265,22 @@ major.
 
 ## Unreleased - bridge mod
 
-No pending changes.
+- Observability: `GET /api/apm` instruments itself. The panel polls it every
+  2 s, so a failure there left the operator with a frozen dashboard and no
+  record anywhere. The request is timed and counted as the
+  `apm.api.snapshot` section, `health.apiRequests` and `health.apiErrors` carry
+  the window totals, `apm status` prints them, and a failure logs the
+  exception type, message, and stack trace instead of the message alone (the
+  coded `SNAPSHOT_FAILED` response carries no detail).
+- Observability: each unmeasurable field names its own failure in `health`
+  (`lastExportError`, `lastSampleError`, `hostError`, `lastApiError`). They
+  shared one slot before, so a successful export cleared a world-sample error
+  another thread had just recorded and an unmeasured field read as healthy. A
+  `null` `host` now names the `/proc` read that failed.
+- Logging: the map-transfer counter and the `/proc` host read run per network
+  package and per snapshot. A persistently failing one logged once per call
+  (hundreds of lines per second during a join); both now log the first failure
+  of a streak and stay quiet until the next success.
 
 ## 3.0.0 - bridge mod - 2026-09-28
 

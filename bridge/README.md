@@ -92,20 +92,32 @@ is an unmeasured world, not an empty one.
 | `capabilities` | hook status per patched method, game assembly identity |
 | `measurement` | measured method name, duration unit, deep sample rate |
 | `update` | `gmUpdate` and server-tick durations, late ticks, spike count |
-| `health` | export queue state, dropped exports, last export error |
+| `health` | export queue state, dropped exports, per-source last error, `/api/apm` request and failure counts |
 | `host` | `/proc` load, memory, uptime, RSS; `null` on a non-Linux or unreadable host |
 | `gc` | window-scoped collection counts, heap, gross allocation rate |
 | `world` | last sampled clients, entities, alive entities, players, working-set bytes, thread count, frame delta |
 | `mapTransfers` | per-package `packages`, `bytes`, `lastBytes`, `maxBytes` |
-| `sections` | per-hook calls, avg/last/max/p50/p95/p99/total ms, `deep` flag |
+| `sections` | per-hook calls, avg/last/max/p50/p95/p99/total ms, `deep` flag; the `apm.api.snapshot` section times this endpoint |
 | `spikes` | newest `DashboardSpikeRecords` (12) spikes, newest last, each with its own `world` sample |
 
-A field that failed to read is never faked: `health.lastExportError` names the
-read that failed (and `gc.grossAllocBytesPerSecond` is `-1` when no gross
-allocation counter exists on the runtime), so a client sees which numbers are
-unmeasured instead of a plausible zero. Add fields inside the existing objects;
-the schema version changes only for a removed or retyped field, since consumers
-parse the document with a strict section model (`ManagedSectionV3`).
+A field that failed to read is never faked: each source names its own failure
+in `health` (`lastExportError`, `lastSampleError` for the world sample,
+`hostError` for the `/proc` reads behind a `null` `host`, `lastApiError` for
+this endpoint), and each is cleared only by the next success of that same read,
+so a working export cannot clear a failed sample. `gc.grossAllocBytesPerSecond`
+is `-1` when no gross allocation counter exists on the runtime. A client thus
+sees which numbers are unmeasured instead of a plausible zero. Add fields inside
+the existing objects; the schema version changes only for a removed or retyped
+field, since consumers parse the document with a strict section model
+(`ManagedSectionV3`).
+
+The endpoint instruments itself: `sections["apm.api.snapshot"]` carries the
+request count and p50/p95/p99, `health.apiRequests` and `health.apiErrors` the
+window totals, and a failure logs its exception type, message, and stack trace
+(the coded `SNAPSHOT_FAILED` envelope carries no detail). It is the dashboard
+panel's only data source, so a panel that stopped updating is otherwise
+indistinguishable from a server that stopped working. `apm status` prints the
+same two counts, and `apm reset` clears them with the rest of the window.
 
 `spikes` is a tail, not the whole ring: the API serves the newest 12 records
 (`Telemetry.DashboardSpikeRecords`) so a long spike streak cannot push 128

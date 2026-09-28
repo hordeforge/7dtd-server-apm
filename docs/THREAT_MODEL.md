@@ -26,7 +26,7 @@ sec-review; this document is the map that aims those passes.
 | R4 | Evidence integrity: a writable store lets a local attacker forge measurements that feed baseline/candidate verdicts | B6 store -> analysis | Low-Medium | Partially mitigated. Manifest-recorded artifact paths are validated at read, and hashes are checked at finalize/import, but nothing is signed, so a local writer can re-hash |
 | R5 | Imported bundle restores attacker-supplied archives into the store where later audits, compares, and budgets trust them | B6 untrusted zip -> store | Low-Medium | Mitigated: zip-slip guard, member and uncompressed-size limits, chmod 0700 before extraction, partial-extraction cleanup, post-import audit. `bundle.py:286-344` |
 | R6 | A `scenario run` hands the sibling load generator a full copy of the operator environment, including `SEVENDTD_TELNET_PASSWORD` and every other secret in it | B6 CLI -> sibling process | Low-Medium | Gap; no allowlist on the child env. `cli.py:967-990` |
-| R7 | The bridge console verbs `apm reload`, `apm reset`, and `apm dump` are reachable by any account with console access; the bridge performs no authorization of its own | B4 console user -> bridge | Low | Inherent to the game's single-tier console auth. `BridgeMod.cs:280-330` |
+| R7 | The bridge console verbs `apm reload`, `apm reset`, and `apm dump` are reachable by any account with console access; the bridge performs no authorization of its own | B4 console user -> bridge | Low | Inherent to the game's single-tier console auth. `BridgeMod.cs:294-345` |
 | R8 | `/tmp/perf-<pid>.map` is a world-claimable name in a shared namespace | B5 CLI -> shared /tmp | Low | Mitigated: a foreign entry is refused before the atomic swap, and release is conditional on the link still pointing at this capture. `capture.py:502-557,619` |
 | R9 | The `prometheus` command writes a metric file that an external scraper reads over a shared path, and every label in it comes from `summary.json`, which an imported bundle supplies | B6 store -> monitoring | Low | Mitigated: label values are escaped per the exposition spec and every number goes through a safe coercion, so a crafted summary degrades to a missing line instead of breaking the line format. `prometheus.py:22-26,29-148` |
 
@@ -57,7 +57,7 @@ removed: no `/api/perf` handler and no `Perf` class exist anywhere under
 | B1 | Operator -> CLI | Typer options and env wiring in `tools/apm_suite/cli.py`; env overrides `SEVENDTD_APM_DIR`, `SEVENDTD_DS_DIR` (`paths.py:30-40,55-57`), `SEVENDTD_DS_BIN` and `SEVENDTD_DS_DIR` (`tools/host_profiler/find_server.sh:8-11`), `SEVENDTD_APM_PYTHON` (`tools/host_profiler/perf_record.sh:72`), `SEVENDTD_GAME_DIR` (`scripts/build_bridge.sh:30`) |
 | B2 | CLI -> game server telnet (outbound network) | `socket.create_connection` in `capture.py:278`, `collectors/app_scrape.py:58`, `doctor.py:45` |
 | B3 | Game server responses -> session store | Server-streamed console-log lines are cut at the first ISO timestamp before persistence (`app_scrape.py:34,44-56`); the `apm` command reply itself is persisted raw into `app/bridge.jsonl` |
-| B4 | Dashboard web user / console user -> bridge (in-process, on stock hosts) | `GET /api/apm` on the stock V3 WebAPI scanner (`WebApi.cs:14-41`); `apm` console verbs (`BridgeMod.cs:280-330`); panel caller `bridge/ApmBridge/WebMod/bundle.ts:902-906` |
+| B4 | Dashboard web user / console user -> bridge (in-process, on stock hosts) | `GET /api/apm` on the stock V3 WebAPI scanner (`WebApi.cs:14-44`); `apm` console verbs (`BridgeMod.cs:294-345`); panel caller `bridge/ApmBridge/WebMod/bundle.ts:920-930` |
 | B5 | CLI -> OS root, and CLI -> shared host namespaces | `sudo -n bpftrace` (`collectors.py:81-88`), `sudo -n mount --bind` / `umount` (`capture.py:189-193,213-238`), `sudo -n true` (`capture.py:493`); `/tmp/perf-<pid>.map` claim (`capture.py:519-557,619`); `scripts/check_bt.sh:49` |
 | B6 | Other parties -> store and -> child processes | Sanitized export zip (`bundle.py:201-284`); untrusted import (`bundle.py:286-344`); metric file read by an external scraper (`prometheus.py:29-148`); loadgen child inherits a full environment copy (`cli.py:967-1010`) |
 
@@ -68,8 +68,8 @@ removed: no `/api/perf` handler and no `Perf` class exist anywhere under
 | `capture`, `finalize`, `audit`, `verify-store`, `index`, `export`, `import`, `scaling`, `prometheus`, `monitor`, `prune`, `compare`, `budget`, `bridge`, `doctor`, `scenario run`, `scenario matrix`, `flame build`, `flame diff` | CLI arguments | `tools/apm_suite/cli.py:185-1267` |
 | `SEVENDTD_TELNET_PASSWORD`, `SEVENDTD_APM_DIR`, `SEVENDTD_DS_DIR`, `SEVENDTD_DS_BIN`, `SEVENDTD_APM_PYTHON`, `SEVENDTD_GAME_DIR`, `APM_KEEP_SESSIONS`, `APM_PRUNE_GRACE_HOURS`, `LOADGEN_*` (emitted, not read) | env input | `cli.py:265,942,1194`, `paths.py:30-57`, `doctor.py:188`, `scripts/build_bridge.sh:30` |
 | Telnet client actions (`apm dump/reset/jitmap/benchmark/reload`, rally, cleanup) | outbound network client | `capture.py:248-361`, `cli.py:942,1194` |
-| Bridge `GET /api/apm` | HTTP GET, admin-gated, no request data read | `WebApi.cs:18-41` |
-| Bridge console verbs `apm status/dump/reset/reload/capabilities/jitmap/benchmark` | console command | `BridgeMod.cs:280-330` |
+| Bridge `GET /api/apm` | HTTP GET, admin-gated, no request data read | `WebApi.cs:18-37` |
+| Bridge console verbs `apm status/dump/reset/reload/capabilities/jitmap/benchmark` | console command | `BridgeMod.cs:294-345` |
 | Zip bundle import | file parser (untrusted archive) | `bundle.py:286-344`, guard `io.py:105-120` |
 | JSON/JSONL session parsing, incl. manifest-recorded artifact paths from an imported bundle | file parser (store-trusted, import-untrusted) | `io.py:168-219,105-120`; consumers in `analysis/` |
 | `perf script` output, bpftrace maps, jit map | file parsers (host-produced) | `tools/host_profiler/stackcollapse_perf.py`, `analysis/report.py`, `analysis/jitsym.py`, `analysis/events.py`; fuzzed in `tools/apm_suite/tests/test_fuzz_parsers.py` |
@@ -110,7 +110,7 @@ removed: no `/api/perf` handler and no `Perf` class exist anywhere under
 **B4 dashboard / console user -> bridge**
 - Elevation: the REST endpoint relies wholly on stock dashboard auth;
   `DefaultMethodPermissionLevels()` returns admin-only zeros for every verb and
-  the handler reads no request data (`WebApi.cs:18-41`). No mutating verb is
+  the handler reads no request data (`WebApi.cs:18-37`). No mutating verb is
   overridden, so the base handler answers 405. `tests/test_bridge_build_surface.py:71-80`
   pins the all-zero array.
 - The console path is the exception: the bridge authorizes nothing itself, takes
@@ -206,7 +206,7 @@ removed: no `/api/perf` handler and no `Perf` class exist anywhere under
 | Interactive flame page escapes the embedded tree JSON (`<`, `>`, `&`) and html-escapes title and file name, so a hostile frame name cannot break out of `<script>` | stored XSS in a shared report | `interactive_flame.py:328-339` |
 | No `shell=True`, `os.system`, or command-string concatenation anywhere in `tools/`; every subprocess is an argv list | command injection | `collectors.py`, `capture.py`, `cli.py` |
 | bpftrace preprocessor types `--pid` as `int` and validates `--comm` and `--mono-so` before generating a root-run script | root-program injection | `preprocess_bt.py:48-63,74-81` |
-| Bridge endpoint admin-only on every verb, GET-only, reads no request data | B4 web scope | `WebApi.cs:18-41` |
+| Bridge endpoint admin-only on every verb, GET-only, reads no request data | B4 web scope | `WebApi.cs:18-37` |
 | Bridge console verbs restricted by an allowlist with `int.TryParse` on the numeric arg | B4 console scope | `BridgeMod.cs:283-285,290-330` |
 | Bridge config rejects unknown keys and clamps values on load; malformed config falls back to defaults | hostile config | `BridgeConfig.cs:50,98-110` |
 | Bridge writes are atomic (temp plus replace) with temp cleanup on failure | partial telemetry | `TempFiles.cs:34-46`, `Telemetry.cs:453-457` |
