@@ -52,6 +52,7 @@ from .models import (
     schema_dict,
 )
 from .paths import apm_root, require_backends
+from .runner import terminate_tree
 from .session import (
     keep_sessions_budget,
     list_sessions,
@@ -66,6 +67,9 @@ ANALYZER_VERSION = __version__
 # (flame build); long captures get a full extra window since perf script/report
 # time grows with recorded data volume
 GRACE_SECONDS = 60
+# Upper bound on the offline flame build. Exceeding it tears the whole process
+# group down (see _build_flames).
+FLAME_BUILD_SECONDS = 180
 
 
 @dataclass
@@ -867,17 +871,7 @@ def run_capture(
         and not (session / "cpu/perf/flames.done").exists()
     ):
         # A hung flame build must not block finalize.
-        with suppress(subprocess.TimeoutExpired, OSError):
-            subprocess.run(
-                [
-                    "bash",
-                    str(HOST_PROFILER / "make_flames.sh"),
-                    str(session / "cpu/perf"),
-                    f"7DTD APM pid={pid}",
-                ],
-                check=False,
-                timeout=180,
-            )
+        _build_flames(session, pid)
 
     if finalize:
         from .finalize import finalize as finalize_session
@@ -973,6 +967,37 @@ def _launch_collectors(
         running.append(
             _Running(spec=spec, process=process, started=time.monotonic(), streams=streams)
         )
+
+
+def _build_flames(session: Path, pid: int) -> None:
+    """Render the flame set, killing the whole process group when it overruns.
+
+    make_flames.sh drives a chain of Python builders (collapse, annotate,
+    speedscope, HTML), so a timeout that signals only the shell reparents the
+    running builder to init: it keeps burning CPU on a host this tool is
+    measuring, and keeps writing flame.html into a session finalize is about to
+    hash, so the manifest records hashes the artifacts no longer match. Own
+    session plus group teardown, like every other child started here. A launch
+    failure (no bash, ENOMEM) stays non-fatal: the flame set is optional.
+    """
+    command = [
+        "bash",
+        str(HOST_PROFILER / "make_flames.sh"),
+        str(session / "cpu/perf"),
+        f"7DTD APM pid={pid}",
+    ]
+    try:
+        process = subprocess.Popen(command, start_new_session=True)
+    except OSError:
+        return
+    try:
+        process.wait(timeout=FLAME_BUILD_SECONDS)
+    except subprocess.TimeoutExpired:
+        terminate_tree(process)
+    except BaseException:
+        # An interrupt must not leave the builder chain running either.
+        terminate_tree(process)
+        raise
 
 
 def _ingest_bridge_snapshot(

@@ -5405,6 +5405,69 @@ def test_terminate_tree_escalates_when_interrupted_during_term_grace(
     assert process.poll() is not None
 
 
+def test_flame_build_timeout_kills_the_builder_chain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An overrunning flame build must take its whole chain down. make_flames.sh
+    runs the builders as children, so a timeout that signals only the shell
+    reparents the running builder to init: it keeps burning CPU on the host
+    under measurement and keeps writing flame.html after finalize hashed the
+    session."""
+    scripts = tmp_path / "host_profiler"
+    scripts.mkdir()
+    marker = tmp_path / "grandchild.pid"
+    (scripts / "make_flames.sh").write_text(
+        "#!/usr/bin/env bash\nsleep 30 & echo $! >" + str(marker) + '\nwait "$!"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(capture, "HOST_PROFILER", scripts)
+    monkeypatch.setattr(capture, "FLAME_BUILD_SECONDS", 1)
+
+    started = time.monotonic()
+    capture._build_flames(tmp_path / "session_flame", 4242)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 30  # bounded: a 1s grace plus the kill, not the 30s build
+    grandchild = int(marker.read_text(encoding="utf-8").strip())
+    deadline = time.monotonic() + 5
+    while psutil.pid_exists(grandchild) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    # The builder chain died with the shell: a grandchild still alive here is
+    # the orphan this teardown exists to prevent.
+    assert not psutil.pid_exists(grandchild)
+
+
+def test_flame_build_interrupt_still_tears_the_chain_down(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An interrupt inside the build wait must group-kill before propagating,
+    exactly like the scenario teardown: leaving the chain running on a Ctrl+C
+    abandons the same orphaned builders the timeout path exists to prevent."""
+    scripts = tmp_path / "host_profiler"
+    scripts.mkdir()
+    (scripts / "make_flames.sh").write_text(
+        '#!/usr/bin/env bash\nsleep 30 & wait "$!"\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(capture, "HOST_PROFILER", scripts)
+
+    class _InterruptedBuild:
+        pid = 424243
+
+        def wait(self, timeout: float | None = None) -> int:
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(subprocess, "Popen", lambda *_args, **_kwargs: _InterruptedBuild())
+    teardowns: list[int] = []
+    monkeypatch.setattr(
+        capture, "terminate_tree", lambda process, **_kwargs: teardowns.append(process.pid)
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        capture._build_flames(tmp_path / "session_flame", 4242)
+
+    assert teardowns == [424243]
+
+
 def test_scenario_run_teardown_survives_second_interrupt(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
