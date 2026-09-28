@@ -213,7 +213,9 @@ def _copy_member(archive: zipfile.ZipFile, source: Path, relative: Path) -> None
 def export_bundle(session: Path, output: Path) -> Path:
     """Write a sanitized support bundle of `session` to `output` and return it."""
     if not session.is_dir():
-        raise BundleError("session directory does not exist")
+        # Name the path: every sibling command (audit, verify-store, compare)
+        # reports a bad session argument with the value the operator typed.
+        raise BundleError(f"session directory does not exist: {session}")
     # manifest.json is excluded too: it describes the source session, and the
     # bundle carries its own manifest describing the bundle (below).
     output.parent.mkdir(parents=True, exist_ok=True)

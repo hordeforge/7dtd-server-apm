@@ -42,7 +42,7 @@ def export_metrics(session: Path, output: Path) -> None:
     """
     summary_path = session / "summary.json"
     if not summary_path.is_file():
-        raise MetricError("session has no summary.json")
+        raise MetricError(f"session has no summary.json: {summary_path}")
     try:
         summary = load_json(summary_path)
     except (ValueError, OSError) as error:

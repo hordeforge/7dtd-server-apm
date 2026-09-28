@@ -70,8 +70,36 @@ MAX_BRIDGE_EXPORT_SECONDS = 3600.0
 # the callback can touch stdio.
 _HELP_MARKUP: typer.core.MarkupMode | None = "rich" if sys.stdout.isatty() else None
 
+_EPILOG = """\
+SEVENDTD_TELNET_PASSWORD supplies the telnet password for capture and scenario
+(never a flag: argv is world-readable). SEVENDTD_APM_DIR relocates the session
+store, which otherwise lives at ~/.local/share/7dtd-server-apm.
+
+Exit codes: 0 success, 1 the command ran and did not complete, 2 bad
+invocation, 130 interrupted. Results go to stdout, errors to stderr.
+
+Common workflows:
+
+  7dtd-server-apm doctor --strict
+
+  7dtd-server-apm capture --seconds 45 --only all
+
+  7dtd-server-apm scenario run --seconds 60 --clients 6
+
+  7dtd-server-apm compare BASELINE CANDIDATE -o report/
+
+  7dtd-server-apm budget CANDIDATE --baseline BASELINE
+
+  7dtd-server-apm export SESSION -o support-bundle.zip
+
+Machine-readable host readiness, for a script or a dashboard:
+
+  7dtd-server-apm doctor --json -
+"""
+
 app = typer.Typer(
     help="Host-only APM for 7 Days to Die dedicated servers.",
+    epilog=_EPILOG,
     no_args_is_help=True,
     rich_markup_mode=_HELP_MARKUP,
 )
@@ -769,7 +797,12 @@ def prune_sessions(
         bool, typer.Option(help="List what would be deleted without deleting.")
     ] = False,
 ) -> None:
-    """Delete old sessions beyond --keep or a total size budget."""
+    """Delete old sessions beyond --keep or a total size budget.
+
+    Sessions are not erased: each one moves to <store>/.trash and stays
+    recoverable with mv until APM_PRUNE_GRACE_HOURS expires. Nothing is
+    deleted without --dry-run showing the exact list first.
+    """
     max_bytes = max_gb * GIGABYTE if max_gb is not None else None
     doomed = sessions_beyond_budget(list_sessions(apm_root()), keep, max_bytes)
     for old in doomed:
@@ -805,7 +838,7 @@ def compare(
     after: Annotated[Path, typer.Argument(help="Candidate finalized session.")],
     output: Annotated[
         Path | None,
-        typer.Option("--output", "-o", help="Report directory (default: the AFTER session)."),
+        typer.Option("--output", "-o", help="Report directory (default: the candidate session)."),
     ] = None,
 ) -> None:
     """Diff two finalized sessions and write compare.json/compare.md."""
