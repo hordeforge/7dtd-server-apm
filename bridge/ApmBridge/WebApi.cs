@@ -17,6 +17,13 @@ namespace DtdApmBridge
 
         public override void HandleRestGet(RequestContext context)
         {
+            // The body is a live sample, not a representation of a URL: two
+            // polls a second apart are different measurements, so a caching
+            // proxy in front of the dashboard port must not store a response
+            // that carries no freshness of its own and replay it as current.
+            // Set before either response is written, so the error envelope is
+            // marked as well.
+            context.Response.Headers["Cache-Control"] = "no-store";
             // Structured error envelope: a failed snapshot must answer a coded
             // 500, not an unhandled handler exception with no programmatic
             // detail. ApiSnapshotJson counts and times the request and logs the

@@ -304,6 +304,14 @@ major.
   package and per snapshot. A persistently failing one logged once per call
   (hundreds of lines per second during a join); both now log the first failure
   of a streak and stay quiet until the next success.
+- API: `GET /api/apm` answers `Cache-Control: no-store`. The document is
+  sampled when the request arrives rather than representing a URL, and the
+  response carried no freshness of its own, so a caching proxy in front of the
+  dashboard port could replay a stale snapshot as a current one. The payload,
+  its status codes, and its `SNAPSHOT_FAILED` code are unchanged, so no client
+  has to change.
+- API: the response contract now documents `mapTransfers.mebiytes`, the MiB
+  float beside `bytes` that the panel has always read.
 
 ## 3.0.0 - bridge mod - 2026-09-28
 

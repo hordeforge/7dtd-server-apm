@@ -87,6 +87,14 @@ date slot. `world.utc` is `null` until the first world sample is taken (first
 spike or first periodic export), so a `0` in `world.entities` before that point
 is an unmeasured world, not an empty one.
 
+A 200 carries `Cache-Control: no-store`. The document is a live sample taken
+when the request arrives, not a resource with a stable URL, so two polls a
+second apart are different measurements; without the header a caching proxy in
+front of the dashboard port may store a response that carries no freshness of
+its own and replay a stale snapshot as a current one. There is no `ETag`: a
+client that sent one would be owed a `304` path this endpoint does not
+implement, and a conditional poll would only ever return stale telemetry.
+
 | Key | Contents |
 |---|---|
 | `capabilities` | hook status per patched method, game assembly identity |
@@ -96,7 +104,7 @@ is an unmeasured world, not an empty one.
 | `host` | `/proc` load, memory, uptime, RSS; `null` on a non-Linux or unreadable host |
 | `gc` | window-scoped collection counts, heap, gross allocation rate |
 | `world` | last sampled clients, entities, alive entities, players, working-set bytes, thread count, frame delta |
-| `mapTransfers` | per-package `packages`, `bytes`, `lastBytes`, `maxBytes` |
+| `mapTransfers` | per-package `packages`, `bytes`, `mebibytes` (the same `bytes` as a MiB float, so a client need not divide), `lastBytes`, `maxBytes` |
 | `sections` | per-hook calls, avg/last/max/p50/p95/p99/total ms, `deep` flag; the `apm.api.snapshot` section times this endpoint |
 | `spikes` | newest `DashboardSpikeRecords` (12) spikes, newest last, each with its own `world` sample |
 

@@ -206,6 +206,20 @@ def test_apm_get_sends_the_snapshot_before_the_error_envelope() -> None:
     assert body.index("SendEmptyResponse") < body.index("SendEnvelopedResult")
 
 
+def test_apm_get_answers_a_live_snapshot_as_uncacheable() -> None:
+    # Contract: the 200 body is sampled when the request arrives and the panel
+    # repolls it every 2 s, so it is not a cacheable representation of a URL. A
+    # caching proxy ahead of the dashboard port may otherwise store a response
+    # that carries no freshness of its own and replay a stale snapshot.
+    body = _rest_api_class_bodies(WEB_API_CS.read_text(encoding="utf-8"))["Apm"]
+    assert 'Headers["Cache-Control"] = "no-store"' in body, (
+        "the snapshot must be marked no-store before it is sent"
+    )
+    assert body.index('"no-store"') < body.index("SendEnvelopedResult"), (
+        "the header must be set before any response is written"
+    )
+
+
 def _telemetry_source() -> str:
     return TELEMETRY_CS.read_text(encoding="utf-8")
 
@@ -346,6 +360,9 @@ def test_bridge_readme_documents_the_response_contract() -> None:
         "spikes",
     ):
         assert f"| `{key}`" in readme, f"response contract does not document {key}"
+    assert "Cache-Control: no-store" in readme, (
+        "the response contract does not document the no-store header the handler sets"
+    )
 
 
 def test_bridge_releases_every_os_handle_it_acquires() -> None:

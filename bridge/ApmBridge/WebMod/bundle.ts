@@ -193,7 +193,7 @@ function unwrapSnap(o: unknown): Record<string, unknown> {
     // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
     return inner as Record<string, unknown>;
   }
-  if (innerRecord.schema !== undefined || innerRecord.update !== undefined || innerRecord.enabled !== undefined) {
+  if (innerRecord.schema !== undefined || innerRecord.update !== undefined) {
     return innerRecord;
   }
   return record;

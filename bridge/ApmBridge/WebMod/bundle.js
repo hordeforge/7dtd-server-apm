@@ -121,7 +121,7 @@
             // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: untyped JSON payload boundary; SAFETY: typeof above proves the runtime value is an object
             return inner;
         }
-        if (innerRecord.schema !== undefined || innerRecord.update !== undefined || innerRecord.enabled !== undefined) {
+        if (innerRecord.schema !== undefined || innerRecord.update !== undefined) {
             return innerRecord;
         }
         return record;

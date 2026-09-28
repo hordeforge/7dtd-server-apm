@@ -6102,7 +6102,10 @@ def test_scenario_matrix_routes_telnet_target_to_cleanup_and_every_experiment(
         seen.append(kwargs)
 
     monkeypatch.setenv("SEVENDTD_TELNET_PASSWORD", "pw")
-    monkeypatch.setattr(capture, "telnet_command", record_telnet)
+    # Patched where the matrix path calls it: cli imports telnet_command by
+    # name, so replacing the attribute on capture left the real socket call in
+    # place and the assertion below never saw the cleanup.
+    monkeypatch.setattr(cli, "telnet_command", record_telnet)
     monkeypatch.setattr(time, "sleep", lambda _seconds: None)
     seen: list[dict[str, object]] = []
     monkeypatch.setattr(cli, "scenario_run", record_run)

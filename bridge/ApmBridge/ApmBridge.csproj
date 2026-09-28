@@ -37,6 +37,11 @@
     <Reference Include="UnityEngine.CoreModule"><HintPath>$(GameManagedDir)/UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="0Harmony"><HintPath>$(HarmonyPath)</HintPath><Private>false</Private></Reference>
     <Reference Include="Newtonsoft.Json"><HintPath>$(GameManagedDir)/Newtonsoft.Json.dll</HintPath><Private>false</Private></Reference>
+    <!-- The web server's own HTTP types. Not loaded by the mod at runtime, and
+         not packaged: it is referenced only so the GET /api/apm handler can
+         type its use of RequestContext.Response.Headers when marking the live
+         snapshot no-store. -->
+    <Reference Include="SpaceWizards_HttpListener"><HintPath>$(GameManagedDir)/SpaceWizards_HttpListener.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="LogLibrary"><HintPath>$(GameManagedDir)/LogLibrary.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="Utf8Json"><HintPath>$(GameManagedDir)/Utf8Json.dll</HintPath><Private>false</Private></Reference>
   </ItemGroup>

@@ -40,6 +40,12 @@ else
   echo "ERROR: no client or dedicated game assemblies found" >&2; exit 1
 fi
 [[ -f "$HARMONY" ]] || { echo "ERROR: Harmony not found: $HARMONY" >&2; exit 1; }
+# The web server's HTTP types, referenced by the GET /api/apm handler. Named
+# here so a game install without them fails with the path, not as a CS0012
+# about an assembly the reader has never heard of.
+[[ -f "$MANAGED/SpaceWizards_HttpListener.dll" ]] || {
+  echo "ERROR: SpaceWizards_HttpListener.dll not found: $MANAGED" >&2; exit 1
+}
 OUT="$ROOT/dist/7dtd-server-apm-bridge"
 # Rebuild the output dir from scratch so dist mirrors current sources exactly;
 # a stale member left by a removed or renamed file would ship in the package.
@@ -79,5 +85,7 @@ cp "$ROOT/bridge/ApmBridge/WebMod/styling.css" "$OUT/WebMod/styling.css"
   sha256sum "$MANAGED/Assembly-CSharp.dll"
   printf 'input: 0Harmony.dll\n'
   sha256sum "$HARMONY"
+  printf 'input: SpaceWizards_HttpListener.dll\n'
+  sha256sum "$MANAGED/SpaceWizards_HttpListener.dll"
 } >"$ROOT/dist/bridge-build-inputs.txt"
 echo "OK bridge -> $OUT"
