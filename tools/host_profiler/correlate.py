@@ -13,7 +13,6 @@ older layouts still works). Legacy EfficientServer SPIKE lines still parse if pr
 from __future__ import annotations
 
 import argparse
-import json
 import re
 import sys
 from bisect import bisect_left
@@ -26,7 +25,7 @@ from typing import Any
 # callers go through scripts/lib/python.sh -> SEVENDTD_APM_PYTHON), which is not
 # necessarily this interpreter.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from apm_suite.io import force_utf8_stdio
+from apm_suite.io import force_utf8_stdio, iter_jsonl
 
 RE_SPIKE = re.compile(
     r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}).*\[EfficientServer\]\s+SPIKE\s+"
@@ -47,26 +46,11 @@ def parse_ts(s: str) -> float:
         return 0.0
 
 
-def load_proc(capture: Path) -> list[dict[str, Any]]:
-    # Same reader contract as apm_suite.io.iter_jsonl: this capture may have run
-    # without the memory layer (neither layout exists - name it instead of a
-    # bare FileNotFoundError traceback), and a collector killed mid-window
-    # leaves a truncated final line that must be skipped, not crash the tool.
-    p = capture / "memory" / "proc.jsonl"
-    if not p.exists():
-        p = capture / "proc.jsonl"
-    rows: list[dict[str, Any]] = []
-    with p.open("r", encoding="utf-8", errors="replace") as stream:
-        for line in stream:
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(record, dict):
-                rows.append(record)
-    return rows
+def proc_jsonl(capture: Path) -> Path:
+    # A capture can lack the memory layer entirely; the caller reports the path
+    # it looked for rather than letting iter_jsonl raise FileNotFoundError.
+    modern = capture / "memory" / "proc.jsonl"
+    return modern if modern.exists() else capture / "proc.jsonl"
 
 
 def near_spike(spike_ts: list[float], t: float, window: float = 5.0) -> bool:
@@ -107,9 +91,7 @@ def main() -> int:
     ap.add_argument("--window", type=float, default=2.0, help="seconds match window")
     args = ap.parse_args()
 
-    proc_path = args.capture / "memory" / "proc.jsonl"
-    if not proc_path.exists():
-        proc_path = args.capture / "proc.jsonl"
+    proc_path = proc_jsonl(args.capture)
     if not proc_path.is_file():
         print(
             f"no proc samples in {args.capture} (looked for memory/proc.jsonl, proc.jsonl); "
@@ -118,7 +100,7 @@ def main() -> int:
         )
         return 2
     try:
-        proc = load_proc(args.capture)
+        proc = list(iter_jsonl(proc_path))
     except OSError as error:
         print(f"cannot read proc samples from {proc_path}: {error}", file=sys.stderr)
         return 2

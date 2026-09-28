@@ -8,7 +8,6 @@ argument parsing and the message.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -37,8 +36,8 @@ def export_metrics(session: Path, output: Path) -> None:
     if not summary_path.is_file():
         raise MetricError("session has no summary.json")
     try:
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as error:
+        summary = load_json(summary_path)
+    except (ValueError, OSError) as error:
         # OSError: the summary vanished or became unreadable after the
         # is_file() gate; name it like every other unreadable-input error here.
         raise MetricError(f"unreadable {summary_path}: {error}") from None

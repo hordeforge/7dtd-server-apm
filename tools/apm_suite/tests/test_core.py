@@ -3962,7 +3962,7 @@ def test_correlate_load_proc_skips_torn_and_non_object_lines(tmp_path: Path) -> 
         "\n".join([good, "", torn, "[1, 2]", good.replace("10.0", "11.0")]) + "\n",
         encoding="utf-8",
     )
-    rows = module.load_proc(capture)
+    rows = list(module.iter_jsonl(module.proc_jsonl(capture)))
     assert [r["t"] for r in rows] == [10.0, 11.0]
 
 
@@ -3971,7 +3971,7 @@ def test_correlate_main_names_missing_proc_samples(
 ) -> None:
     """A capture without the memory layer is a normal input (app-only captures,
     imported bundles): correlate must exit 2 naming the paths it looked for,
-    not die on a FileNotFoundError traceback from load_proc."""
+    not die on a FileNotFoundError traceback from the proc.jsonl lookup."""
     import importlib.util
 
     spec = importlib.util.spec_from_file_location(
