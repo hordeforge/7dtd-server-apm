@@ -18,8 +18,8 @@ Workspace root guide: [`hordeforge/.github` MODDING_BEST_PRACTICES.md](https://g
 ## Critical rules
 
 1. **Measure only.** Never ship optim side effects, AI LOD, or mesh budgets from this repo.
-2. **Missing evidence is unavailable, never a healthy zero.** Withhold health grades below ~80% weighted coverage (see `docs/APM.md`).
-3. **Baseline vs candidate must match** workload shape, collectors, duration, and server config. Prefer scenario manifests from loadgen.
+2. **Missing evidence is unavailable, never a healthy zero.** Health grades are withheld below 80% weighted coverage (`COVERAGE_MIN` in `tools/apm_suite/analysis/health.py`).
+3. **Baseline vs candidate must match** workload shape, collectors, duration, and server config. Prefer scenario manifests from loadgen. `compare` enforces this itself: it rejects differing layer sets or collector selections, a capture under 5s, and durations more than 10% apart.
 4. **Passwords via env only** (`SEVENDTD_TELNET_PASSWORD`, etc.). Never put secrets in child-process argv or commit them.
 5. **Python: `uv` only.** Never `pip`, `python -m pip`, or system-wide installs. Python **3.11+**, Linux required.
 6. **Bridge is net48** against dedicated Managed; install under `Mods/7dtd-server-apm-bridge/`. EAC must be off when using server mods.
@@ -30,9 +30,10 @@ Workspace root guide: [`hordeforge/.github` MODDING_BEST_PRACTICES.md](https://g
 ## Build / test / bridge
 
 ```bash
-uv sync
+uv sync --locked            # plain `uv sync` re-resolves and rewrites uv.lock
 uv run 7dtd-server-apm doctor
-make check                 # ruff, shellcheck, html/webui lint, format, mypy, pytest, bpftrace checks
+make check                  # lint, shellcheck, HTML, WebMod, format, mypy, pytest, probes
+make check-ci               # the same minus check-bt; exactly what CI runs
 uv tool install pre-commit # not a project dep; hooks use language: system and call make
 pre-commit install         # commit-time ruff, format, mypy, shellcheck; pre-push adds webui/html/pytest
 make bridge-build
@@ -73,25 +74,25 @@ Sessions default to `~/.local/share/7dtd-server-apm/session_*` (`SEVENDTD_APM_DI
 
 The recurring root cause is Boehm GC, not compute. Capture with
 `capture --only all,alloc` (or `scenario run --preset forensic`), then read
-`summary.json` `metadata.lag_diagnosis`:
-`profile` says spike-driven (bursty GC/stalls, low compute) vs compute-bound;
-`gc.grossAllocMBPerSecond` is the churn (net `allocMBPerSecond` reads ~0 and is
-misleading); `runtime_gc` layer `stw_pause_worst_ms` is the direct freeze;
-`top_churn_sites`/`top_alloc_sites` name the allocators. Chunk bandwidth comes
-from kernel `metadata.net.udp_send_mb_per_second` (windowed), not the bridge
-`transfers` lifetime average. See README "Measured bottleneck findings".
+`summary.json`: `metadata.lag_diagnosis` ranks the causes,
+`metadata.gc.grossAllocMBPerSecond` is the churn (net `allocMBPerSecond` reads
+~0 and misleads), the `runtime_gc` layer's `stw_pause_worst_ms` is the freeze,
+`top_churn_sites`/`top_alloc_sites` name the allocators, and
+`metadata.net.udp_send_mb_per_second` is chunk bandwidth (the bridge `transfers`
+figure is a since-reset average). Evidence per cause: `docs/APM.md` "Lag
+diagnosis". Measured findings: README "Measured bottleneck findings".
 
 ## Layout
 
 ```text
-tools/apm_suite/       CLI package (Typer entry: 7dtd-server-apm)
+tools/apm_suite/       CLI package (Typer entry: 7dtd-server-apm) and its tests
 tools/apm/             Collectors, shell helpers, bpftrace sources
 tools/host_profiler/   perf/bpftrace helpers and flame conversion
 bridge/ApmBridge/      Optional managed timing DLL
 docs/                  APM model, bridge correlation, compatibility
 scripts/               bridge build/install, checks
 tests/                 repo-level gates (bridge sources, packaging, CI pins)
-plans/                 load-profile and campaign manifests consumed by scenario runs
+plans/                 Load-profile manifests and the scale-ladder harness
 ```
 
 ## Docs map
@@ -107,6 +108,8 @@ plans/                 load-profile and campaign manifests consumed by scenario 
 | `docs/COMPATIBILITY.md` | Game / kernel / perf / bpftrace / Mono matrix |
 | `bridge/README.md` | DLL design, schema, overhead controls |
 | `tools/README.md` | Backend ownership |
+| `CONTRIBUTING.md` | Setup, gate, version-pair and release contract (authoritative; `AGENTS.md` does not restate it) |
+| `README.md` | Front page: what it measures, quick start, measured findings |
 | `TODO.md` | Phased plan and verification log |
 | `CHANGELOG.md` | Per-artifact release notes; tags mirror the bridge version |
 | `../7dtd-server-optimizer/docs/HOST_TUNING.md` | Host topology measured here, applied outside |
