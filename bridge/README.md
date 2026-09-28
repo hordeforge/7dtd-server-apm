@@ -187,7 +187,7 @@ lacks managed `GC.GetTotalAllocatedBytes`; that API is only the fallback, and
 include tile-entity chunk load (`TileEntity.InstantiateFromRead`,
 `TileEntityFeatureData.InstantiateModule`) so serialization cost is measurable
 alongside the allocation churn it drives. Current schema `7dtd.apm.app.v3`,
-mod version 3.0.0.
+mod version 3.1.0.
 
 ```bash
 make bridge-build

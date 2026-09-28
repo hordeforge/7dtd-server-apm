@@ -41,6 +41,11 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+## 2.4.0 - host CLI - 2026-09-28
+
+Minor for the fixes merged since 2.3.0. No command, flag default, or schema
+field was removed or retyped, so nothing here forces a major.
+
 - Import: an archive a stranger wrote is rejected with a named error instead
   of a traceback, and a rejected one leaves the store untouched. An encrypted
   member, a compression method this build has no codec for, and a zip
@@ -430,6 +435,11 @@ major.
   SHA-256 work over every collected artifact at the end of a run.
 
 ## Unreleased - bridge mod
+
+## 3.1.0 (tag v3.1.0) - bridge mod - 2026-09-28
+
+Minor for the console, panel, and evidence fixes merged since 3.0.0. The
+telemetry schema and the response contract are unchanged.
 
 - Console: a mistyped `apm` argument is refused instead of answered by a
   default. `apm jitmap FULLL` wrote the short map, `apm benchmark 10` was
