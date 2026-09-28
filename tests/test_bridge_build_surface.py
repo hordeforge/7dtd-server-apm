@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 
 from apm_suite.paths import REPO
 
 WEB_API_CS = REPO / "bridge" / "ApmBridge" / "WebApi.cs"
 TELEMETRY_CS = REPO / "bridge" / "ApmBridge" / "Telemetry.cs"
+DOTNET_SDK_SH = REPO / "scripts" / "lib" / "dotnet_sdk.sh"
+BUILD_BRIDGE_SH = REPO / "scripts" / "build_bridge.sh"
+GLOBAL_JSON = REPO / "global.json"
 
 
 def _rest_api_class_bodies(source: str) -> dict[str, str]:
@@ -38,6 +42,58 @@ def test_bridge_build_uses_pinned_bunx_typescript() -> None:
 def test_bridge_docs_do_not_require_global_tsc() -> None:
     docs = (REPO / "bridge" / "README.md").read_text(encoding="utf-8")
     assert "no global `tsc`" in docs
+
+
+def test_bridge_build_enforces_the_sdk_pin_from_global_json() -> None:
+    # global.json is the only place the SDK version is written, and the muxer
+    # resolves it from the working directory while merely warning when the pin
+    # is unmet. A build that took whichever dotnet it found first, or that
+    # passed an absolute project path from an arbitrary cwd, would compile the
+    # shipped DLL with a compiler no file in the repo names.
+    assert re.fullmatch(
+        r"\d+\.\d+\.\d+", json.loads(GLOBAL_JSON.read_text(encoding="utf-8"))["sdk"]["version"]
+    )
+    script = BUILD_BRIDGE_SH.read_text(encoding="utf-8")
+    assert "scripts/lib/dotnet_sdk.sh" in script
+    assert 'dotnet_use_pinned_sdk "$ROOT"' in script
+    assert 'cd "$ROOT" &&\n    dotnet build bridge/ApmBridge/ApmBridge.csproj' in script
+    for line in script.splitlines():
+        if "dotnet build" in line:
+            assert "$ROOT/bridge" not in line, (
+                "an absolute project path ignores global.json, which dotnet "
+                f"resolves from the working directory: {line.strip()}"
+            )
+
+
+def _sdk_satisfies_pin(resolved: str, pinned: str) -> bool:
+    """Run the sourced fragment's predicate; exit status is the answer."""
+    return (
+        subprocess.run(
+            [
+                "bash",
+                "-c",
+                '. "$1" >/dev/null; dotnet_sdk_matches_pin "$2" "$3"',
+                "_",
+                *map(str, (DOTNET_SDK_SH, resolved, pinned)),
+            ],
+            check=False,
+        ).returncode
+        == 0
+    )
+
+
+def test_sdk_pin_rolls_forward_within_the_feature_band_only() -> None:
+    # global.json's rollForward is latestPatch: a newer patch of the same
+    # feature band is the same compiler contract, a different band or an older
+    # patch is not. Accepting those would compile the release with a toolchain
+    # the pin does not name; rejecting a newer patch would break the build for
+    # no gain, since a security-patch bump does not change codegen.
+    assert _sdk_satisfies_pin("8.0.423", "8.0.423")
+    assert _sdk_satisfies_pin("8.0.500", "8.0.423")
+    assert not _sdk_satisfies_pin("8.0.100", "8.0.423")
+    assert not _sdk_satisfies_pin("8.1.100", "8.0.423")
+    assert not _sdk_satisfies_pin("9.0.100", "8.0.423")
+    assert _sdk_satisfies_pin("9.9.9", ""), "no pin in global.json means nothing to enforce"
 
 
 def test_release_zip_ships_example_config_not_live_config() -> None:

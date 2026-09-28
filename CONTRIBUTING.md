@@ -21,7 +21,10 @@ because a distro package can change findings with no commit involved; update
 `bpftrace` and narrowly configured non-interactive privileges are optional and
 only for `make check-bt`; GitHub Actions runners cannot validate the probes,
 so that target is local-only. `dotnet` and `bun` are needed for `make
-bridge-build`, and a game install is needed for `make bridge-install`.
+bridge-build`, and a game install is needed for `make bridge-install`. The
+.NET SDK version is pinned in `global.json` and the bridge build refuses to
+compile with a dotnet that does not satisfy that pin, because the muxer only
+warns on a mismatch; install the pinned SDK, or change the pin on purpose.
 
 ## Setup
 
@@ -77,6 +80,11 @@ gate on the lockfile rather than on the version. The gate checks the lock too.
 A `.ts` edit under `bridge/ApmBridge/WebMod/` must be recompiled, or the
 `lint-webui` freshness step fails: run `make bridge-build` and commit
 `bundle.js` with the source change.
+
+`make package` writes the release zip, its `.sha256`, and a `.buildinfo.txt`
+recording the SDK, the TypeScript version, and the sha256 of the game
+assemblies the DLL was compiled against. Two builds of one commit agree only
+when those inputs match, so keep the record with the artifact.
 
 ## Change shape
 

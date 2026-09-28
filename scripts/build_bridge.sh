@@ -14,16 +14,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [[ -n "$SOURCE_DATE_EPOCH" ]] || unset SOURCE_DATE_EPOCH
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/tool_versions.sh"
-if [[ -n "${DOTNET_ROOT:-}" && -x "${DOTNET_ROOT}/dotnet" ]]; then
-  export PATH="$DOTNET_ROOT:$PATH"
-elif [[ -x "$HOME/.cache/dotnet-sdk/dotnet" ]]; then
-  export DOTNET_ROOT="$HOME/.cache/dotnet-sdk"
-  export PATH="$DOTNET_ROOT:$PATH"
-elif [[ -x "$HOME/.dotnet/dotnet" ]]; then
-  export DOTNET_ROOT="$HOME/.dotnet"
-  export PATH="$DOTNET_ROOT:$PATH"
-fi
-dotnet --list-sdks 2>/dev/null | grep -q . || { echo "ERROR: .NET SDK not found" >&2; exit 1; }
+# global.json names the SDK the release DLL is compiled with; the muxer only
+# warns when the pin is unmet, so select a matching SDK explicitly and fail loud
+# when none is installed.
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/dotnet_sdk.sh"
+dotnet_use_pinned_sdk "$ROOT" || exit 1
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/ds_paths.sh"
 DS="$SEVENDTD_DS_DIR"
@@ -41,8 +37,13 @@ OUT="$ROOT/dist/7dtd-server-apm-bridge"
 # a stale member left by a removed or renamed file would ship in the package.
 rm -rf "$OUT"
 mkdir -p "$OUT/Config" "$OUT/WebMod"
-dotnet build "$ROOT/bridge/ApmBridge/ApmBridge.csproj" -c Release \
-  -p:GameManagedDir="$MANAGED" -p:HarmonyPath="$HARMONY" -p:BridgeOutput="$OUT/"
+# Run from the repository root: dotnet resolves global.json from the working
+# directory, so a build started anywhere else ignores the SDK pin.
+(
+  cd "$ROOT" &&
+    dotnet build bridge/ApmBridge/ApmBridge.csproj -c Release \
+      -p:GameManagedDir="$MANAGED" -p:HarmonyPath="$HARMONY" -p:BridgeOutput="$OUT/"
+)
 # WebMod: compile the TypeScript source (WebMod/bundle.ts) to bundle.js, the
 # exact path the dashboard loads (/webmods/7dtd-server-apm-bridge/bundle.js).
 command -v bunx >/dev/null 2>&1 || { echo "ERROR: bunx (bun) not found; cannot build WebMod" >&2; exit 1; }
@@ -55,4 +56,20 @@ cp "$ROOT/bridge/ApmBridge/ModInfo.xml" "$OUT/ModInfo.xml"
 cp "$ROOT/bridge/ApmBridge/apmbridge.json" "$OUT/Config/apmbridge.json.example"
 cp "$ROOT/bridge/ApmBridge/WebMod/bundle.js" "$OUT/WebMod/bundle.js"
 cp "$ROOT/bridge/ApmBridge/WebMod/styling.css" "$OUT/WebMod/styling.css"
+# Build environment record: a DLL carries neither the compiler that made it nor
+# the game assemblies it was compiled against, so without this a rebuild attempt
+# has nothing to match against. The two sha256sum lines are checkable with
+# `sha256sum -c` on the build host. Written beside the staged tree, never into
+# it, so the record cannot become mod content.
+{
+  printf 'dotnet_sdk: %s\n' "$(dotnet --version)"
+  printf 'typescript: %s\n' "$TSC_VERSION"
+  printf 'target_framework: %s\n' "$(sed -n 's:.*<TargetFramework>\(.*\)</TargetFramework>.*:\1:p' "$ROOT/bridge/ApmBridge/ApmBridge.csproj")"
+  printf 'source_date_epoch: %s\n' "${SOURCE_DATE_EPOCH:-unset}"
+  printf 'commit: %s\n' "$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo unknown)"
+  printf 'input: Assembly-CSharp.dll\n'
+  sha256sum "$MANAGED/Assembly-CSharp.dll"
+  printf 'input: 0Harmony.dll\n'
+  sha256sum "$HARMONY"
+} >"$ROOT/dist/bridge-build-inputs.txt"
 echo "OK bridge -> $OUT"

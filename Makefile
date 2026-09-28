@@ -27,7 +27,7 @@ help:
 	@echo "  make bridge-build   build bridge DLL + WebMod (needs dotnet SDK + bunx)"
 	@echo "  make bridge-install DS=/path/to/server   build + install into Mods/"
 	@echo "  make bridge-uninstall DS=/path/to/server"
-	@echo "  make package        release zip under dist/"
+	@echo "  make package        release zip + .sha256 + buildinfo under dist/"
 	@echo "  make sbom           hash-pinned + CycloneDX production dependency inventories under dist/"
 	@echo "  make clean          remove caches, venv, dist, bridge build output"
 test:
@@ -84,6 +84,10 @@ bridge-uninstall:
 	fi
 	rm -rf "$(DS)/Mods/7dtd-server-apm-bridge"
 	@echo "Uninstalled. Reinstall, then move the saved config back to Mods/7dtd-server-apm-bridge/Config/apmbridge.json to keep your settings."
+# Release artifacts land in dist/ beside the staged mod folder: the zip, its
+# .sha256, the buildinfo record of the SDK, TypeScript version and game
+# assembly hashes the DLL was compiled against, and the SBOMs below. None of
+# the side files go inside the zip; it unzips into <server>/Mods/.
 package:
 	./scripts/package.sh
 # Dependency inventory for releases and vuln scanners, production deps only

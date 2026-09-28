@@ -86,9 +86,19 @@ rm -f "$OUT"
 # (sha256sum -c). Rebuilt alongside the zip so it can never go stale.
 rm -f "$OUT.sha256"
 { cd "$(dirname "$OUT")" && sha256sum "$(basename "$OUT")" > "$(basename "$OUT").sha256"; }
+# Toolchain and game-assembly record (build_bridge.sh writes it, and the build
+# that produced the zip is the only place those facts are known). Beside the
+# zip, never inside it, for the same reason as the SBOM: the archive unzips
+# into <server>/Mods/, so anything extra in it installs as mod content.
+[[ -f "$ROOT/dist/bridge-build-inputs.txt" ]] || {
+  echo "package: missing dist/bridge-build-inputs.txt; build_bridge.sh did not complete" >&2
+  exit 1
+}
+rm -f "$OUT.buildinfo.txt"
+cp "$ROOT/dist/bridge-build-inputs.txt" "$OUT.buildinfo.txt"
 # Dependency inventory beside the zip, never inside it: the archive unzips
 # into <server>/Mods/, so a BOM file there would install as mod content. The
 # target is the Makefile's, so the release inventory and `make sbom` cannot
 # drift apart.
 make -C "$ROOT" sbom
-echo "Packaged -> $OUT (+ .sha256)"
+echo "Packaged -> $OUT (+ .sha256, .buildinfo.txt)"
