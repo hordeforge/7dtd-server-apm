@@ -49,20 +49,6 @@ def _sans_surrogates(value: Any) -> Any:
     return value
 
 
-def loads_scrubbed(text: str) -> Any:
-    """json.loads with lone surrogates scrubbed, skipping the scrub when the
-    document cannot hold one.
-
-    _sans_surrogates rebuilds every nested list and dict, which costs several
-    times the parse itself on a multi-hundred-KB session document, and a
-    session store is full of them (one summary per retained session for the
-    index, plus the render and audit passes). One C-level scan of the raw text
-    decides whether that walk has anything to find.
-    """
-    value = json.loads(text)
-    return _sans_surrogates(value) if _SURROGATE_ESCAPE.search(text) else value
-
-
 def force_utf8_stdio() -> None:
     """Pin stdout and stderr to UTF-8 whatever the process locale says.
 
@@ -236,8 +222,6 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
                 continue
             try:
                 record = json_loads(line)
-                if _SURROGATE_ESCAPE.search(line):
-                    record = _sans_surrogates(record)
             except ValueError:
                 continue
             if isinstance(record, dict):
@@ -318,17 +302,23 @@ def json_loads(text: str, source: object | None = None) -> Any:
         raise ValueError(f"cannot parse{where}: JSON nested too deeply") from None
     if _too_deep(value):
         raise ValueError(f"cannot parse{where}: JSON nested deeper than {MAX_JSON_DEPTH}")
-    return value
+    # Scrubbed here, once, for every reader. The pre-scan is worth its line:
+    # _sans_surrogates rebuilds every nested list and dict, which costs several
+    # times the parse itself on a multi-hundred-KB session document, and a
+    # session store is full of them (one summary per retained session for the
+    # index, plus the render and audit passes). One C-level scan of the raw text
+    # decides whether that walk has anything to find.
+    return _sans_surrogates(value) if _SURROGATE_ESCAPE.search(text) else value
 
 
 def load_json(path: Path) -> dict[str, Any]:
     # Decode failures name the file: a bare "Expecting value" leaves the
     # operator guessing which session artifact was malformed. ValueError (not
     # JSONDecodeError) so every suppress(ValueError)/except ValueError caller
-    # keeps catching both failure modes. The parsed document is scrubbed of
-    # lone surrogates: imported bundles plant JSON here, and a survivor would
-    # crash the writers and path joins every caller feeds it into.
-    value = _sans_surrogates(json_loads(read_text(path), path))
+    # keeps catching both failure modes. Lone surrogates are scrubbed inside
+    # json_loads: imported bundles plant JSON here, and a survivor would crash
+    # the writers and path joins every caller feeds it into.
+    value = json_loads(read_text(path), path)
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object in {path}")
     return value
@@ -383,7 +373,7 @@ def load_jsonc(path: Path) -> Any:
     document holds rather than insisting on an object: the bridge config
     readers must be able to see a valid non-object document and diagnose it.
     """
-    return _sans_surrogates(json_loads(strip_json_comments(read_text(path)), path))
+    return json_loads(strip_json_comments(read_text(path)), path)
 
 
 def _next_candidate(base: Path, suffix: int) -> tuple[Path, int]:
@@ -433,6 +423,20 @@ def claim_file(base: Path) -> Path:
         else:
             os.close(fd)
             return candidate
+
+
+def has_bytes(path: Path, minimum: int = 0) -> bool:
+    """One stat for "is a regular file carrying at least `minimum` bytes".
+
+    is_file() followed by stat() is two syscalls for one answer and a racy
+    pair; a concurrent prune can remove the entry between them. A vanished or
+    unreadable path is not evidence, so both answer False.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return False
+    return stat.S_ISREG(info.st_mode) and info.st_size > minimum
 
 
 def file_sha256(path: Path) -> str:

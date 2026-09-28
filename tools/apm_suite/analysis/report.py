@@ -17,6 +17,7 @@ from typing import Any
 
 from ..io import (
     atomic_json,
+    has_bytes,
     iter_jsonl,
     json_loads,
     read_text,
@@ -471,7 +472,7 @@ def layer_scores(
     meta = _load_meta(session)
     duration = max(1.0, effective_seconds(meta))
     scores = [
-        _cpu_layer(hw, _has_bytes(session / "cpu/oncpu.bt.out", ONCPU_MIN_BYTES)),
+        _cpu_layer(hw, has_bytes(session / "cpu/oncpu.bt.out", ONCPU_MIN_BYTES)),
         _cache_layer(hw),
         _sync_layer(texts, duration),
         _scheduler_layer(texts, duration),

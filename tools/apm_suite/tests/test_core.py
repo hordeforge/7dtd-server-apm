@@ -1783,19 +1783,19 @@ def test_load_json_scrubs_lone_surrogate_escapes(tmp_path: Path) -> None:
     assert load_json(tmp_path / "out.json") == loaded
 
 
-def test_loads_scrubbed_catches_every_escape_spelling() -> None:
+def test_json_loads_scrub_catches_every_escape_spelling() -> None:
     """The pre-scan that skips the recursive scrub must match every spelling a
     JSON document can carry a surrogate in: either case of the u, either hex
     digit of the D800-DFFF lead byte, in keys, values, and nested containers.
     A survivor here is what crashes a later atomic_* writer."""
-    from apm_suite.io import loads_scrubbed
+    from apm_suite.io import json_loads
 
     for escape in ("\\ud800", "\\uD800", "\\uD83d", "\\udE00", "\\udfff"):
-        value = loads_scrubbed('{"k": ["x' + escape + 'y"], "' + escape + '": 1}')
+        value = json_loads('{"k": ["x' + escape + 'y"], "' + escape + '": 1}')
         assert value["k"] == ["x\ufffdy"], escape
         assert list(value) == ["k", "\ufffd"], escape
     # The common case stays untouched: a clean document round-trips as parsed.
-    assert loads_scrubbed('{"a": [1, "b"]}') == {"a": [1, "b"]}
+    assert json_loads('{"a": [1, "b"]}') == {"a": [1, "b"]}
 
 
 def test_iter_jsonl_scrubs_lone_surrogates(tmp_path: Path) -> None:

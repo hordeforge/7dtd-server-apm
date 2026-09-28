@@ -34,7 +34,15 @@ from .collectors import (
     planned_layers,
     wanted,
 )
-from .io import atomic_json, claim_dir, json_loads, read_text, regular_file_size, scrape_succeeded
+from .io import (
+    atomic_json,
+    claim_dir,
+    has_bytes,
+    json_loads,
+    read_text,
+    regular_file_size,
+    scrape_succeeded,
+)
 from .models import (
     SERVER_COMM,
     BridgeSnapshotV3,
@@ -389,7 +397,7 @@ def _result(
     message: str = "",
 ) -> CollectorResult:
     artifact = ctx.session / spec.artifact
-    produced = _has_bytes(artifact)
+    produced = has_bytes(artifact)
     result = CollectorResult(
         name=spec.name,
         layer=spec.layer,
@@ -432,7 +440,7 @@ MISSING_RC = (126, 127)
 
 def _produced_bytes(session: Path, item: _Running) -> bool:
     """Whether the collector left a non-empty primary artifact behind."""
-    return _has_bytes(session / item.spec.artifact)
+    return has_bytes(session / item.spec.artifact)
 
 
 def _classify(rc: int | None, produced: bool, interrupted: bool) -> tuple[CollectorStatus, str]:
