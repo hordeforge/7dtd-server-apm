@@ -20,10 +20,18 @@ class MetricError(Exception):
 
 
 def _prom_label(value: object) -> str:
-    """Escape a Prometheus label value per spec (\\ then " then newline). Current
-    label sources are fixed internal names, but a metrics exporter must never
-    emit a value that could break the line format."""
-    return str(value).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    """Escape a Prometheus label value per spec: backslash first, then quote and
+    the line terminators. Current label sources are fixed internal names, but a
+    metrics exporter must never emit a value that could break the line format,
+    and a raw CR would end up inside the parsed value (only a trailing CR is
+    stripped by the scrape reader) without any visible sign in the exposition."""
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\r", "\\r")
+    )
 
 
 def export_metrics(session: Path, output: Path) -> None:

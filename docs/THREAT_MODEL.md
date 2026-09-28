@@ -147,7 +147,9 @@ removed: no `/api/perf` handler and no `Perf` class exist anywhere under
   ceilings (20k members, 2 GiB, `bundle.py:40-41`), per-member path validation
   (`bundle.py:305`), exclusive-create directory claim, chmod 0700 before
   extraction (`bundle.py:322-323`), removal of a partial session on
-  `BadZipFile`/`zlib.error`/`OSError`, and a post-import audit. Attacker-controlled
+  `BadZipFile`/`zlib.error`/`OSError`, and a post-import audit. Per-member path
+  validation rejects `..`, absolute paths, unencodable names, and names
+  carrying control or invisible characters. Attacker-controlled
   member names are HTML-escaped before printing so a crafted string cannot
   rewrite console styling.
 - Information disclosure on export: the bundle walk skips symlinks and any
@@ -180,7 +182,11 @@ removed: no `/api/perf` handler and no `Perf` class exist anywhere under
   bundles drop both classes (`bundle.py:48-57,201-284`).
 - **Bundle-borne manifest paths:** an imported bundle supplies its own
   `manifest.json`, so its recorded artifact paths are attacker input joined onto
-  a session directory. `member_is_safe` is the named validation point.
+  a session directory. `member_is_safe` is the named validation point. It also
+  rejects C0/C1 control characters and the invisible bidi and zero-width
+  characters in a member name: a newline in a filename is legal on Linux and
+  splits the name for every line-oriented reader, and a bidi override renders
+  as nothing, so the stored file is not the file its name reads as.
 - **Monitored-host fingerprinting through the metric file:** a `prometheus`
   run over an imported bundle republishes that bundle's layer names, managed
   subsystem names, GC pause worst case, and UDP send rate into whatever

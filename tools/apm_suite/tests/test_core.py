@@ -1367,6 +1367,18 @@ def test_scaling_and_compare_tolerate_malformed_record_blocks(tmp_path: Path) ->
     assert layer_state(summary) == (set(), {})
 
 
+def test_prometheus_label_escapes_every_line_terminator() -> None:
+    """A raw CR inside a label value survives the scrape reader (only a trailing
+    CR is stripped) and lands in the parsed value, so the terminators have to be
+    escaped like the quote and the backslash, not just the newline."""
+    from apm_suite.prometheus import _prom_label
+
+    assert _prom_label("a\r\nb") == "a\\r\\nb"
+    assert _prom_label('q"\\x') == 'q\\"\\\\x'
+    # Non-ASCII is not escaped: the exposition is UTF-8 and the spec carries it.
+    assert _prom_label("gr\u00f6\u00dfe") == "gr\u00f6\u00dfe"
+
+
 def test_budget_fails_closed_on_unparseable_summary_numbers(tmp_path: Path) -> None:
     """Unparseable gate inputs are UNKNOWN (gate fails); they must neither pass
     silently nor raise a conversion traceback."""
@@ -1594,6 +1606,26 @@ def test_member_is_safe_rejects_lone_surrogate_paths() -> None:
 
     assert not member_is_safe("sub_\ud800x/artifact.json")
     assert member_is_safe("sub_\ufffdx/artifact.json")  # scrubbed spelling is fine
+
+
+def test_member_is_safe_rejects_control_and_bidi_member_names() -> None:
+    """A newline in an archive member name is legal on Linux and produces a file
+    whose name every line-oriented reader downstream splits in two; the bidi
+    overrides and zero-width characters render as nothing, so a name carrying
+    them names a different file than the one an operator reads. Both are planted
+    by whoever supplies the bundle, so the shared guard is where they are cut."""
+    from apm_suite.io import member_is_safe
+
+    assert not member_is_safe("cpu/perf\nflame.json")
+    assert not member_is_safe("cpu/perf\rmap.txt")
+    assert not member_is_safe("cpu/\x00flame.json")
+    assert not member_is_safe("cpu/perf\u202egnp.txt")  # RLO: renders as "gnp.txt"
+    assert not member_is_safe("cpu/\u2066isolate.json")
+    assert not member_is_safe("cpu/\ufeffflame.json")
+    assert not member_is_safe("cpu/\x7f.json")
+    # An ordinary non-ASCII name is evidence, not an attack: it must import.
+    assert member_is_safe("logs/messungen-größe.json")
+    assert member_is_safe("cpu/perf/flame.json")
 
 
 def test_load_json_scrubs_lone_surrogate_escapes(tmp_path: Path) -> None:

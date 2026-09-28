@@ -29,6 +29,12 @@ main>p{margin:.4rem 0}
 .mag.ok{background:var(--apm-ok)}
 """
 
+# Column cap, in characters (Python str units on a decoded frame name, not bytes
+# and not terminal columns): a frame name is a single unit in a <code> cell that
+# wraps, so the cut is a readability bound and the ellipsis-free tail is never
+# decoded again as a partial UTF-8 sequence.
+FRAME_CELL_CHARS = 90
+
 
 def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
     tr = []
@@ -39,7 +45,7 @@ def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
         # so it carries the same bad/good token the rest of the product uses.
         tone = "bad" if r["delta"] > 0 else "ok"
         tr.append(
-            f"<tr><td><code>{html.escape(r['frame'][:90], quote=True)}</code></td>"
+            f"<tr><td><code>{html.escape(r['frame'][:FRAME_CELL_CHARS], quote=True)}</code></td>"
             f'<td class="num">{r["a"]}</td><td class="num">{r["b"]}</td>'
             f'<td class="num delta-{tone}">{r["delta"]:+}</td>'
             f'<td><div aria-hidden="true" class="mag {tone}" style="width:{w:.1f}%"></div></td></tr>'

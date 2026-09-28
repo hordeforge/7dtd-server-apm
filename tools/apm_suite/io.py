@@ -18,6 +18,16 @@ from typing import IO, Any
 _SURROGATE_RE = re.compile("[\ud800-\udfff]")
 _SURROGATE_MAP = dict.fromkeys(range(55296, 57344), "�")
 
+# Characters that must never appear in an untrusted path this tool will create
+# or report: C0 and C1 controls (a newline or CR in a filename is legal on
+# Linux and splits the name for every line-oriented reader), the bidi overrides
+# and isolates, and the zero-width joiner/space and BOM characters. They render
+# as nothing, so a path that differs only by them compares equal to the eye
+# while naming a different file.
+_INVISIBLE_RE = re.compile(
+    "[\x00-\x1f\x7f-\x9f\u200b-\u200d\u202a-\u202e\u2060\u2066-\u2069\ufeff]"
+)
+
 
 def _clean_str(value: str) -> str:
     # translate() only pays on strings that actually contain a surrogate.
@@ -108,12 +118,23 @@ def member_is_safe(name: str) -> bool:
     Shared guard for every untrusted relative path this tool joins onto a
     session directory (zip members on import, artifact paths recorded in a
     manifest.json that an imported bundle may have planted): an absolute path,
-    any ".." segment, or a lone-surrogate spelling (unencodable, so no such
-    file can exist on this host yet still crash the join) is rejected.
+    any ".." segment, a lone-surrogate spelling (unencodable, so no such
+    file can exist on this host yet still crash the join), or a name carrying
+    invisible/bidi controls is rejected.
+
+    The control rule covers C0/C1 controls (a newline or CR in a member name
+    is legal on Linux and produces a file whose name every line-oriented tool
+    downstream, this suite included, reads as two names) and the format
+    characters that render as nothing: the bidi overrides and isolates (U+202A
+    to U+202E, U+2066 to U+2069) and the zero-width joiners and spaces
+    (U+200B to U+200D, U+FEFF, U+2060). Evidence this tool writes is ASCII, so
+    no legitimate member is rejected.
     """
     try:
         name.encode("utf-8")
     except UnicodeEncodeError:
+        return False
+    if _INVISIBLE_RE.search(name):
         return False
     candidate = PurePosixPath(name)
     return not candidate.is_absolute() and ".." not in candidate.parts

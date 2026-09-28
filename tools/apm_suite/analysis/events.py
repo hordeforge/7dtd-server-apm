@@ -23,6 +23,11 @@ PER_SOURCE_MAX = 500
 # Retention ranks by severity, most severe first. An unrecognized severity
 # sorts last so a format change cannot promote junk over real evidence.
 _SEVERITY_RANK = {"error": 0, "warn": 1, "info": 2}
+# Cap on a retained event message, in characters (str units on an already
+# decoded line, so a cut can never land inside a multi-byte sequence; the line
+# is collector output, not a column, so no grapheme or display-width bound
+# applies).
+MESSAGE_CHARS = 300
 
 # Non-reset count() aggregators printed once per interval as growing cumulative
 # lines ("@wait_n: 40"); the LAST occurrence is the true total.
@@ -83,7 +88,7 @@ def parse_bt_slow(sink: EventSink, path: Path, kind: str) -> None:
                         "t": None,
                         "kind": kind,
                         "severity": "warn",
-                        "message": line.strip()[:300],
+                        "message": line.strip()[:MESSAGE_CHARS],
                         "source": path.name,
                         "line": i + 1,
                     }

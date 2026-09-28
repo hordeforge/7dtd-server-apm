@@ -31,6 +31,11 @@ RE_SPIKE = re.compile(
     r"(?P<ts>\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}).*\[EfficientServer\]\s+SPIKE\s+"
     r"(?P<utc>\S+)\s+frame=(?P<frame>[\d.]+)ms.*zed=(?P<zed>-?\d+).*\|\s+(?P<top>.*)"
 )
+# Cap on the printed top frame, in characters (str units on text already
+# decoded from the game log, so the cut never lands inside a multi-byte
+# sequence). It is a terminal column, but the column is last on the line and
+# the names are symbol text, so a display-width bound is not the constraint.
+TOP_CHARS = 70
 
 
 def parse_ts(s: str) -> float:
@@ -134,10 +139,10 @@ def main() -> int:
         if pr and abs(pr["t"] - sp["ts"]) <= args.window + 5:
             print(
                 f"{sp['frame_ms']:8.1f} {pr['cpu_pct']:7.1f} {pr['rss_mb']:7.1f} "
-                f"{sp['zed']:5d} {sp['top'][:70]}"
+                f"{sp['zed']:5d} {sp['top'][:TOP_CHARS]}"
             )
         else:
-            print(f"{sp['frame_ms']:8.1f} {'?':>7} {'?':>7} {sp['zed']:5d} {sp['top'][:70]}")
+            print(f"{sp['frame_ms']:8.1f} {'?':>7} {'?':>7} {sp['zed']:5d} {sp['top'][:TOP_CHARS]}")
 
     if proc:
         print("\nhost samples within 5s of any spike with cpu%>150% (multi-core):")
