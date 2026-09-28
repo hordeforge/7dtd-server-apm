@@ -74,7 +74,10 @@ def export_metrics(session: Path, output: Path) -> None:
         except (ValueError, OSError) as error:
             raise MetricError(f"unreadable {health_path}: {error}") from None
     if not health:
-        health = summary.get("health") or {}
+        # as_mapping for the same reason as the attribution read below: a
+        # hand-edited or imported summary can hold a list or a scalar where
+        # "health" is an object, and health.get would raise mid-export.
+        health = as_mapping(summary.get("health"))
     coverage = as_number(health.get("coverage"))
     if coverage is not None:
         lines += [
@@ -101,7 +104,11 @@ def export_metrics(session: Path, output: Path) -> None:
                 continue
             name = _prom_label(subsystem)
             lines.append(f'sevendtd_apm_subsystem_ms{{subsystem="{name}"}} {scaled:.3f}')
-    lag = (summary.get("metadata") or {}).get("lag_diagnosis") or {}
+    metadata = as_mapping(summary.get("metadata"))
+    # as_mapping on every nested block: each is read from an unvalidated
+    # summary.json, so a list or scalar where an object belongs must read
+    # as absent metadata, not raise AttributeError mid-export.
+    lag = as_mapping(metadata.get("lag_diagnosis"))
     if lag:
         lines += [
             "# HELP sevendtd_apm_laggy 1 when the server missed its tick deadline.",
@@ -118,14 +125,14 @@ def export_metrics(session: Path, output: Path) -> None:
                 name = _prom_label(cause.get("cause", "unknown"))
                 severity = as_number(cause.get("severity")) or 0.0
                 lines.append(f'sevendtd_apm_lag_cause_severity{{cause="{name}"}} {severity:.3f}')
-    frame = (summary.get("metadata") or {}).get("frame") or {}
+    frame = as_mapping(metadata.get("frame"))
     late_ticks = as_number(frame.get("lateTicks"))
     if late_ticks is not None:
         lines += [
             "# TYPE sevendtd_apm_late_ticks gauge",
             f"sevendtd_apm_late_ticks {int(late_ticks)}",
         ]
-    gc_meta = (summary.get("metadata") or {}).get("gc") or {}
+    gc_meta = as_mapping(metadata.get("gc"))
     alloc_rate = as_number(gc_meta.get("allocMBPerSecond"))
     if alloc_rate is not None:
         lines += [
@@ -150,7 +157,7 @@ def export_metrics(session: Path, output: Path) -> None:
         ]
     # Kernel UDP send is the honest windowed chunk rate (bridge transfers is a
     # join-burst-weighted lifetime average; see report R56).
-    net_meta = (summary.get("metadata") or {}).get("net") or {}
+    net_meta = as_mapping(metadata.get("net"))
     udp_send = as_number(net_meta.get("udp_send_mb_per_second"))
     if udp_send is not None:
         lines += [

@@ -41,6 +41,18 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+- Import: an archive a stranger wrote is rejected with a named error instead
+  of a traceback, and a rejected one leaves the store untouched. An encrypted
+  member, a compression method this build has no codec for, and a zip
+  version `zipfile` cannot open all raised out of the command, and the first
+  two left a half-extracted session directory behind that later audits
+  INVALID. A member named `.` or empty is refused up front, with the other
+  unsafe paths, because it names no file and extraction dies on it.
+- Prometheus: a `summary.json` whose `metadata`, `health`, `lag_diagnosis`,
+  `frame`, `gc`, or `net` is a list or a scalar where an object belongs
+  raises `AttributeError` out of the export. Those blocks are read from an
+  unvalidated session (hand edit, imported bundle), so a wrong shape is
+  absent evidence now, like every other coercion in the reader.
 - Import: the restored session is audited against the manifest the bundle
   carries before a new one is written, and the findings are printed one per
   line. A bundle that drifted since the export is now reported by name instead

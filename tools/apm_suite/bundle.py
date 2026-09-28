@@ -385,17 +385,29 @@ def import_bundle(bundle: Path, store: Path) -> ImportResult:
                 target.chmod(0o700)
             try:
                 archive.extractall(target)
-            except (OSError, zipfile.BadZipFile, zlib.error) as error:
+            except (
+                OSError,
+                zipfile.BadZipFile,
+                zlib.error,
+                NotImplementedError,
+                RuntimeError,
+            ) as error:
                 # A mid-extract failure must not strand a partial session that
                 # later audits INVALID and pollutes index/prune: remove what
                 # landed, then report cleanly. BadZipFile/zlib.error cover the
                 # corrupt-member cases (CRC mismatch, broken deflate stream);
-                # OSError covers disk-full and unreadable targets.
+                # OSError covers disk-full and unreadable targets;
+                # NotImplementedError is a compression method this build has no
+                # codec for and RuntimeError is an encrypted member, both
+                # chosen by whoever wrote the archive.
                 shutil.rmtree(target, ignore_errors=True)
                 raise BundleError(
                     f"extraction failed, removed partial import {target}: {error}"
                 ) from None
-    except zipfile.BadZipFile as error:
+    except (zipfile.BadZipFile, NotImplementedError) as error:
+        # NotImplementedError is a zipfile version this build cannot open (a
+        # crafted version-needed field), a third way for a stranger's archive
+        # to be unreadable and all of them name the bundle the same way.
         raise BundleError(f"{bundle} is not a readable zip bundle: {error}") from None
     # verify_recorded: the bundle carries the manifest that describes its own
     # members, and the plain audit re-stamps manifest.json unconditionally, so

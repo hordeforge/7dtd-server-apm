@@ -1335,7 +1335,7 @@ def _apply_memory_trend(layers: list[LayerScore], mem: dict[str, Any]) -> None:
     slope = float(mem.get("rss_growth_mb_per_s") or 0)
     # memory_trend omits BOTH endpoints when no sample could list
     # /proc/<pid>/fd. Defaulting the missing pair to 0 published a measured
-    # "fd_growth": 0 for a channel nobody measured; absent evidence is None,
+    # fd_growth of zero for a channel nobody measured; absent evidence is None,
     # so the signal and the score term are both dropped.
     fd_growth = (
         int(mem["fd_end"]) - int(mem["fd_start"])
