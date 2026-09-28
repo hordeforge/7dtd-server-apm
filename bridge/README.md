@@ -201,7 +201,11 @@ new WebMod asset reaches the server without a second edit. If any file fails to
 install, the previous release is restored from a pre-install backup (taken
 before the prune, so a dropped file is put back) and the command exits nonzero;
 operator settings under `Config/` are never touched by a rollback. A build that
-staged nothing is refused before the mod folder is modified at all.
+staged nothing is refused before the mod folder is modified at all. One
+install runs at a time per server: the command takes an exclusive `flock` on
+the `Mods/` directory and a second concurrent run exits nonzero rather than
+interleaving its backup, prune, and rollback with the first. A mistyped `DS=`
+fails on the missing `Mods/` directory before the DLL is compiled.
 
 `make bridge-uninstall` removes the mod folder but moves that
 config to `Mods/7dtd-server-apm-bridge-config.json` first, since the release

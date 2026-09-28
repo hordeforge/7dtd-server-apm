@@ -22,8 +22,30 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 "$ROOT/scripts/build_bridge.sh"
 
 MANIFEST_VERSION="$(sed -n 's/.*<Version value="\([0-9.]*\)".*/\1/p' "$ROOT/bridge/ApmBridge/ModInfo.xml" | head -n1)"
-DESCRIBE="$(git -C "$ROOT" describe --tags --always 2>/dev/null || true)"
-VERSION="${VERSION:-$DESCRIBE}"
+# A release zip must be the commit its name claims. `git describe` reports the
+# exact tag for a tree carrying uncommitted edits, so the ModInfo.xml check
+# below passes and a maintainer publishes an archive whose bytes are not the
+# commit the tag names; only the .buildinfo.txt betrays it. `git status` is the
+# honest test and it is strictly wider than `describe --dirty`, which ignores
+# untracked files: a new untracked .cs file is globbed by the csproj and lands
+# in the DLL. Ignored paths (.scratch, .uv-cache, dist) never appear here.
+TREE_STATE="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || true)"
+UNCOMMITTED="$(git -C "$ROOT" status --porcelain 2>/dev/null || true)"
+if [[ -n "$UNCOMMITTED" && "${ALLOW_DIRTY:-}" != 1 ]]; then
+  echo "package: refusing to package a dirty working tree; the zip would not be the commit its name claims" >&2
+  echo "$UNCOMMITTED" >&2
+  echo "package: commit or stash the changes, or set ALLOW_DIRTY=1 for a local build you will not publish" >&2
+  exit 1
+fi
+# The opt-out has to change the artifact name too, or a local build is
+# indistinguishable from the release it sits next to. describe --dirty covers
+# tracked edits only, so an untracked-only tree still describes as the exact
+# tag; marking it here routes every opted-out build through the short-commit
+# fallback below instead of the release name.
+if [[ -n "$UNCOMMITTED" && "$TREE_STATE" != *-dirty ]]; then
+  TREE_STATE="${TREE_STATE}-dirty"
+fi
+VERSION="${VERSION:-$TREE_STATE}"
 if [[ -n "$VERSION" && "$VERSION" == v[0-9]*.[0-9]*.[0-9]* && "$VERSION" != *-* ]]; then
   # Exact-tag build: the zip name must not disagree with the packaged DLL.
   if [[ -z "$MANIFEST_VERSION" ]]; then

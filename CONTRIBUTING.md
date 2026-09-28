@@ -100,6 +100,15 @@ recording the SDK, the TypeScript version, and the sha256 of the game
 assemblies the DLL was compiled against. Two builds of one commit agree only
 when those inputs match, so keep the record with the artifact.
 
+`make package` stops on a working tree that is not the commit the zip will be
+named for: `git status` has to be empty, tracked or not, because an untracked
+`.cs` file is globbed into the DLL and would ship under a clean tag name. A
+local build you will not publish opts out with `ALLOW_DIRTY=1`, which also
+renames the zip to its short commit id so it cannot be mistaken for the
+release. `make bridge-install` takes an exclusive `flock` on the server's
+`Mods/` for the length of the install, so a second concurrent run refuses
+instead of interleaving backups, prunes, and rollbacks with the first.
+
 ## Change shape
 
 Keep a change to one bounded slice, keep the tree green, and update the docs

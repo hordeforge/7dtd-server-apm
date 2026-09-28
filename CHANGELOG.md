@@ -465,6 +465,13 @@ major.
   folder except `Config/` first. Unzipping over an existing folder overwrites
   what the new release ships and leaves the rest, so a file that release
   dropped keeps being served; `make bridge-install` already pruned that case.
+- `make package` refuses a working tree with uncommitted or untracked changes,
+  which `git describe` hides and an untracked `.cs` file rides into the DLL
+  under a clean tag name. `ALLOW_DIRTY=1` opts a local build out and names
+  the zip for its short commit. `make bridge-install` holds an exclusive
+  `flock` on the server's `Mods/` and checks that directory before building,
+  so a second concurrent install refuses instead of interleaving backups and
+  rollbacks with the first.
 
 ## 3.1.1 (tag v3.1.1) - bridge mod - 2026-09-29
 

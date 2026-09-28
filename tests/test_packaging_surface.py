@@ -87,3 +87,27 @@ def test_release_zip_install_is_documented_with_its_upgrade_hazard() -> None:
         "unzipping over an existing mod folder leaves files the new release "
         "dropped in place; the prune step is the documented remedy"
     )
+
+
+def test_release_zip_refuses_a_dirty_working_tree() -> None:
+    # `git describe` reports the exact tag for a tree carrying uncommitted
+    # edits, so the ModInfo.xml check passes and a maintainer publishes an
+    # archive whose bytes are not the commit the tag names. `git status` is
+    # the test, and it has to be the porcelain form: `describe --dirty` misses
+    # untracked files, and an untracked .cs file is globbed into the DLL.
+    package = (REPO / "scripts" / "package.sh").read_text(encoding="utf-8")
+    assert 'git -C "$ROOT" status --porcelain' in package
+    assert "ALLOW_DIRTY" in package, "a local build needs an explicit opt-out, not a silent pass"
+    guard = package.split("status --porcelain", 1)[1].split("VERSION=", 1)[0]
+    assert "exit 1" in guard, "a dirty tree must stop the package before a zip is named"
+
+
+def test_bridge_install_locks_the_server_and_validates_before_building() -> None:
+    # Two installs against one server interleave: each backs up, prunes and
+    # rolls back the other's writes. The lock has to be taken before the build
+    # starts, and the Mods check has to come before the build too, so a mistyped
+    # DS= fails without spending a minute compiling the DLL.
+    install = (REPO / "scripts" / "install_bridge.sh").read_text(encoding="utf-8")
+    assert "flock -n 9" in install, "installs against one server must be serialized"
+    assert install.index("flock -n 9") < install.index('"$ROOT/scripts/build_bridge.sh"')
+    assert install.index('[[ -d "$DS/Mods" ]]') < install.index('"$ROOT/scripts/build_bridge.sh"')

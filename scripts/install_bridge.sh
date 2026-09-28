@@ -4,10 +4,23 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/ds_paths.sh"
 DS="$SEVENDTD_DS_DIR"
-"$ROOT/scripts/build_bridge.sh"
-[[ -d "$DS/Mods" ]] || { echo "ERROR: server Mods directory not found: $DS/Mods" >&2; exit 1; }
 SRC="$ROOT/dist/7dtd-server-apm-bridge"
 TARGET="$DS/Mods/7dtd-server-apm-bridge"
+# Fail before the build, not after: compiling the DLL against the game
+# assemblies takes a minute, and a mistyped DS= would spend it to reach the
+# same error the directory check reports for free.
+[[ -d "$DS/Mods" ]] || { echo "ERROR: server Mods directory not found: $DS/Mods" >&2; exit 1; }
+# Concurrency control. Two installs against one server interleave: each takes
+# its own backup, each prunes what the other just wrote, and a failure in one
+# rolls the mod folder back underneath the other. The lock is held for the
+# whole install and released by the shell on exit, including a rollback.
+LOCKFILE="$DS/Mods/.7dtd-server-apm-bridge.install.lock"
+exec 9>"$LOCKFILE"
+if command -v flock >/dev/null 2>&1 && ! flock -n 9; then
+  echo "ERROR: another bridge install holds $LOCKFILE; retry once it finishes" >&2
+  exit 1
+fi
+"$ROOT/scripts/build_bridge.sh"
 mkdir -p "$TARGET/Config"
 mkdir -p "$TARGET/WebMod"
 # The files this release ships, relative to SRC. Both the prune and the install
