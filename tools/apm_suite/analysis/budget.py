@@ -5,11 +5,10 @@ Missing evidence is UNKNOWN and fails the gate; it is never a healthy zero.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, atomic_text, load_json
+from ..io import atomic_json, atomic_text, json_loads, load_json, read_text
 from ..models import as_mapping, as_number, collected_layer_scores
 from .bridge import ranked_section_heats
 
@@ -200,8 +199,8 @@ def check_budget(
         if not budget_path.is_file():
             raise ValueError(f"budget file {budget_path} does not exist")
         try:
-            loaded = json.loads(budget_path.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError) as error:
+            loaded = json_loads(read_text(budget_path), budget_path)
+        except (ValueError, OSError) as error:
             raise ValueError(f"budget file {budget_path} is not valid JSON: {error}") from None
         if not isinstance(loaded, dict):
             raise ValueError(f"budget file {budget_path} must contain a JSON object")

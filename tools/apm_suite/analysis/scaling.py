@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io import load_json
-from ..models import as_number, object_list
+from ..models import as_mapping, as_number, object_list
 
 # exponent (slope of log(cost) vs log(load)) thresholds
 LINEAR_LOW = 0.8
@@ -49,7 +49,9 @@ def classify(exponent: float) -> str:
 
 
 def _scale_of(summary: dict[str, Any], key: str) -> float:
-    world = (summary.get("metadata") or {}).get("world") or {}
+    # as_mapping, not `or {}`: a summary re-read from an imported bundle can
+    # carry "metadata" or "world" as a list or scalar, which has no .get.
+    world = as_mapping(as_mapping(summary.get("metadata")).get("world"))
     if key == "entities":
         return as_number(world.get("entities")) or 0.0
     return as_number(world.get("clients")) or as_number(world.get("players")) or 0.0
@@ -66,6 +68,8 @@ def _sections(session: Path) -> dict[str, dict[str, float]]:
         # uses whatever sessions remain readable.
         return {}
     out: dict[str, dict[str, float]] = {}
+    # One scalar among the entries (a truncated write, a hand edit) skips
+    # itself instead of voiding the whole ladder fit.
     for s in object_list(doc.get("top_managed_sections")):
         name = s.get("name")
         avg = as_number(s.get("avgMs"))

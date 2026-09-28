@@ -34,7 +34,7 @@ from .collectors import (
     planned_layers,
     wanted,
 )
-from .io import atomic_json, claim_dir, scrape_succeeded
+from .io import atomic_json, claim_dir, json_loads, read_text, scrape_succeeded
 from .models import (
     SERVER_COMM,
     BridgeSnapshotV3,
@@ -969,8 +969,8 @@ def _ingest_bridge_snapshot(
     if not latest.is_file():
         return
     try:
-        snapshot = BridgeSnapshotV3.model_validate(json.loads(latest.read_text(encoding="utf-8")))
-    except (json.JSONDecodeError, OSError, ValidationError) as error:
+        snapshot = BridgeSnapshotV3.model_validate(json_loads(read_text(latest), latest))
+    except (ValueError, OSError, ValidationError) as error:
         _warn(session, f"bridge snapshot rejected by schema validation: {error}")
         return
     stamp = snapshot.utc if snapshot.utc.tzinfo else snapshot.utc.replace(tzinfo=UTC)

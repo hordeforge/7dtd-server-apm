@@ -27,7 +27,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from .io import claim_dir, load_json, member_is_safe
+from .io import claim_dir, json_loads, load_json, member_is_safe, read_text
 from .models import SERVER_COMM, Artifact, ManifestV2, Target, as_number, schema_dict
 from .session import audit_session, parse_stamp
 
@@ -254,8 +254,8 @@ def export_bundle(session: Path, output: Path) -> Path:
                 relative = source.relative_to(session)
                 if source.suffix == ".json":
                     try:
-                        data = json.loads(source.read_text(encoding="utf-8"))
-                    except (json.JSONDecodeError, OSError) as error:
+                        data = json_loads(read_text(source), relative)
+                    except (ValueError, OSError) as error:
                         raise BundleError(f"cannot parse {relative}: {error}") from None
                     archive.writestr(
                         str(relative),

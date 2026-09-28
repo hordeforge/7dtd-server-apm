@@ -9,7 +9,6 @@ audit recorded.
 
 from __future__ import annotations
 
-import json
 import sys
 import traceback
 from collections.abc import Callable
@@ -24,6 +23,8 @@ from .analysis.health import build_health
 from .analysis.index import write_index
 from .analysis.jitsym import annotate_session
 from .analysis.report import build_summary
+from .io import json_loads, read_text
+from .models import as_mapping
 from .reporting import render_session
 
 
@@ -101,7 +102,9 @@ def finalize(session: Path, skip_bridge: bool = False) -> FinalizeResult:
     summary_path = session / "summary.json"
     if summary_path.is_file():
         with suppress(Exception):
-            meta = json.loads(summary_path.read_text(encoding="utf-8")).get("metadata") or {}
+            meta = as_mapping(
+                as_mapping(json_loads(read_text(summary_path), summary_path)).get("metadata")
+            )
             lag = meta.get("lag_diagnosis") or {}
             if lag.get("verdict"):
                 print(f">> lag diagnosis: {lag['verdict']}")

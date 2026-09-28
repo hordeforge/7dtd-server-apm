@@ -63,7 +63,25 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
   `EventSink` normalizes them through the shared numeric coercion, so an
   out-of-range stamp from a collector drops the field instead of failing
   validation and taking the events stage down with it.
-
+- Fix: an untrusted session document that is not UTF-8, nested thousands of
+  levels deep, or too deep for the interpreter recursion budget no longer
+  escapes as a `UnicodeDecodeError` or `RecursionError` traceback out of
+  stages meant to degrade to absent evidence. `io.read_text` and
+  `io.json_loads` turn both into the `ValueError` contract every reader
+  already guards, and `json_loads` rejects a document nested past
+  `MAX_JSON_DEPTH` at the boundary (the recursive surrogate scrub and every
+  writer behind it would each fail on it later anyway). Every untrusted
+  `json.loads` site in `io`, `analysis/`, `bundle`, `capture`, `cli`, and
+  `finalize` routes through them.
+- Fix: a scalar or list where an object belongs in an imported session
+  document no longer raises `AttributeError` out of a verdict stage.
+  `analysis/scaling` reads a scalar `metadata`/`world` and a scalar entry in
+  `top_managed_sections`, `analysis/bridge` reads a scalar entry in
+  `top_managed_sections` and in `layers` (and a non-object `signals` block),
+  and `compare` reads a non-object `workload.json`, as absent evidence.
+- Tests: fuzz targets for the scale-ladder fit, the `compare` gate, and the
+  untrusted JSON decode path (depth, encoding, surrogates, torn JSONL), plus
+  a regression case per crash above.
 - Tooling: a `.pre-commit-config.yaml` runs ruff, `ruff format --check`, mypy,
   and shellcheck at commit time, and the WebMod, HTML, and pytest gates at
   push time. Every hook calls the same `make` target CI runs, so the local and

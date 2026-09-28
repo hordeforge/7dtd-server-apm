@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, atomic_text, iter_jsonl
+from ..io import atomic_json, atomic_text, iter_jsonl, json_loads, read_text
 from ..models import EventsV2, as_number, object_list, schema_dict
 
 RETAINED_MAX = 2000
@@ -229,8 +229,8 @@ def parse_bridge_spikes(sink: EventSink, path: Path) -> None:
     if not path.is_file():
         return
     try:
-        snapshot = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
+        snapshot = json_loads(read_text(path), path)
+    except ValueError:
         return
     # A valid-JSON non-object document ("[...]", "5", a bare string) must read
     # as absent evidence like an unparseable one, not raise AttributeError out

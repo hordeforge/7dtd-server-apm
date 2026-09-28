@@ -16,7 +16,7 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, atomic_text, iter_jsonl, load_json
+from ..io import atomic_json, atomic_text, iter_jsonl, json_loads, load_json, read_text
 from ..models import as_mapping, as_number, first_number, first_present, object_list
 from .catalog import RULES, SECTION_TO_CSHARP
 from .flame_delta import load_weights
@@ -317,7 +317,7 @@ def attribute_snapshot(session: Path) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        return attribute_document(json.loads(path.read_text(encoding="utf-8")))
+        return attribute_document(json_loads(read_text(path), path))
     except (AttributeError, TypeError, ValueError, OSError):
         # AttributeError: a "measurement"/"update"/"world" block that parsed as
         # a non-object (list/str) has no .get; treat the whole document as bad.
@@ -345,6 +345,10 @@ def ranked_section_heats(session: Path) -> dict[str, float | None]:
         return {}
     data = load_json(path)
     heats: dict[str, float | None] = {}
+    # Shape-checked, like models.collected_layer_scores: an imported
+    # csharp_bridge.json can carry a scalar or torn entry among the sections,
+    # and one such entry would take the budget gate and session compare down
+    # with an AttributeError instead of costing that one section.
     for section in object_list(data.get("top_managed_sections")):
         name = str(section.get("name") or "")
         if not name:
@@ -367,8 +371,8 @@ def load_speedscope_frames(session: Path) -> list[tuple[str, int]]:
     if not path.exists():
         return []
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
+        data = json_loads(read_text(path), path)
+    except ValueError:
         return []
     # Imported profile JSON is unvalidated: any shape deviation (non-object
     # root, string frames array, scalar samples) reads as absent evidence
@@ -436,8 +440,8 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
                 sections.append(section)
 
     def ingest_file(path: Path) -> None:
-        with contextlib.suppress(json.JSONDecodeError):
-            ingest_obj(json.loads(path.read_text(encoding="utf-8")))
+        with contextlib.suppress(ValueError):
+            ingest_obj(json_loads(read_text(path), path))
 
     named = [
         path
@@ -464,8 +468,8 @@ def parse_managed_sections(session: Path, extra: Path | None) -> list[dict[str, 
         for path in sorted(app_dir.glob("*.json")):
             if path.resolve() in ingested:
                 continue
-            with contextlib.suppress(json.JSONDecodeError, OSError):
-                ingest_obj(json.loads(path.read_text(encoding="utf-8")))
+            with contextlib.suppress(ValueError, OSError):
+                ingest_obj(json_loads(read_text(path), path))
 
     return sections
 
@@ -531,11 +535,14 @@ def section_rank(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def layer_state(summary: dict[str, Any]) -> tuple[set[str], dict[str, dict[str, Any]]]:
     collected: set[str] = set()
     signals: dict[str, dict[str, Any]] = {}
+    # Same untrusted-shape contract as collected_layer_scores: summary.json
+    # comes from imported bundles and hand edits, so neither the entry list
+    # nor a "signals" block is guaranteed to be an object.
     for layer in object_list(summary.get("layers")):
         name = str(layer.get("layer"))
         if layer.get("state") == "collected":
             collected.add(name)
-            signals[name] = dict(layer.get("signals") or {})
+            signals[name] = as_mapping(layer.get("signals"))
     return collected, signals
 
 

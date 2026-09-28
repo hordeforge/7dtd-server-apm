@@ -14,7 +14,7 @@ import stat
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, iter_jsonl, scrape_succeeded
+from ..io import atomic_json, iter_jsonl, json_loads, read_text, scrape_succeeded
 from ..models import (
     LayerScore,
     SummaryV2,
@@ -1052,8 +1052,8 @@ def _load_meta(session: Path) -> dict[str, Any]:
     if not meta_path.exists():
         return {}
     try:
-        loaded = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        loaded = json_loads(read_text(meta_path), meta_path)
+    except (ValueError, OSError):
         # An imported bundle can carry a torn or hand-mangled meta.json; the
         # host-side layers below stay computable without it.
         return {}
@@ -1268,7 +1268,7 @@ def build_summary(session: Path) -> SummaryV2:
         # A malformed bridge snapshot must not lose the host-side evidence
         # collected below; drop just the snapshot-derived blocks instead.
         try:
-            loaded = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            loaded = json_loads(read_text(snapshot_path), snapshot_path)
             if isinstance(loaded, dict):
                 snapshot = loaded
             metadata.update(_snapshot_metadata(snapshot or {}, alloc_text))
@@ -1313,7 +1313,7 @@ def build_summary(session: Path) -> SummaryV2:
         if prior_bridge.is_file():
             with contextlib.suppress(Exception):
                 attribution = (
-                    json.loads(prior_bridge.read_text(encoding="utf-8")).get("attribution") or {}
+                    json_loads(read_text(prior_bridge), prior_bridge).get("attribution") or {}
                 )
     metadata["lag_diagnosis"] = diagnose_lag(layers, metadata, threads, attribution, session)
 

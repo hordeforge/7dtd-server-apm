@@ -7,11 +7,10 @@ Lower layer score and lower per-call section heat are better (less pressure).
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
-from ..io import atomic_json, atomic_text, load_json
+from ..io import atomic_json, atomic_text, json_loads, load_json, read_text
 from ..models import (
     as_mapping,
     as_number,
@@ -153,14 +152,19 @@ def compare_sessions(a: Path, b: Path) -> dict[str, Any]:
         docs = []
         for manifest in (workload_a, workload_b):
             try:
-                docs.append(json.loads(manifest.read_text(encoding="utf-8")))
-            except json.JSONDecodeError as error:
+                docs.append(json_loads(read_text(manifest), manifest))
+            except ValueError as error:
                 # A torn manifest (loadgen killed mid-flush) must name its file,
                 # not surface as a bare "Expecting value" from the CLI.
                 raise ValueError(f"cannot parse {manifest}: {error}") from None
         doc_a, doc_b = docs
         keys = ("mode", "target", "workload")
-        if {k: doc_a.get(k) for k in keys} != {k: doc_b.get(k) for k in keys}:
+        # as_mapping, not `.get`: a manifest that parses into a list or scalar
+        # has no .get, and that AttributeError is not the ValueError the CLI
+        # turns into a one-line rejection.
+        if {k: as_mapping(doc_a).get(k) for k in keys} != {
+            k: as_mapping(doc_b).get(k) for k in keys
+        }:
             raise ValueError("workload manifests are not equivalent")
 
     layer_deltas = _paired_deltas(layers_a, layers_b, "layer", "a_score", "b_score", 3)

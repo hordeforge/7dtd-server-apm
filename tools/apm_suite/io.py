@@ -219,8 +219,10 @@ def iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:
             if not line.strip():
                 continue
             try:
-                record = loads_scrubbed(line)
-            except json.JSONDecodeError:
+                record = json_loads(line)
+                if _SURROGATE_ESCAPE.search(line):
+                    record = _sans_surrogates(record)
+            except ValueError:
                 continue
             if isinstance(record, dict):
                 yield record
@@ -241,6 +243,68 @@ def scrape_succeeded(path: Path) -> bool:
         return True
 
 
+# A session document is a handful of levels deep; imported bundles and hand
+# edits are not. Past this depth nothing downstream can use the value anyway:
+# the recursive scrub, json.dumps on write, and every consumer walk would each
+# hit the interpreter recursion limit, so the document is rejected at the
+# boundary instead of dying somewhere less legible.
+MAX_JSON_DEPTH = 200
+
+
+def _too_deep(value: Any) -> bool:
+    """Iterative depth check; a recursive walk would itself blow the stack on
+    the very documents it is meant to reject."""
+    pending: list[tuple[Any, int]] = [(value, 0)]
+    while pending:
+        node, depth = pending.pop()
+        if depth > MAX_JSON_DEPTH:
+            return True
+        if isinstance(node, dict):
+            pending.extend((item, depth + 1) for item in node.values())
+        elif isinstance(node, list):
+            pending.extend((item, depth + 1) for item in node)
+    return False
+
+
+def read_text(path: Path) -> str:
+    """Read an untrusted artifact as UTF-8, naming the file on a decode failure.
+
+    A session artifact written by a foreign tool, a Latin-1 hand edit, or a
+    truncated capture is not UTF-8; the raw UnicodeDecodeError names a byte
+    offset and nothing else, and it is not an OSError, so readers guarding
+    `except (json.JSONDecodeError, OSError)` let it out as a traceback.
+    """
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError(f"cannot decode {path}: {error}") from None
+
+
+def json_loads(text: str, source: object | None = None) -> Any:
+    """Decode untrusted JSON text, naming the source on every failure.
+
+    Three failures besides a syntax error reach these readers from imported
+    bundles: a non-UTF-8 file raises UnicodeDecodeError, a document nested
+    thousands deep exhausts the scanner's recursion budget with RecursionError,
+    and one that survives the scanner still kills the recursive scrub and every
+    writer behind it. Every caller guards `except (json.JSONDecodeError,
+    ValueError)`, so the first two escaped as tracebacks out of a stage meant
+    to degrade to absent evidence. All three become the ValueError contract.
+    """
+    where = f" in {source}" if source is not None else ""
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"cannot parse{where}: {error}") from None
+    except UnicodeDecodeError as error:
+        raise ValueError(f"cannot decode{where}: {error}") from None
+    except RecursionError:
+        raise ValueError(f"cannot parse{where}: JSON nested too deeply") from None
+    if _too_deep(value):
+        raise ValueError(f"cannot parse{where}: JSON nested deeper than {MAX_JSON_DEPTH}")
+    return value
+
+
 def load_json(path: Path) -> dict[str, Any]:
     # Decode failures name the file: a bare "Expecting value" leaves the
     # operator guessing which session artifact was malformed. ValueError (not
@@ -248,10 +312,7 @@ def load_json(path: Path) -> dict[str, Any]:
     # keeps catching both failure modes. The parsed document is scrubbed of
     # lone surrogates: imported bundles plant JSON here, and a survivor would
     # crash the writers and path joins every caller feeds it into.
-    try:
-        value = loads_scrubbed(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise ValueError(f"cannot parse {path}: {error}") from None
+    value = _sans_surrogates(json_loads(read_text(path), path))
     if not isinstance(value, dict):
         raise ValueError(f"expected JSON object in {path}")
     return value
@@ -306,11 +367,7 @@ def load_jsonc(path: Path) -> Any:
     document holds rather than insisting on an object: the bridge config
     readers must be able to see a valid non-object document and diagnose it.
     """
-    text = path.read_text(encoding="utf-8")
-    try:
-        return loads_scrubbed(strip_json_comments(text))
-    except json.JSONDecodeError as error:
-        raise ValueError(f"cannot parse {path}: {error}") from None
+    return _sans_surrogates(json_loads(strip_json_comments(read_text(path)), path))
 
 
 def _next_candidate(base: Path, suffix: int) -> tuple[Path, int]:

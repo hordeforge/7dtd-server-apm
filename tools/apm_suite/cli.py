@@ -35,10 +35,12 @@ from .io import (
     atomic_json,
     claim_file,
     force_utf8_stdio,
+    json_loads,
     load_jsonc,
+    read_text,
     write_stdout,
 )
-from .models import as_number
+from .models import as_mapping, as_number
 from .paths import REPO, apm_root, require_backends
 from .prometheus import MetricError, export_metrics
 from .runner import backend_python, run, terminate_tree
@@ -629,9 +631,9 @@ def monitor(
                 )
             if bridge_latest.is_file():
                 try:
-                    snapshot = json.loads(bridge_latest.read_text(encoding="utf-8"))
-                    update = snapshot.get("update") or {}
-                    world = snapshot.get("world") or {}
+                    snapshot = as_mapping(json_loads(read_text(bridge_latest), bridge_latest))
+                    update = as_mapping(snapshot.get("update"))
+                    world = as_mapping(snapshot.get("world"))
                     sample["tick_avg_ms"] = update.get("serverTickIntervalAvgMs")
                     sample["late_ticks"] = update.get("lateTicks")
                     sample["gm_update_avg_ms"] = update.get("gmUpdateDurationAvgMs")
@@ -656,12 +658,12 @@ def monitor(
                     )
                     sample["tps_lifetime"] = round(1000 / tick_life, 1) if tick_life else None
                     # Each full (gen2) collection is a Boehm stop-the-world pause.
-                    sample["full_gc"] = (snapshot.get("gc") or {}).get("gen2Collections")
+                    sample["full_gc"] = as_mapping(snapshot.get("gc")).get("gen2Collections")
                     # The bridge exports every PeriodicExportSeconds (default 30);
                     # flag samples older than that so stale reads are not mistaken
                     # for live data.
                     sample["bridge_age_s"] = round(time.time() - bridge_latest.stat().st_mtime, 1)
-                except (json.JSONDecodeError, OSError):
+                except (ValueError, OSError):
                     pass
             current_late = sample.get("late_ticks")
             late_delta = _delta_str(current_late, previous_late, "late")
@@ -1120,7 +1122,7 @@ def _attach_workload_manifest(session: Path, workload: Path, label: str, bot_mod
     if workload.stat().st_size == 0:
         return False
     try:
-        doc = json.loads(workload.read_text(encoding="utf-8"))
+        doc = json_loads(read_text(workload), workload)
     except ValueError as error:
         err_console.print(
             f"[red]loadgen manifest unreadable, not attached: "
@@ -1216,8 +1218,8 @@ def scenario_matrix(
     if not plan.is_file():
         _fail(f"plan file not found: {plan}", 2)
     try:
-        entries = json.loads(plan.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
+        entries = json_loads(read_text(plan), plan)
+    except ValueError as error:
         raise typer.BadParameter(f"not valid JSON: {error}", param_hint="plan") from None
     except OSError as error:
         _fail(f"cannot read {plan}: {error}", 2)

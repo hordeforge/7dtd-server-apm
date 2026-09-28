@@ -18,6 +18,7 @@ so correctness and encoding bugs become live failures here.
 
 from __future__ import annotations
 
+import contextlib
 import importlib.util
 import io
 import json
@@ -744,3 +745,322 @@ def test_fuzz_scalar_containers_regression(tmp_path: Path) -> None:
     ok, lines = check(session, {"max_layer_scores": 5, "max_sum_layer_score": "abc"}, None, 15.0)
     assert ok is False
     assert any(line.startswith("UNKNOWN sum_layers") for line in lines)
+
+
+# --- ladder fit, compare gate, and the untrusted JSON decode path ---------------
+
+# The scaling ladder and the compare gate are the two stages that decide a
+# verdict from a whole ladder of imported sessions, so a single scalar where a
+# container belongs in any one of them reaches the operator's build decision.
+LADDER_SEEDS = range(4)
+# Containers a JSON document can hold where the reader expects an object or a
+# list. "x.get(k) or {}" defends a missing key, never these.
+CONTAINER_SHAPES: list[Any] = [{}, {"clients": 4}, [], [1], "x", 5, None, True]
+
+
+def _ladder_session(rng: random.Random, path: Path) -> None:
+    """One rung of a scale ladder: a summary whose world/section nesting is
+    unvalidated, plus a bridge document whose section list may hold scalars."""
+    path.mkdir(parents=True, exist_ok=True)
+    world = rng.choice(CONTAINER_SHAPES)
+    sections: Any = [
+        {
+            "name": rng.choice(["A", "World.TickEntities", ""]),
+            "avgMs": rng.choice(SCALARS),
+            "totalMs": rng.choice(SCALARS),
+        }
+        for _ in range(rng.randint(0, 4))
+    ]
+    if rng.random() < 0.3:
+        sections = [*sections, rng.choice([5, "x", None])]
+    if rng.random() < 0.1:
+        sections = rng.choice(CONTAINER_SHAPES)
+    (path / "summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "7dtd.apm.summary.v2",
+                "session_id": path.name,
+                "metadata": rng.choice([{"world": world}, world, {"world": world}]),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (path / "csharp_bridge.json").write_text(
+        json.dumps({"schema": "7dtd.apm.bridge.v3", "top_managed_sections": sections}),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("seed", list(LADDER_SEEDS))
+def test_fuzz_scaling_ladder_on_crafted_sessions(tmp_path: Path, seed: int) -> None:
+    """The ladder fit reads every rung's summary.json and csharp_bridge.json
+    without schema guarantees. A rung whose world or section nesting is a
+    scalar must drop that rung's numbers, never abort the fit or invent a
+    scaling exponent, and the whole verdict must be deterministic and strict-
+    JSON encodable (it is published to the report)."""
+    from apm_suite.analysis.scaling import SUPERLINEAR, analyze_scaling
+
+    rng = random.Random(seed)
+    rungs = []
+    for index in range(rng.randint(1, 5)):
+        rung = tmp_path / f"session_{index}"
+        _ladder_session(rng, rung)
+        rungs.append(rung)
+
+    first = analyze_scaling(rungs, rng.choice(["players", "entities"]))
+    second = analyze_scaling(rungs, first["scale_key"])
+    assert first == second, f"seed={seed}: ladder fit must be deterministic"
+    assert all(scale > 0 for scale in first["scales"]), f"seed={seed}: bad rung scale"
+    for finding in first["sections"]:
+        assert finding["section"], f"seed={seed}: unnamed section in findings"
+        assert 0 < finding["points"] <= len(rungs)
+        for key in ("per_call_exponent", "total_exponent"):
+            value = finding[key]
+            assert value is None or math.isfinite(value), f"seed={seed}: bad {key} {value!r}"
+        # A section is only ever called super-linear off a real exponent.
+        if finding["section"] in {f["section"] for f in first["super_linear"]}:
+            assert (
+                max(finding["per_call_exponent"] or 0, finding["total_exponent"] or 0)
+                >= SUPERLINEAR
+            )
+    # Serialization boundary: the verdict is written into the report.
+    restored = json.loads(json.dumps(first, allow_nan=False))
+    assert restored == first, f"seed={seed}: ladder verdict did not round-trip"
+
+
+COMPARE_SEEDS = range(4)
+
+
+def _compare_session(rng: random.Random, path: Path) -> None:
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "summary.json").write_text(
+        json.dumps(
+            {
+                "schema": "7dtd.apm.summary.v2",
+                "meta": {
+                    "analyzer_version": rng.choice(["2.3.0", "2.3.0", 5, None]),
+                    "only": rng.choice(["all", "all", "cpu", 5]),
+                    "seconds": rng.choice([60, 60, "60", 0]),
+                    "observed_seconds": rng.choice([60, 60, "x"]),
+                },
+                "layers": rng.choice(
+                    [
+                        [{"layer": "cpu", "score": rng.choice(SCALARS), "state": "collected"}],
+                        rng.choice(CONTAINER_SHAPES),
+                    ]
+                ),
+                "metadata": rng.choice(CONTAINER_SHAPES),
+            }
+        ),
+        encoding="utf-8",
+    )
+    (path / "csharp_bridge.json").write_text(
+        json.dumps(
+            {
+                "top_managed_sections": rng.choice(
+                    [[{"name": "A", "score": rng.choice(SCALARS)}], 5, None, "x"]
+                )
+            }
+        ),
+        encoding="utf-8",
+    )
+    (path / "workload.json").write_text(
+        json.dumps(rng.choice([{"mode": "m", "target": "t", "workload": "w"}, *CONTAINER_SHAPES])),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("seed", list(COMPARE_SEEDS))
+def test_fuzz_compare_gate_on_crafted_sessions(tmp_path: Path, seed: int) -> None:
+    """`compare` is the pass/fail verdict on a candidate build. Crafted
+    manifests, layers, and bridge sections must either reject the pair with a
+    ValueError (which the CLI renders as one line) or produce a verdict whose
+    every field is a finite number or string: never an AttributeError out of a
+    `.get` on a list, never a NaN that persists into compare.json."""
+    from apm_suite.analysis.compare import compare_sessions, format_report
+
+    rng = random.Random(seed)
+    a, b = tmp_path / "a", tmp_path / "b"
+    _compare_session(rng, a)
+    _compare_session(rng, b)
+    try:
+        result = compare_sessions(a, b)
+    except ValueError:
+        return  # an incompatible pair is the documented rejection path
+    assert result == compare_sessions(a, b), f"seed={seed}: compare must be deterministic"
+    assert result["overall_better"] in ("A", "B", "tie")
+    encoded = json.dumps(result, allow_nan=False)
+    assert json.loads(encoded) == result
+    assert f"- **A:** `{a}`" in format_report(result)
+
+
+DECODE_SEEDS = range(4)
+# The surrogate tokens are the ESCAPED spelling a JSON writer emits; the
+# decoded lone half is what _sans_surrogates exists to scrub.
+# The surrogate tokens are the ESCAPED spelling a JSON writer emits; the
+# decoded lone half is exactly what _sans_surrogates exists to scrub.
+JSON_TOKENS = ['{"a": 1}', "[", "]", '"', "\\", "\\ud800", "\x00", "1e999", "9" * 400, "\\udfff"]
+
+
+def _json_text(rng: random.Random) -> str:
+    if rng.random() < 0.3:
+        # Pathological nesting: past the scanner's recursion budget.
+        depth = rng.randint(1, 3) * rng.choice([1000, 10000, 100000])
+        return "[" * depth + "]" * depth
+    if rng.random() < 0.2:
+        return "//" + "".join(rng.choice(JSON_TOKENS) for _ in range(rng.randint(0, 4)))
+    return "".join(rng.choice(JSON_TOKENS) for _ in range(rng.randint(0, 12)))
+
+
+@pytest.mark.parametrize("seed", list(DECODE_SEEDS))
+def test_fuzz_untrusted_json_decode(tmp_path: Path, seed: int) -> None:
+    """Every untrusted-document reader funnels through load_json/load_jsonc/
+    iter_jsonl. Three failures reach them from imported bundles and none is a
+    JSONDecodeError: a non-UTF-8 file, a document nested past the scanner's
+    recursion budget, and a lone-surrogate escape. All must surface as the
+    ValueError contract the callers guard, and the readers that degrade must
+    degrade rather than crash."""
+    from apm_suite.io import iter_jsonl, json_loads, load_json, load_jsonc, strip_json_comments
+
+    rng = random.Random(seed)
+    target = tmp_path / f"doc_{seed}.json"
+    target.write_text(_json_text(rng), encoding="utf-8")
+    with contextlib.suppress(ValueError):
+        load_json(target)
+    with contextlib.suppress(ValueError):
+        load_jsonc(target)
+    # The comment stripper is a character walk over the same untrusted text and
+    # must terminate on any input, including an unterminated string or block.
+    assert isinstance(strip_json_comments(target.read_text(encoding="utf-8")), str)
+
+    # A non-UTF-8 file: UnicodeDecodeError is a ValueError subclass, so the
+    # readers that guard ValueError already caught it; the assert pins that
+    # this stays true if someone narrows the except clause.
+    binary = tmp_path / f"binary_{seed}.json"
+    binary.write_bytes(b'{"a": "\xff\xfe"}')
+    for reader in (load_json, load_jsonc):
+        with pytest.raises(ValueError):
+            reader(binary)
+
+    # Torn jsonl lines, including a deeply nested one, are dropped, not fatal.
+    records = tmp_path / f"rec_{seed}.jsonl"
+    records.write_text(
+        "".join(json.dumps({"t": rng.choice(SCALARS)}) + "\n" for _ in range(3))
+        + _json_text(rng)
+        + "\n",
+        encoding="utf-8",
+    )
+    assert all(isinstance(record, dict) for record in iter_jsonl(records))
+
+    with pytest.raises(ValueError):
+        json_loads("[" * 100000 + "]" * 100000)
+
+
+def test_fuzz_untrusted_json_decode_regression(tmp_path: Path) -> None:
+    """Regression artifacts. A deep document raised RecursionError and a
+    non-UTF-8 file raised UnicodeDecodeError, neither caught by the readers'
+    `except (json.JSONDecodeError, OSError)`: both escaped as tracebacks out of
+    stages that are meant to degrade to absent evidence. A scalar `metadata`
+    in summary.json took the scaling ladder down the same way."""
+    from apm_suite.analysis.scaling import analyze_scaling
+    from apm_suite.io import json_loads, load_json
+
+    deep = tmp_path / "deep.json"
+    deep.write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
+    with pytest.raises(ValueError, match="nested too deeply"):
+        load_json(deep)
+
+    binary = tmp_path / "binary.json"
+    binary.write_bytes(b'{"layers": [1, 2], "utf8": "\xc3\x28"}')
+    with pytest.raises(ValueError, match="cannot decode"):
+        load_json(binary)
+    with pytest.raises(ValueError, match="cannot parse"):
+        json_loads("{oops", source=binary)
+
+    # summary.json with a scalar metadata / world, and a bridge document whose
+    # section list holds a scalar: the ladder must still report on the rungs
+    # that are readable.
+    rungs = []
+    for index, (meta, sections) in enumerate(
+        [
+            (5, [{"name": "A", "avgMs": 1.0, "totalMs": 2.0}]),
+            ({"world": 5}, 5),
+            ({"world": {"clients": 30}}, [{"name": "A", "avgMs": 4.0, "totalMs": 8.0}]),
+            ({"world": {"clients": 40}}, [{"name": "A", "avgMs": 6.0, "totalMs": 12.0}]),
+        ]
+    ):
+        rung = tmp_path / f"session_{index}"
+        rung.mkdir()
+        (rung / "summary.json").write_text(
+            json.dumps({"schema": "7dtd.apm.summary.v2", "metadata": meta}), encoding="utf-8"
+        )
+        (rung / "csharp_bridge.json").write_text(
+            json.dumps({"top_managed_sections": sections}), encoding="utf-8"
+        )
+        rungs.append(rung)
+    result = analyze_scaling(rungs, "players")
+    assert result["scales"] == [30.0, 40.0]  # only the readable rungs
+    # Two points cannot be fitted (the fit needs three), so no section is
+    # reported: a rung dropped for junk must not fake a scaling verdict.
+    assert result["sections"] == [] and result["super_linear"] == []
+
+
+def test_fuzz_ladder_and_compare_regression(tmp_path: Path) -> None:
+    """The same scalar-container artifacts on the two verdict stages:
+    ranked_section_heats (shared by the budget gate and compare) and the
+    workload-manifest equivalence check, whose `.get` on a list root was an
+    AttributeError the CLI could not render."""
+    from apm_suite.analysis.bridge import layer_state, ranked_section_heats
+    from apm_suite.analysis.compare import compare_sessions
+
+    session = tmp_path / "session_scalar"
+    session.mkdir()
+    (session / "csharp_bridge.json").write_text(
+        json.dumps({"top_managed_sections": [5, "x", None, {"name": "A", "score": "junk"}]}),
+        encoding="utf-8",
+    )
+    # One scalar among the sections costs that section, not the document, and
+    # an unparseable score stays UNKNOWN (None) rather than a healthy zero.
+    assert ranked_section_heats(session) == {"A": None}
+
+    collected, signals = layer_state(
+        {"layers": [5, None, {"layer": "cpu", "state": "collected", "signals": 7}]}
+    )
+    assert collected == {"cpu"} and signals == {"cpu": {}}
+
+    def pair(root: Path, workload: str) -> tuple[Path, Path]:
+        paths = []
+        for side in ("a", "b"):
+            path = root / side
+            path.mkdir(parents=True)
+            (path / "summary.json").write_text(
+                json.dumps(
+                    {
+                        "meta": {
+                            "analyzer_version": "2.3.0",
+                            "only": "all",
+                            "seconds": 60,
+                            "observed_seconds": 60,
+                        },
+                        "layers": [{"layer": "cpu", "score": 1, "state": "collected"}],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (path / "workload.json").write_text(workload, encoding="utf-8")
+            paths.append(path)
+        return paths[0], paths[1]
+
+    # A list-rooted manifest has no .get, so it reads as a document carrying
+    # no equivalence keys: two identical roots still compare, and one list
+    # against one object is rejected as not equivalent rather than crashing.
+    a, b = pair(tmp_path / "same", "[1, 2]")
+    assert compare_sessions(a, b)["overall_better"] == "tie"
+    a, b = pair(tmp_path / "mismatch", "[1, 2]")
+    (b / "workload.json").write_text('{"mode": "m"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="not equivalent"):
+        compare_sessions(a, b)
+    # A torn manifest still names its file.
+    a, b = pair(tmp_path / "torn", "{oops")
+    with pytest.raises(ValueError, match="cannot parse"):
+        compare_sessions(a, b)

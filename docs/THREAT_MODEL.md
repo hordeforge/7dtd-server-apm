@@ -71,7 +71,8 @@ removed: no `/api/perf` handler and no `Perf` class exist anywhere under
 | Bridge `GET /api/apm` | HTTP GET, admin-gated, no request data read | `WebApi.cs:18-37` |
 | Bridge console verbs `apm status/dump/reset/reload/capabilities/jitmap/benchmark` | console command | `BridgeMod.cs:294-345` |
 | Zip bundle import | file parser (untrusted archive) | `bundle.py:286-344`, guard `io.py:105-120` |
-| JSON/JSONL session parsing, incl. manifest-recorded artifact paths from an imported bundle | file parser (store-trusted, import-untrusted) | `io.py:168-219,105-120`; consumers in `analysis/` |
+| JSON/JSONL session parsing, incl. manifest-recorded artifact paths from an imported bundle | file parser (store-trusted, import-untrusted) | `io.py:168-219,105-120`; consumers in `analysis/`; depth/encoding bounded in `io.json_loads`/`io.read_text`; fuzzed in `tools/apm_suite/tests/test_fuzz_parsers.py` |
+| Scale ladder fit, session compare gate | verdict stages over untrusted documents | `analysis/scaling.py`, `analysis/compare.py`; fuzzed in `tools/apm_suite/tests/test_fuzz_parsers.py` |
 | `perf script` output, bpftrace maps, jit map | file parsers (host-produced) | `tools/host_profiler/stackcollapse_perf.py`, `analysis/report.py`, `analysis/jitsym.py`, `analysis/events.py`; fuzzed in `tools/apm_suite/tests/test_fuzz_parsers.py` |
 | Bridge config `Config/apmbridge.json` | file parser (operator-authored) | `BridgeConfig.cs:20-39` |
 | Collector subprocesses (bpftrace, perf via `hw_perf.sh` / `perf_record.sh`, `preprocess_bt.py`, `app_scrape.py`, `make_flames.sh`) | child processes from CLI-built argv | `collectors.py:62-195`, `capture.py:830-839` |
