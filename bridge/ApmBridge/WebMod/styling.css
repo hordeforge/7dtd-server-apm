@@ -5,12 +5,23 @@
    embedded in the managed assembly and the panel renders inside the stock
    dashboard, not inside a generated page. The series colors in bundle.ts come
    from the same set. */
-.seven-dtd-apm { padding: 1rem; box-sizing: border-box; height: 100%; overflow-y: auto; }
+/* Three corner radii, chosen by the size of the thing being rounded, and no
+   others: a control and its cell used to carry 5px, 6px, 4px and 8px between
+   them, which reads as four unrelated shops inside one panel. 2px for meter
+   tracks (half of a 10px bar), 4px for controls the finger or cursor lands on,
+   6px for the panels those controls sit in. The status pill keeps its full
+   round because that shape is the point of it. */
+.seven-dtd-apm {
+  --apm-r-track: 2px;
+  --apm-r-control: 4px;
+  --apm-r-panel: 6px;
+  padding: 1rem; box-sizing: border-box; height: 100%; overflow-y: auto;
+}
 .apm-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
 .apm-head h2 { margin: 0; }
 .apm-window { opacity: .6; font-size: .8rem; margin-left: auto; }
 .apm-pill { font-size: .75rem; font-weight: 700; letter-spacing: .04em; padding: .2rem .55rem; border-radius: 999px; }
-.apm-btn { font-size: .78rem; padding: .32rem .6rem; min-height: 24px; border-radius: 5px; border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
+.apm-btn { font-size: .78rem; padding: .32rem .6rem; min-height: 24px; border-radius: var(--apm-r-control); border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
 .apm-btn:hover { background: rgba(127,127,127,.25); }
 
 /* Keyboard focus is always visible (WCAG 2.4.7); the dashboard theme may
@@ -26,7 +37,7 @@
 /* Level meters are quantized segments, not continuous bars: the ::after
    overlay slices the track into 12 discrete cells, and the unfilled track
    stays visible so the distance to full reads at a glance. */
-.apm-bar { position: relative; flex: 1; height: 10px; border-radius: 5px; background: rgba(127,127,127,.18); overflow: hidden; }
+.apm-bar { position: relative; flex: 1; height: 10px; border-radius: var(--apm-r-track); background: rgba(127,127,127,.18); overflow: hidden; }
 .apm-bar::after, .apm-topbar-track::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
   background-image: linear-gradient(90deg, rgba(10,12,16,.8) 1px, transparent 1px);
@@ -46,13 +57,13 @@
 .apm-bar-fill.apm-bad { background: #ff7070; }
 
 .apm-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: .75rem; margin-top: .75rem; }
-.apm-cell { background: rgba(127,127,127,.12); border-radius: 6px; padding: .75rem; display: flex; flex-direction: column; }
+.apm-cell { background: rgba(127,127,127,.12); border-radius: var(--apm-r-panel); padding: .75rem; display: flex; flex-direction: column; }
 .apm-label { opacity: .7; font-size: .85rem; }
 .apm-trend .apm-spark { margin-top: .35rem; width: 100%; height: 30px; }
 
 .apm-sec-head { display: flex; align-items: center; gap: .75rem; margin-top: 1rem; }
 .apm-sec-head h3 { margin: 0; }
-.apm-filter { margin-left: auto; padding: .25rem .5rem; border-radius: 5px; border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.1); color: inherit; }
+.apm-filter { margin-left: auto; padding: .25rem .5rem; border-radius: var(--apm-r-control); border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.1); color: inherit; }
 
 .apm-table { width: 100%; border-collapse: collapse; margin-bottom: .5rem; }
 /* Wide tables keep their columns on a narrow panel: the wrapper scrolls
@@ -109,7 +120,7 @@ a[data-for="tooltip-APM"]::before {
   .apm-topbar-row { grid-template-columns: 100px 1fr 60px; }
 }
 .apm-charts-row .apm-grid { margin-top: 0; }
-.apm-chart { background: rgba(127,127,127,.08); border: 1px solid rgba(127,127,127,.22); border-radius: 8px; padding: .75rem; }
+.apm-chart { background: rgba(127,127,127,.08); border: 1px solid rgba(127,127,127,.22); border-radius: var(--apm-r-panel); padding: .75rem; }
 .apm-trends { margin-top: .75rem; }
 .apm-trends svg { display: block; width: 100%; height: auto; }
 .apm-chart-head { display: flex; align-items: center; gap: .6rem; margin-bottom: .4rem; flex-wrap: wrap; }
@@ -124,7 +135,7 @@ a[data-for="tooltip-APM"]::before {
 .apm-gauge-label { fill: #9aa0a6; font-size: 11px; }
 .apm-legend { display: flex; gap: 1rem; margin-top: .4rem; flex-wrap: wrap; align-items: baseline; font-size: .8rem; }
 .apm-legend-chip { display: inline-flex; align-items: center; gap: .35rem; color: #9aa0a6; }
-.apm-legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex: 0 0 auto; }
+.apm-legend-swatch { width: 10px; height: 10px; border-radius: var(--apm-r-track); flex: 0 0 auto; }
 .apm-legend-value { color: #e8eaed; font-weight: 600; font-variant-numeric: tabular-nums; }
 .apm-gridline { stroke: rgba(127,127,127,.18); }
 .apm-axis-label { fill: #9aa0a6; font-size: 10px; }
@@ -132,7 +143,7 @@ a[data-for="tooltip-APM"]::before {
 .apm-topbars h3 { margin: 0 0 .5rem; font-size: .85rem; color: #9aa0a6; }
 .apm-topbar-row { display: grid; grid-template-columns: 150px 1fr 64px; gap: .5rem; align-items: center; margin: .3rem 0; font-size: .8rem; }
 .apm-topbar-name { color: #9aa0a6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.apm-topbar-track { position: relative; background: rgba(127,127,127,.18); border-radius: 4px; height: 10px; overflow: hidden; }
+.apm-topbar-track { position: relative; background: rgba(127,127,127,.18); border-radius: var(--apm-r-track); height: 10px; overflow: hidden; }
 .apm-topbar-fill { height: 100%; }
 .apm-topbar-fill.apm-ok { background: #2d6b3a; }
 .apm-topbar-fill.apm-warn { background: #e6bd3a; }

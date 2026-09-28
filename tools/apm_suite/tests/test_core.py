@@ -3169,6 +3169,13 @@ def test_every_generated_page_carries_the_shared_tokens(tmp_path: Path) -> None:
     flame = _load("flame_diff_html")
     interactive = _load("interactive_flame")
 
+    spec = importlib.util.spec_from_file_location(
+        "interactive_flame", REPO / "tools/host_profiler/interactive_flame.py"
+    )
+    assert spec and spec.loader
+    interactive = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(interactive)
+
     pages = {
         "report": (session / "report.html").read_text(),
         "dashboard": (session / "dashboard.html").read_text(),
@@ -3189,6 +3196,13 @@ def test_every_generated_page_carries_the_shared_tokens(tmp_path: Path) -> None:
         # The :root block is the only place a literal is allowed; every other
         # rule has to read a token, or the page can drift from the others again.
         assert not stray.search(rules), f"{name}: raw color literal outside :root"
+
+    # No page reinvents the one flat look: the base sheet declares surfaces flat
+    # and the flame plot is the widest view in the product, so a radius or a
+    # shadow there is decoration the other four views do not carry.
+    for name, page in pages.items():
+        for banned in ("border-radius", "box-shadow", "linear-gradient", "backdrop-filter"):
+            assert banned not in page, f"{name}: {banned} reintroduced"
 
 
 def test_dashboard_session_metadata_never_comes_from_the_analysis_block(

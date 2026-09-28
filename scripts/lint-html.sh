@@ -51,6 +51,13 @@ css="$root/bridge/ApmBridge/WebMod/styling.css"
   printf '\n</style></head><body></body></html>\n'
 } > "$scratch/css-check.html"
 
+# The interactive flame page ships as a template, so it is rendered from a
+# three-frame folded stack to give vnu the real document, not the raw template.
+printf 'a;b;c 1\na;b;d 2\na;e 1\n' > "$scratch/stacks.folded"
+uv run --locked --project "$root" python \
+  "$root/tools/host_profiler/interactive_flame.py" \
+  "$scratch/stacks.folded" -o "$scratch/flame.html" >/dev/null
+
 mapfile -t html_files < <(
   find "$scratch" -name '*.html' | sort
   echo "$root/tools/apm_suite/tests/fixtures/golden_report.html"

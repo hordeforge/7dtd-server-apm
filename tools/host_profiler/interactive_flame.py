@@ -33,34 +33,39 @@ from folded_to_speedscope import dumps_deep, load_folded, to_d3_tree
 # and session index, so it reads the same tokens instead of a hand-copied
 # palette that drifts the moment a token changes.
 FLAME_CSS = """
-body{margin:0;padding:0}
-header{padding:12px 16px;background:var(--apm-surface);display:flex;flex-wrap:wrap;
-  gap:12px;align-items:center;border-bottom:1px solid var(--apm-rule)}
-header h1{font-size:16px;margin:0;font-weight:600}
-header .muted{color:var(--apm-muted);font-size:13px}
-#controls{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-left:auto}
-input[type=search]{background:var(--apm-bg);border:1px solid var(--apm-rule);
-  color:var(--apm-text);padding:6px 10px;border-radius:6px;min-width:200px}
-button{background:var(--apm-outline);border:1px solid var(--apm-rule);
-  color:var(--apm-text);padding:6px 12px;border-radius:6px;cursor:pointer}
-button:hover{border-color:var(--apm-link)}
-#search-status{color:var(--apm-muted);font-size:12px;min-width:9ch}
-#breadcrumb{padding:8px 16px;font-size:12px;color:var(--apm-muted);word-break:break-all;min-height:1.5em}
-#breadcrumb a{color:var(--apm-link);cursor:pointer;text-decoration:underline;margin-right:4px}
-#breadcrumb a:hover,#breadcrumb a:focus-visible{text-decoration:none}
-#chart{width:100%;overflow:hidden}
-svg{display:block;width:100%}
-.frame rect{stroke:var(--apm-bg);stroke-width:.5;cursor:pointer}
-.frame text{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11px;fill:var(--apm-bg);pointer-events:none}
-.frame.dim rect{opacity:.25}
-.frame.hit rect{stroke:var(--apm-accent);stroke-width:1.5}
-#tip{display:none;position:fixed;z-index:10;background:var(--apm-surface);
-  border:1px solid var(--apm-rule);padding:8px 10px;border-radius:6px;font-size:12px;
-  max-width:480px;pointer-events:none;box-shadow:0 4px 16px rgba(0,0,0,.4)}
-#tip b{color:var(--apm-accent)}
-.sr-only{position:absolute;width:1px;height:1px;margin:-1px;padding:0;border:0;clip-path:inset(50%);overflow:hidden;white-space:nowrap}
-footer{padding:8px 16px;font-size:12px;color:var(--apm-muted)}
-footer a{color:var(--apm-link)}
+  * { box-sizing: border-box; }
+  /* The chart runs edge to edge under its own header, so the base page gutter
+     is dropped rather than left as a second 24px inset. Palette, type scale,
+     and the flat unboxed look all come from the shared base sheet above; a
+     flame page that redraws them is how the views drift into separate
+     products. */
+  body { margin:0; padding:0; }
+  header { padding:12px 16px; background:var(--apm-surface); display:flex; flex-wrap:wrap; gap:12px; align-items:center; border-bottom:1px solid var(--apm-rule); }
+  header h1 { font-size:var(--apm-h1); margin:0; }
+  header .muted { color:var(--apm-muted); font-size:var(--apm-code); }
+  #controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-left:auto; }
+  input[type=search] { background:var(--apm-bg); border:1px solid var(--apm-rule); color:var(--apm-text); padding:6px 10px; min-width:200px; }
+  button { background:var(--apm-outline); border:1px solid var(--apm-rule); color:var(--apm-text); padding:6px 12px; cursor:pointer; }
+  button:hover { border-color:var(--apm-link); }
+  #breadcrumb { padding:8px 16px; font-size:var(--apm-code); color:var(--apm-muted); word-break:break-all; min-height:1.5em; }
+  #breadcrumb a { color:var(--apm-link); cursor:pointer; text-decoration:underline; margin-right:4px; }
+  #breadcrumb a:hover, #breadcrumb a:focus-visible { text-decoration:none; }
+  #chart { width:100%; overflow:hidden; }
+  svg { display:block; width:100%; }
+  .frame rect { stroke:var(--apm-bg); stroke-width:0.5; cursor:pointer; }
+  /* Frame labels are dark ink on the warm frame fills, and 11px is chart ink,
+     not page type: the scale does not govern a label inside the plot. */
+  .frame text { font-family: var(--apm-mono); font-size:11px; fill:var(--apm-bg); pointer-events:none; }
+  .frame.dim rect { opacity:0.25; }
+  .frame.hit rect { stroke:var(--apm-accent); stroke-width:1.5; }
+  #tip {
+    display:none; position:fixed; z-index:10; background:var(--apm-surface); border:1px solid var(--apm-rule);
+    padding:8px 10px; font-size:var(--apm-code); max-width:480px; pointer-events:none;
+  }
+  #tip b { color:var(--apm-accent); }
+  .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; clip-path:inset(50%); overflow:hidden; white-space:nowrap; }
+  footer { padding:8px 16px; font-size:12px; color:var(--apm-muted); }
+  footer a { color:var(--apm-link); }
 """
 
 HTML = r"""<!DOCTYPE html>

@@ -34,6 +34,11 @@ TOKENS: dict[str, str] = {
     "bad": "#ff7070",
 }
 
+# The monospace stack is a token, not a per-page literal: the flame plot, the
+# tables, and the inline code all name it, and three hand-copied stacks are how
+# they drift.
+MONO = "ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+
 # One scale, used by every page: body, code, section heading, page heading, and
 # the one display figure (the health grade). The steps are deliberately close
 # (1.5px from body to code) so inline text never breaks the page rhythm, and
@@ -54,7 +59,7 @@ h1{font-size:SCALE_H1;font-weight:600;letter-spacing:-.01em;margin:0 0 2px}
 h2{font-size:SCALE_H2;font-weight:600;margin:0 0 .5rem}
 a{color:TOKENS_LINK}
 a:focus-visible{outline:2px solid TOKENS_LINK;outline-offset:1px}
-code,pre,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:SCALE_CODE}
+code,pre,.mono{font-family:var(--apm-mono);font-size:SCALE_CODE}
 pre{white-space:pre-wrap;margin:0}
 table{width:100%;border-collapse:collapse}
 th,td{padding:7px 8px;border-bottom:1px solid TOKENS_RULE;text-align:left;vertical-align:top}
@@ -77,7 +82,9 @@ def base_css(extra: str = "") -> str:
     Tokens are emitted as custom properties so a page rule reads
     `var(--apm-text)` rather than a hex copied from this file.
     """
-    root = "".join(f"--apm-{name}:{value};" for name, value in TOKENS.items())
+    root = f"--apm-mono:{MONO};" + "".join(
+        f"--apm-{name}:{value};" for name, value in TOKENS.items()
+    )
     body = _BASE_RULES
     for name, value in (*TOKENS.items(), *SCALE.items()):
         body = body.replace(f"TOKENS_{name.upper()}", f"var(--apm-{name})").replace(
@@ -90,7 +97,7 @@ REPORT_CSS = """
 .page{max-width:1200px;margin:0 auto}
 header{margin-bottom:16px}
 header p{margin:0 0 8px}
-nav{font-size:13px}
+nav{font-size:var(--apm-code)}
 td ul{margin:0;padding-left:1.1rem}
 """
 
@@ -100,8 +107,8 @@ td ul{margin:0;padding-left:1.1rem}
 DASHBOARD_CSS = """
 header{background:var(--apm-surface);border-bottom:1px solid var(--apm-outline);
   padding:16px 24px;margin:-24px -24px 20px}
-header .muted{font-size:13px;margin:0 0 4px}
-nav{font-size:13px}
+header .muted{font-size:var(--apm-code);margin:0 0 4px}
+nav{font-size:var(--apm-code)}
 .tiles{display:grid;gap:1px;background:var(--apm-rule);
   grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
 .tile{background:var(--apm-bg);padding:12px 16px 16px}
@@ -111,7 +118,7 @@ nav{font-size:13px}
 .block>h2{margin-bottom:.6rem}
 .grade{font-size:var(--apm-figure);font-weight:600;line-height:1.1;
   font-variant-numeric:tabular-nums}
-.verdict{font-size:18px;margin:0 0 .4rem}
+.verdict{font-size:var(--apm-h1);margin:0 0 .4rem}
 .bar{height:6px;background:var(--apm-outline);max-width:340px;margin:.2rem 0 .6rem}
 .fill{height:100%;background:var(--apm-accent)}
 .layer{display:grid;grid-template-columns:minmax(90px,140px) 1fr 4ch;
