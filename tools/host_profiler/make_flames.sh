@@ -35,9 +35,16 @@ FLAME_SRC="$ANNOTATED"
 # The HTML builder reuses the d3 tree folded_to_speedscope.py already wrote
 # instead of re-folding and re-aggregating the same stacks; the raw tree is
 # best-effort, so fall back to the folded input when it is missing.
+# Reuse is only safe while the tree is no older than the folded file it was
+# derived from: a build that dies between rewriting stacks.folded and rewriting
+# the tree would otherwise embed the PREVIOUS run's tree in a page filed beside
+# the new folded stacks, and nothing in the output would show the mismatch.
+# `-nt` holds in the normal pass (the tree is written after its input) and
+# fails closed onto the folded fallback, which is always derived from the file
+# in hand.
 emit_flame() {
   local tree="$1" folded="$2" out="$3" title="$4" scope_name="$5"
-  if [[ -s "$tree" ]]; then
+  if [[ -s "$tree" && "$tree" -nt "$folded" ]]; then
     "$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/interactive_flame.py" --tree "$tree" \
       -o "$out" --title "$title" --speedscope-name "$scope_name"
   else
