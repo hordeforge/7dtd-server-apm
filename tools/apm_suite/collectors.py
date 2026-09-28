@@ -17,6 +17,7 @@ from pathlib import Path
 
 from .models import LAYER_ALIASES, collector_requested
 from .paths import APM_BACKENDS, TOOLS
+from .settings import DEFAULT_TELNET_HOST, DEFAULT_TELNET_PORT
 
 HOST_PROFILER = TOOLS / "host_profiler"
 
@@ -27,8 +28,8 @@ class CaptureContext:
     pid: int
     comm: str
     seconds: int
-    telnet_host: str = "127.0.0.1"
-    telnet_port: int = 8081
+    telnet_host: str = DEFAULT_TELNET_HOST
+    telnet_port: int = DEFAULT_TELNET_PORT
     telnet_password: str = ""
     mono_so: Path | None = None
     sudo_ok: bool = False

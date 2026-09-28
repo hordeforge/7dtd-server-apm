@@ -127,7 +127,9 @@ chunk streaming). `scenario matrix PLAN.json` runs a labeled experiment
 sequence, running a cleanup console command between experiments (`killall`
 by default; it removes spawned entities but does not reset the save world -
 use the loadgen `reset_world.sh` between terrain-mutating runs); a reusable
-plan ships at `plans/campaign.default.json`. `doctor` also flags a stale installed bridge
+plan ships at `plans/campaign.default.json`. Both scenario commands take
+`--telnet-host`/`--telnet-port` (default `127.0.0.1:8081`) and use them for the
+rally, the capture, and the between-experiment cleanup. `doctor` also flags a stale installed bridge
 DLL and disabled DeepMode; the audit warns when frame spikes occurred during
 the capture window. Attribution deltas appear in `compare` output when both
 sessions used `--reset-bridge`.
@@ -231,7 +233,7 @@ appears only as set/unset). An exported-but-empty variable is treated as unset.
 | `SEVENDTD_APM_PYTHON` | `<repo>/.venv/bin/python`, else `python3` | executable path | Interpreter the shell entry points (`scripts/*.sh`, `tools/host_profiler/*.sh`) use for the stdlib-only `tools/` scripts. |
 | `CHECK_BT_MONO_SO` | auto-detected under `SEVENDTD_DS_DIR` | path to `libmonobdwgc-2.0.so` | Mono uprobe target for `make check-bt`; set it when the library is not under the server tree. |
 | `APM_KEEP_SESSIONS` | `40` | integer >= 0 | Newest sessions kept by post-capture auto-prune; `0` (or any value <= 0) disables auto-prune. Non-integers warn and fall back to `40`. |
-| `APM_PRUNE_GRACE_HOURS` | `24` | float >= 0 | Soft-delete window in `<store>/.trash/`; `0` hard-deletes immediately. Non-numeric values warn and fall back to `24`. |
+| `APM_PRUNE_GRACE_HOURS` | `24` | float >= 0 | Soft-delete window in `<store>/.trash/`; `0` (and only `0`) hard-deletes immediately. Negative, non-numeric, or non-finite values warn and fall back to `24` rather than dropping the recovery window. |
 | `SEVENDTD_LIVE` | unset | `1` enables | Test gate only (`pytest`): opts into live-server tests that need a running dedicated server. Never read at runtime. |
 
 ## Repository map

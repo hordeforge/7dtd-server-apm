@@ -51,6 +51,7 @@ from .session import (
     sessions_beyond_budget,
     verify_session,
 )
+from .settings import DEFAULT_GAME_PORT, DEFAULT_TELNET_HOST, DEFAULT_TELNET_PORT
 
 # Bridge config bounds, mirroring BridgeConfig.cs. The bridge clamps
 # PeriodicExportSeconds to [0, 3600] and treats 0 as "never export"; this
@@ -193,8 +194,8 @@ def doctor(
         int | None,
         typer.Option(help="Server process ID; auto-detects the unique server when omitted."),
     ] = None,
-    telnet_host: Annotated[str, typer.Option(help="Server telnet host.")] = "127.0.0.1",
-    telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = 8081,
+    telnet_host: Annotated[str, typer.Option(help="Server telnet host.")] = DEFAULT_TELNET_HOST,
+    telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = DEFAULT_TELNET_PORT,
     strict: Annotated[
         bool, typer.Option(help="Exit 1 instead of 0 when the host is not ready.")
     ] = False,
@@ -249,8 +250,8 @@ def capture(
             "bridge) for kernel-only captures.",
         ),
     ] = False,
-    telnet_host: Annotated[str, typer.Option(help="Server telnet host.")] = "127.0.0.1",
-    telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = 8081,
+    telnet_host: Annotated[str, typer.Option(help="Server telnet host.")] = DEFAULT_TELNET_HOST,
+    telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = DEFAULT_TELNET_PORT,
     reset_bridge: Annotated[
         bool, typer.Option(help="Reset bridge stats at capture start (window-scoped totals).")
     ] = False,
@@ -885,7 +886,11 @@ def scenario_run(
     seed: Annotated[
         int, typer.Option(help="Bot action RNG seed (fixed = reproducible cohort behaviour).")
     ] = 42,
-    game_port: Annotated[int, typer.Option(help="Game UDP port.")] = 26902,
+    game_port: Annotated[int, typer.Option(help="Game UDP port.")] = DEFAULT_GAME_PORT,
+    telnet_host: Annotated[
+        str, typer.Option(help="Server telnet host (rally and console commands).")
+    ] = DEFAULT_TELNET_HOST,
+    telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = DEFAULT_TELNET_PORT,
     pid: Annotated[
         int | None,
         typer.Option(help="Server process ID; auto-detects the unique server when omitted."),
@@ -1039,7 +1044,7 @@ def scenario_run(
             console.print(f"warmup: waiting {warmup}s for join + spawn steady state")
             time.sleep(warmup)
         if rally or rally_at:
-            moved = rally_players("127.0.0.1", 8081, telnet_password, at=coordinates)
+            moved = rally_players(telnet_host, telnet_port, telnet_password, at=coordinates)
             console.print(f"rally: teleported {moved} players into one cluster")
             time.sleep(15 if rally_at else 10)  # let teleport chunk churn settle
         outcome = run_capture(
@@ -1047,8 +1052,8 @@ def scenario_run(
             pid=pid,
             only=presets[chosen_preset],
             no_app=False,
-            telnet_host="127.0.0.1",
-            telnet_port=8081,
+            telnet_host=telnet_host,
+            telnet_port=telnet_port,
             telnet_password=telnet_password,
             reset_bridge=reset_bridge,
             # A scenario run is a bench capture, not a production one: the
@@ -1196,7 +1201,11 @@ def _coerce_matrix_entry(entry: dict[str, object], position: int) -> dict[str, A
 @scenario_app.command("matrix")
 def scenario_matrix(
     plan: Annotated[Path, typer.Argument(help="JSON plan: a list of experiment objects.")],
-    game_port: Annotated[int, typer.Option(help="Game UDP port.")] = 26902,
+    game_port: Annotated[int, typer.Option(help="Game UDP port.")] = DEFAULT_GAME_PORT,
+    telnet_host: Annotated[
+        str, typer.Option(help="Server telnet host (cleanup commands and every experiment).")
+    ] = DEFAULT_TELNET_HOST,
+    telnet_port: Annotated[int, typer.Option(help="Server telnet port.")] = DEFAULT_TELNET_PORT,
     cleanup: Annotated[
         str, typer.Option(help="Console command run between experiments ('' disables).")
     ] = "killall",
@@ -1233,7 +1242,7 @@ def scenario_matrix(
         if cleanup:
             # A failed cleanup must be visible: leftover entities from one
             # experiment silently inflate the next one's measurements.
-            if not telnet_command("127.0.0.1", 8081, telnet_password, cleanup):
+            if not telnet_command(telnet_host, telnet_port, telnet_password, cleanup):
                 err_console.print(
                     f"[yellow]cleanup '{escape(cleanup)}' failed (telnet); "
                     "leftover entities may contaminate the next experiment[/yellow]"
@@ -1244,6 +1253,8 @@ def scenario_matrix(
         try:
             scenario_run(
                 game_port=game_port,
+                telnet_host=telnet_host,
+                telnet_port=telnet_port,
                 **{**kwargs, "label": label},
             )
         except typer.Exit as stop:

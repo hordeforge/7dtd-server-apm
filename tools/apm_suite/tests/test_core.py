@@ -5037,6 +5037,17 @@ def test_retention_env_values_warn_and_fall_back_on_garbage(
         assert getter() == default
         assert "WARNING" in capsys.readouterr().err
 
+    # A grace window that is not a usable duration keeps the trash window rather
+    # than clamping to 0: 0 is the documented opt-out to immediate hard deletes,
+    # and a typo must not select the one setting that destroys evidence.
+    for bad in ("-1", "-0.5", "nan", "inf", "-inf"):
+        monkeypatch.setenv("APM_PRUNE_GRACE_HOURS", bad)
+        assert prune_grace_hours() == 24.0
+        assert "WARNING" in capsys.readouterr().err
+    monkeypatch.setenv("APM_PRUNE_GRACE_HOURS", "6")
+    assert prune_grace_hours() == 6.0
+    assert capsys.readouterr().err == ""
+
 
 def test_telnet_password_warning_scopes_to_app_layer_requests() -> None:
     """Missing-password warning fires only when the app collector will run."""
@@ -5881,6 +5892,86 @@ def test_scenario_matrix_rejects_mistyped_entry_value_before_any_run(
 
     assert result.exit_code == 2
     assert "entry 1 field 'seconds': expected int, got '60'" in result.stderr
+
+
+def test_scenario_matrix_routes_telnet_target_to_cleanup_and_every_experiment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The matrix telnet target drives the between-experiment cleanup and every
+    experiment's own telnet traffic. A hardcoded 127.0.0.1:8081 made the flags
+    on `scenario run` inert and cleaned a different install than the one under
+    test, contaminating the next experiment silently."""
+    from apm_suite import cli
+
+    plan = tmp_path / "plan.json"
+    plan.write_text(json.dumps([{"label": "one"}]), encoding="utf-8")
+    telnet_calls: list[tuple[object, ...]] = []
+
+    def record_telnet(*args: object) -> bool:
+        telnet_calls.append(args)
+        return True
+
+    def record_run(**kwargs: object) -> None:
+        seen.append(kwargs)
+
+    monkeypatch.setenv("SEVENDTD_TELNET_PASSWORD", "pw")
+    monkeypatch.setattr(capture, "telnet_command", record_telnet)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
+    seen: list[dict[str, object]] = []
+    monkeypatch.setattr(cli, "scenario_run", record_run)
+
+    result = runner.invoke(
+        app,
+        [
+            "scenario",
+            "matrix",
+            str(plan),
+            "--telnet-host",
+            "10.0.0.5",
+            "--telnet-port",
+            "9999",
+        ],
+    )
+
+    assert result.exit_code == 0, result.stderr
+    assert telnet_calls == [("10.0.0.5", 9999, "pw", "killall")]
+    assert seen == [
+        {
+            "game_port": 26902,
+            "telnet_host": "10.0.0.5",
+            "telnet_port": 9999,
+            "label": "one",
+        }
+    ]
+
+
+def test_scenario_commands_expose_the_telnet_target() -> None:
+    """`--telnet-host/--telnet-port` must exist on both scenario commands and
+    default from the one settings module. A literal in either command is the
+    drift this guards: a flag that is accepted and then ignored sends the
+    capture at one install while the operator believes it hit another."""
+    from apm_suite import cli
+    from apm_suite.settings import DEFAULT_TELNET_HOST, DEFAULT_TELNET_PORT
+
+    signature = inspect.signature(cli.scenario_run)
+    assert signature.parameters["telnet_host"].default == DEFAULT_TELNET_HOST
+    assert signature.parameters["telnet_port"].default == DEFAULT_TELNET_PORT
+    matrix = inspect.signature(cli.scenario_matrix)
+    assert matrix.parameters["telnet_host"].default == DEFAULT_TELNET_HOST
+    assert matrix.parameters["telnet_port"].default == DEFAULT_TELNET_PORT
+
+    for command in (cli.scenario_run, cli.scenario_matrix):
+        for name, parameter in inspect.signature(command).parameters.items():
+            if name.startswith("telnet_"):
+                assert parameter.default is not inspect.Parameter.empty, (
+                    f"{command.__name__}: {name} has no default"
+                )
+
+    source = Path(inspect.getfile(cli)).read_text(encoding="utf-8")
+    body = source.split("def scenario_matrix", 1)[0].split("def scenario_run", 1)[1]
+    assert "127.0.0.1" not in body and ", 8081" not in body
+    matrix_body = source.split("def scenario_matrix", 1)[1]
+    assert "127.0.0.1" not in matrix_body and ", 8081" not in matrix_body
 
 
 # --- error-path hardening (resilience audit) ----------------------------------------

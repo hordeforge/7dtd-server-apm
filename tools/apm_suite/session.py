@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import shutil
 import stat
@@ -253,22 +254,31 @@ def prune_grace_hours() -> float:
     Pruning is the one mass-destruction path in this tool (a wrong --keep or a
     runaway auto-prune deletes evidence irreversibly), so deletions land in the
     store's trash first and only expire from there. APM_PRUNE_GRACE_HOURS
-    overrides; 0 restores immediate hard deletes for space-constrained hosts.
-    A non-numeric value warns and falls back to the default instead of silently
-    pretending the operator's setting was read.
+    overrides; 0 restores immediate hard deletes for space-constrained hosts
+    and is the only way to get them, so it is never inferred from a bad value.
+    A negative, non-numeric, or non-finite value warns and falls back to the
+    default: clamping such a value to 0 would turn a typo into irreversible
+    deletion of exactly the evidence the trash exists to protect.
     """
     raw = os.environ.get("APM_PRUNE_GRACE_HOURS", "")
     if not raw.strip():
         return DEFAULT_PRUNE_GRACE_HOURS
     try:
-        return max(0.0, float(raw))
+        hours = float(raw)
     except ValueError:
-        print(
-            f"WARNING: APM_PRUNE_GRACE_HOURS={raw!r} is not a number; "
-            f"using {DEFAULT_PRUNE_GRACE_HOURS:g}",
-            file=sys.stderr,
-        )
-        return DEFAULT_PRUNE_GRACE_HOURS
+        reason = "is not a number"
+    else:
+        if not math.isfinite(hours):
+            reason = "is not a finite number of hours"
+        elif hours < 0.0:
+            reason = "is negative"
+        else:
+            return hours
+    print(
+        f"WARNING: APM_PRUNE_GRACE_HOURS={raw!r} {reason}; using {DEFAULT_PRUNE_GRACE_HOURS:g}",
+        file=sys.stderr,
+    )
+    return DEFAULT_PRUNE_GRACE_HOURS
 
 
 def keep_sessions_budget() -> int:

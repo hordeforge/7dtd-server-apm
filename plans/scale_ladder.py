@@ -8,6 +8,7 @@ a FRESH world save (accumulated ghosts / spawn-drift break spawning; see
 near each player.
 """
 
+import argparse
 import json
 import os
 import re
@@ -22,8 +23,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from apm_suite.paths import REPO, apm_root, bridge_mod_dir
 from apm_suite.session import mtime_or_zero
+from apm_suite.settings import DEFAULT_GAME_PORT, DEFAULT_TELNET_HOST, DEFAULT_TELNET_PORT
 
-HOST, PORT = "127.0.0.1", 8081
+HOST, PORT = DEFAULT_TELNET_HOST, DEFAULT_TELNET_PORT
+# Recorded in every workload manifest; a ladder run against a non-default
+# game port must say so, or compare/budget read a target the run never hit.
+GAME_PORT = DEFAULT_GAME_PORT
 PASSWORD = os.environ.get("SEVENDTD_TELNET_PASSWORD", "")
 TIERS = [100, 300, 600, 1000]
 SNAPSHOT = bridge_mod_dir() / "telemetry/apm_app_latest.json"
@@ -121,10 +126,31 @@ def newest_session(since_epoch: float) -> Path | None:
     return max(fresh, key=mtime_or_zero, default=None)
 
 
+def _configure() -> None:
+    """Point the ladder at one server. The telnet helpers and the workload
+    manifest read the module-level targets, so a server on a non-default host,
+    telnet port, or game port must be set before the first telnet call rather
+    than baked into this file."""
+    global HOST, PORT, GAME_PORT
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", default=DEFAULT_TELNET_HOST, help="Server telnet host.")
+    parser.add_argument("--port", type=int, default=DEFAULT_TELNET_PORT, help="Server telnet port.")
+    parser.add_argument(
+        "--game-port",
+        type=int,
+        default=DEFAULT_GAME_PORT,
+        help="Game UDP port, recorded in the manifest.",
+    )
+    args = parser.parse_args()
+    HOST, PORT, GAME_PORT = args.host, args.port, args.game_port
+
+
 def main() -> int:
+    _configure()
     if not PASSWORD:
         print("SEVENDTD_TELNET_PASSWORD is required (passwords are never stored here)", flush=True)
         return 1
+    print(f"target: telnet {HOST}:{PORT}, game udp {GAME_PORT}", flush=True)
     ids = player_ids()
     print(f"players joined: {len(ids)}", flush=True)
     if len(ids) < 10:
@@ -171,7 +197,7 @@ def main() -> int:
                     "schema": "7dtd.loadgen.run.v1",
                     "label": f"ladder-{tier}",
                     "mode": "ladder",
-                    "target": {"host": HOST, "port": 26902},
+                    "target": {"host": HOST, "port": GAME_PORT},
                     "workload": {
                         "clients": len(ids),
                         "zombieTarget": tier,
