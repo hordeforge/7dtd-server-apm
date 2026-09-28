@@ -2,6 +2,8 @@
 # perf record/report for 7DTD dedicated (user stacks; no root required for :u events often).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/python.sh"
 OUTDIR="${1:-}"
 SECONDS_N="${2:-30}"
 PID="${3:-}"
@@ -67,7 +69,7 @@ fi
 
 # folded stacks + static SVG + Speedscope + interactive HTML
 if [[ -s "$OUTDIR/perf.script" ]]; then
-  python3 "$ROOT/tools/host_profiler/stackcollapse_perf.py" "$OUTDIR/perf.script" >"$OUTDIR/stacks.folded" || true
+  "$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/stackcollapse_perf.py" "$OUTDIR/perf.script" >"$OUTDIR/stacks.folded" || true
   if [[ -s "$OUTDIR/stacks.folded" ]]; then
     chmod +x "$ROOT/tools/host_profiler/make_flames.sh"
     "$ROOT/tools/host_profiler/make_flames.sh" "$OUTDIR" "7DTD pid=$PID CPU" || true
@@ -79,7 +81,7 @@ fi
 # distinct from the aggregate all-thread stacks.folded above.
 perf script -i "$OUTDIR/perf.data" --tid="$PID" >"$OUTDIR/perf.main.script" 2>/dev/null || true
 if [[ -s "$OUTDIR/perf.main.script" ]]; then
-  python3 "$ROOT/tools/host_profiler/stackcollapse_perf.py" "$OUTDIR/perf.main.script" >"$OUTDIR/stacks.main.folded" || true
+  "$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/stackcollapse_perf.py" "$OUTDIR/perf.main.script" >"$OUTDIR/stacks.main.folded" || true
 fi
 
 echo "done: $OUTDIR"

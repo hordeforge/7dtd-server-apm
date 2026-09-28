@@ -3,12 +3,14 @@
 # Usage: make_flames.sh OUTDIR [title]
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/python.sh"
 OUTDIR="${1:?outdir with stacks.folded or perf.script}"
 TITLE="${2:-7DTD CPU flamegraph}"
 
 FOLDED="$OUTDIR/stacks.folded"
 if [[ ! -s "$FOLDED" && -s "$OUTDIR/perf.script" ]]; then
-  python3 "$ROOT/tools/host_profiler/stackcollapse_perf.py" "$OUTDIR/perf.script" >"$FOLDED"
+  "$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/stackcollapse_perf.py" "$OUTDIR/perf.script" >"$FOLDED"
 fi
 if [[ ! -s "$FOLDED" ]]; then
   echo "no stacks.folded in $OUTDIR" >&2
@@ -17,24 +19,24 @@ fi
 
 # Annotate with [GC]/[LOCK]/[AI]/… tags for Speedscope ↔ mod mapping
 ANNOTATED="$OUTDIR/stacks.annotated.folded"
-python3 "$ROOT/tools/host_profiler/annotate_stacks.py" "$FOLDED" -o "$ANNOTATED" || cp -f "$FOLDED" "$ANNOTATED"
+"$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/annotate_stacks.py" "$FOLDED" -o "$ANNOTATED" || cp -f "$FOLDED" "$ANNOTATED"
 FLAME_SRC="$ANNOTATED"
 [[ -s "$FLAME_SRC" ]] || FLAME_SRC="$FOLDED"
 
-python3 "$ROOT/tools/host_profiler/folded_to_speedscope.py" "$FLAME_SRC" \
+"$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/folded_to_speedscope.py" "$FLAME_SRC" \
   -o "$OUTDIR/profile.speedscope.json" \
   --name "$TITLE" \
   --tree "$OUTDIR/flame.tree.json"
 # Also keep raw (unannotated) speedscope for pure symbol work
-python3 "$ROOT/tools/host_profiler/folded_to_speedscope.py" "$FOLDED" \
+"$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/folded_to_speedscope.py" "$FOLDED" \
   -o "$OUTDIR/profile.raw.speedscope.json" \
   --name "$TITLE (raw)" \
   --tree "$OUTDIR/flame.raw.tree.json" 2>/dev/null || true
-python3 "$ROOT/tools/host_profiler/interactive_flame.py" "$FLAME_SRC" \
+"$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/interactive_flame.py" "$FLAME_SRC" \
   -o "$OUTDIR/flame.html" \
   --title "$TITLE (annotated)" \
   --speedscope-name "profile.speedscope.json"
-python3 "$ROOT/tools/host_profiler/interactive_flame.py" "$FOLDED" \
+"$SEVENDTD_APM_PYTHON" "$ROOT/tools/host_profiler/interactive_flame.py" "$FOLDED" \
   -o "$OUTDIR/flame.raw.html" \
   --title "$TITLE (raw)" \
   --speedscope-name "profile.raw.speedscope.json" 2>/dev/null || true

@@ -9,6 +9,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/ds_paths.sh"
+# shellcheck disable=SC1091
+. "$ROOT/scripts/lib/python.sh"
 PRE="$ROOT/tools/host_profiler/preprocess_bt.py"
 # Repo-local scratch instead of tmpfs (/tmp is RAM-backed on typical hosts).
 WORK="$(mkdir -p "$ROOT/.scratch" && mktemp -d -p "$ROOT/.scratch")"
@@ -43,7 +45,7 @@ while IFS= read -r script; do
     echo "SKIP $script (no libmonobdwgc-2.0.so found; set CHECK_BT_MONO_SO)"
     continue
   fi
-  python3 "$PRE" "$script" -o "$prepared" --pid 1 --comm check --mono-so "$MONO_SO"
+  "$SEVENDTD_APM_PYTHON" "$PRE" "$script" -o "$prepared" --pid 1 --comm check --mono-so "$MONO_SO"
   if timeout 60 sudo -n bpftrace --dry-run "$prepared" >/dev/null 2>"$WORK/$name.err"; then
     echo "ok   $script"
   else

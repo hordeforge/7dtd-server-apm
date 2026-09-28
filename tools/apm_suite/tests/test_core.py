@@ -4673,7 +4673,14 @@ def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
 ) -> None:
     """A session deleted by another process between glob and the sort-key stat
     must not crash every list_sessions caller (post-capture auto-prune, CLI
-    prune); it sorts oldest and is simply gone on the next pass."""
+    prune); it sorts oldest and is simply gone on the next pass.
+
+    The injected removal only fires where the listing stats the path twice.
+    Python 3.13+ routes is_dir() through os.path.isdir, so on those versions
+    the sort-key stat is the only Path.stat call and the race never fires; the
+    explicit mtimes below keep the expected order identical either way, and the
+    _mtime assertion above covers the tolerance itself.
+    """
     from apm_suite.session import _mtime, list_sessions
 
     assert _mtime(tmp_path / "never-existed") == 0.0
@@ -4692,6 +4699,12 @@ def test_list_sessions_tolerates_session_removed_by_concurrent_prune(
         return real_stat(self, *args, **kwargs)
 
     (tmp_path / "session_b").mkdir()
+    # Pin the mtimes a year apart: a filesystem with coarse timestamp
+    # resolution would otherwise leave both sessions on the same sort key and
+    # let readdir order decide the result.
+    now = time.time()
+    os.utime(tmp_path / "session_a", (now, now))
+    os.utime(tmp_path / "session_b", (now - 365 * 86400, now - 365 * 86400))
     monkeypatch.setattr("apm_suite.session.Path.stat", flaky_stat)
     names = [p.name for p in list_sessions(tmp_path)]
 

@@ -212,6 +212,9 @@ appears only as set/unset). An exported-but-empty variable is treated as unset.
 | `SEVENDTD_APM_DIR` | `~/.local/share/7dtd-server-apm` | writable directory | Session store root (`session_*`, `.scenario`, `.trash`). |
 | `SEVENDTD_DS_DIR` | Steam default dedicated-server path | existing directory | Dedicated install used by `doctor`, bridge build/install scripts, and probe helpers. |
 | `SEVENDTD_GAME_DIR` | Steam default client path | existing directory | Client install fallback for `make bridge-build` when the dedicated Managed assemblies are absent. Build-time only; no runtime code reads it. |
+| `SEVENDTD_DS_BIN` | `<SEVENDTD_DS_DIR>/7DaysToDieServer.x86_64` | absolute path | Binary `tools/host_profiler/find_server.sh` matches `/proc/<pid>/exe` against, so a wrapper-launched server is still identified. Without it the script falls back to the truncated process name. |
+| `SEVENDTD_APM_PYTHON` | `<repo>/.venv/bin/python`, else `python3` | executable path | Interpreter the shell entry points (`scripts/*.sh`, `tools/host_profiler/*.sh`) use for the stdlib-only `tools/` scripts. |
+| `CHECK_BT_MONO_SO` | auto-detected under `SEVENDTD_DS_DIR` | path to `libmonobdwgc-2.0.so` | Mono uprobe target for `make check-bt`; set it when the library is not under the server tree. |
 | `APM_KEEP_SESSIONS` | `40` | integer >= 0 | Newest sessions kept by post-capture auto-prune; `0` (or any value <= 0) disables auto-prune. Non-integers warn and fall back to `40`. |
 | `APM_PRUNE_GRACE_HOURS` | `24` | float >= 0 | Soft-delete window in `<store>/.trash/`; `0` hard-deletes immediately. Non-numeric values warn and fall back to `24`. |
 | `SEVENDTD_LIVE` | unset | `1` enables | Test gate only (`pytest`): opts into live-server tests that need a running dedicated server. Never read at runtime. |
