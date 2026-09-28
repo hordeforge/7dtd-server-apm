@@ -4753,6 +4753,50 @@ def test_correlate_parse_ts_converts_log_stamps_via_local_zone_rules() -> None:
         time.tzset()
 
 
+def test_correlate_spike_epoch_prefers_the_line_utc_stamp() -> None:
+    """A SPIKE line carries both a host-local wall stamp and the server's own
+    UTC stamp. The wall stamp is ambiguous during a fall-back hour, and every
+    reading of it resolves to the first (DST) occurrence, so a spike logged
+    during the repeated hour would be correlated against samples an hour away.
+    The UTC stamp is the instant; the wall stamp is only the fallback for a
+    line that carries no usable one."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "correlate", REPO / "tools/host_profiler/correlate.py"
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    assert module.parse_utc_ts("not-a-timestamp") is None
+    assert module.parse_utc_ts("2026-10-25T02:30:00") is None, "no offset, not an instant"
+    # 2026-10-25 02:00-03:00 local happens twice in Europe/Warsaw: the first
+    # pass is CEST (+02:00), the second CET (+01:00). Both wall readings below
+    # are the same string, an hour apart in real time.
+    second_pass = datetime(2026, 10, 25, 1, 30, tzinfo=UTC).timestamp()
+    assert module.spike_epoch("2026-10-25T02:30:00", "2026-10-25T01:30:00Z") == pytest.approx(
+        second_pass
+    )
+    assert module.spike_epoch(
+        "2026-10-25T02:30:00", "2026-10-25T01:30:00.1234567+00:00"
+    ) == pytest.approx(second_pass)
+    # No usable UTC stamp: the wall clock still resolves through the local zone.
+    original_tz = os.environ.get("TZ")
+    try:
+        os.environ["TZ"] = "Europe/Warsaw"
+        time.tzset()
+        assert module.spike_epoch("2026-10-25T02:30:00", "unavailable") == pytest.approx(
+            module.parse_ts("2026-10-25T02:30:00")
+        )
+    finally:
+        if original_tz is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original_tz
+        time.tzset()
+
+
 def test_correlate_nearest_proc_binary_search_matches_linear_scan() -> None:
     """nearest_proc over sorted rows must return the same sample as a full scan
     (including the earlier-sample tie-break) while the spike-window membership
