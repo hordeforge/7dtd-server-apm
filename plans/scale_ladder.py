@@ -22,7 +22,6 @@ from pathlib import Path
 # from the repository checkout instead of duplicating defaults.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from apm_suite.paths import REPO, apm_root, bridge_mod_dir
-from apm_suite.session import mtime_or_zero
 from apm_suite.settings import DEFAULT_GAME_PORT, DEFAULT_TELNET_HOST, DEFAULT_TELNET_PORT
 
 HOST, PORT = DEFAULT_TELNET_HOST, DEFAULT_TELNET_PORT
@@ -113,17 +112,26 @@ def spawn_to(target: int) -> int | None:
     return current
 
 
-def newest_session(since_epoch: float) -> Path | None:
-    """Newest session directory created at/after `since_epoch`, or None.
+def session_names() -> set[str]:
+    return {p.name for p in apm_root().glob("session_*") if p.is_dir()}
 
-    The caller attaches this run's workload.json to the returned session, so a
-    session this run did not create must never come back: writing into an
-    unrelated older session rewrites foreign evidence and breaks its recorded
-    manifest hashes (the audit then reports the session INVALID)."""
-    fresh = [
-        p for p in apm_root().glob("session_*") if p.is_dir() and mtime_or_zero(p) >= since_epoch
-    ]
-    return max(fresh, key=mtime_or_zero, default=None)
+
+def new_sessions(before: set[str]) -> list[Path]:
+    """Sessions that appeared since `before` was sampled, oldest name first.
+
+    The caller attaches this run's workload.json to the one it created, so
+    ownership has to be proven, not guessed. A mtime window cannot do it: a
+    concurrent capture, a scheduled one, and a re-run of this ladder all land
+    inside the same window, and the newest-mtime pick then writes this run's
+    manifest into somebody else's session - rewriting evidence that its
+    recorded manifest hashes were taken over, which the audit reports as
+    INVALID. Session names are claimed with an exclusive mkdir, so the name
+    set this run's child did not have before it started names exactly the
+    session it created. Zero names is a capture that never got one; more than
+    one is a capture this run cannot attribute, and neither may be written to.
+    """
+    root = apm_root()
+    return sorted(root / name for name in session_names() - before if (root / name).is_dir())
 
 
 def _configure() -> None:
@@ -161,7 +169,7 @@ def main() -> int:
         reached = spawn_to(tier)
         print(f"  alive={reached}; settling", flush=True)
         time.sleep(8)
-        started = time.time()
+        before = session_names()
         result = subprocess.run(
             [
                 "uv",
@@ -181,16 +189,20 @@ def main() -> int:
             },
             check=False,
         )
-        session = newest_session(started)
-        if session is None:
-            # A failed capture left no session to annotate; writing the
-            # workload manifest into a stale one would corrupt that session.
+        fresh = new_sessions(before)
+        if len(fresh) != 1:
+            # A failed capture left no session to annotate, and an
+            # unattributable one (a concurrent or scheduled capture landed in
+            # the same window) belongs to someone else: writing this run's
+            # workload manifest into either would corrupt evidence the run did
+            # not produce.
             print(
-                f"  TIER {tier}: capture produced no session (rc={result.returncode});"
-                " workload not attached",
+                f"  TIER {tier}: capture produced {len(fresh)} new session(s) "
+                f"(rc={result.returncode}); workload not attached",
                 flush=True,
             )
             continue
+        session = fresh[0]
         (session / "workload.json").write_text(
             json.dumps(
                 {

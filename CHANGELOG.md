@@ -83,6 +83,13 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 - Tooling: `apm_suite.session.mtime_or_zero` replaces the private `_mtime`
   helper, which `plans/scale_ladder.py` had to copy because the original was
   not importable. The ladder now calls the one implementation.
+- Evidence integrity: the scale ladder attaches its `workload.json` to the
+  session named by the sessions that appeared while its capture ran, and
+  attaches nothing when that is not exactly one. A mtime window cannot prove
+  ownership: a concurrent or scheduled capture, or a re-run of the ladder,
+  lands in the same window, and the newest-session pick wrote the manifest
+  into a session the run did not create, breaking that session's recorded
+  hashes and reporting it INVALID.
 
 ## 2.3.0 - host CLI - 2026-09-28
 
@@ -312,6 +319,12 @@ major.
   has to change.
 - API: the response contract now documents `mapTransfers.mebiytes`, the MiB
   float beside `bytes` that the panel has always read.
+- Evidence integrity: `apm dump` picks a name that is free. Two dumps inside
+  one second (a retried capture, an operator repeating a command whose reply
+  was lost) resolved to one second-resolution file, and the second publish
+  replaced the first dump's evidence while reporting that path as written. The
+  timestamp stays the name prefix, so the timestamped prune still keeps the
+  32 newest dumps in chronological order.
 
 ## 3.0.0 - bridge mod - 2026-09-28
 

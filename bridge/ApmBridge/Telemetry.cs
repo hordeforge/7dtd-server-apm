@@ -581,9 +581,26 @@ namespace DtdApmBridge
         }
         public static string Dump()
         {
-            string path = Path.Combine(BridgeMod.OutputDir, "apm_app_" + DateTime.UtcNow.ToString("yyyyMMdd_HHmmss") + ".json");
+            string path = UniqueDumpPath();
             Write(path); Write(Path.Combine(BridgeMod.OutputDir, "apm_app_latest.json"));
             PruneTimestampedDumps(keep: 32);
+            return path;
+        }
+
+        // A second-resolution name is not unique identity: two dumps inside one
+        // second (a retried capture, an operator re-running `apm dump` after a
+        // lost console reply, a script on a fast timer) resolved to one file and
+        // the second publish destroyed the first dump's evidence while reporting
+        // its path as written. Suffix on collision, so a repeated execution adds
+        // a dump instead of replacing one. The timestamp stays the prefix, and
+        // '.' sorts before '_', so the names still order chronologically for
+        // PruneTimestampedDumps.
+        static string UniqueDumpPath()
+        {
+            string stamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss");
+            string path = Path.Combine(BridgeMod.OutputDir, "apm_app_" + stamp + ".json");
+            for (int i = 1; File.Exists(path); i++)
+                path = Path.Combine(BridgeMod.OutputDir, "apm_app_" + stamp + "_" + i + ".json");
             return path;
         }
 

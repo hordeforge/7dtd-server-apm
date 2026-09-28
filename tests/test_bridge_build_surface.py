@@ -398,6 +398,30 @@ BRIDGE_MOD_CS = REPO / "bridge" / "ApmBridge" / "BridgeMod.cs"
 EXAMPLE_CONFIG = REPO / "bridge" / "ApmBridge" / "apmbridge.json"
 
 
+def test_repeated_dumps_never_resolve_to_one_file() -> None:
+    # `apm dump` is a second-resolution name by design, and the timestamped
+    # prune depends on that ordering. Two dumps inside one second (a retried
+    # capture, an operator repeating a lost command) must produce two files:
+    # a shared path makes the second publish replace the first dump's evidence
+    # while reporting it as written.
+    source = _telemetry_source()
+    body = re.search(r"static string UniqueDumpPath\(\)(.*?)\n        \}", source, re.DOTALL)
+    assert body, "Dump must pick its path through a collision-aware helper"
+    helper = body.group(1)
+    assert "File.Exists(path)" in helper, "the loop must stop on the first free name"
+    assert helper.index("File.Exists(path)") < helper.rindex("return path")
+    dump = re.search(r"public static string Dump\(\)(.*?)\n        \}", source, re.DOTALL)
+    assert dump and "UniqueDumpPath()" in dump.group(1)
+    # Chronological order the prune relies on: the timestamp stays the prefix.
+    assert '"apm_app_" + stamp' in helper
+    assert '"apm_app_" + stamp + "_" + i + ".json"' in helper
+    # And the prune still reaches the suffixed names.
+    prune = re.search(
+        r"static void PruneTimestampedDumps\(int keep\)(.*?)\n        \}", source, re.DOTALL
+    )
+    assert prune and '"apm_app_2*.json"' in prune.group(1)
+
+
 def test_config_loader_rejects_unknown_keys_instead_of_defaulting() -> None:
     # A hand-edited config with a misspelled key used to load as defaults: the
     # mod then reported the setting it was asked to change as off, with nothing
