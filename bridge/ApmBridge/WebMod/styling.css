@@ -20,6 +20,9 @@
 .apm-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
 .apm-head h2 { margin: 0; }
 .apm-window { opacity: .6; font-size: .8rem; margin-left: auto; }
+/* The sample clock going amber is the panel's only cue that the numbers on
+   screen stopped moving; without it a stalled bridge reads as a calm server. */
+.apm-window.apm-stale { color: #e6bd3a; opacity: 1; }
 .apm-pill { font-size: .75rem; font-weight: 700; letter-spacing: .04em; padding: .2rem .55rem; border-radius: 999px; }
 .apm-btn { font-size: .78rem; padding: .32rem .6rem; min-height: 24px; border-radius: var(--apm-r-control); border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
 .apm-btn:hover { background: rgba(127,127,127,.25); }

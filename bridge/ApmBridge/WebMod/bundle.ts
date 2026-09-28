@@ -329,18 +329,34 @@ function formatUtc(utc: unknown): string {
 }
 
 function renderAuthError(h: CreateElement, title: string, status: number | undefined, authMessage: string, unavailablePrefix: string): unknown {
-  const msg = status === 403 ? authMessage : `${unavailablePrefix} (HTTP ${status ?? "error"}).`;
+  const authProblem = status === 401 || status === 403;
+  const msg = authProblem
+    ? authMessage
+    : `${unavailablePrefix} (HTTP ${status ?? "error"}). Retrying every 2s; the panel fills in on its own once the bridge answers.`;
   // The pill must match the message: a network error or 500 is not an auth
   // problem, and telling the user to log in would send them in circles.
-  const pill = status === 403 ? "AUTH REQUIRED" : "UNAVAILABLE";
+  const pill = authProblem ? "AUTH REQUIRED" : "UNAVAILABLE";
   return h("div", { className: "seven-dtd-apm" },
     h("h2", null, title),
     h("span", { className: "apm-pill apm-bad" }, pill),
     h("p", null, msg),
-    h("button", { type: "button", className: "apm-btn", onClick: (): void => { location.href = "/"; } }, "Log in"));
+    // Only the auth states get a way out; a login page cannot fix a 500.
+    authProblem
+      ? h("button", { type: "button", className: "apm-btn", onClick: (): void => { location.href = "/"; } }, "Log in")
+      : null);
 }
 
-function renderHead(h: CreateElement, g: Grade, frozen: boolean, toggleFreeze: () => void, copyJson: () => void, gc: Record<string, unknown>, update: Record<string, unknown>): unknown {
+// A monitor whose polls stopped keeps rendering the last numbers it received,
+// so the head prints the sample time and flags it once no newer sample has
+// arrived for several poll intervals. A frozen panel is showing exactly what
+// the user asked for, so it is never flagged.
+const STALE_AFTER_MS = 10_000;
+function sampleStale(utc: string): boolean {
+  const sampled = Date.parse(utc);
+  return Number.isFinite(sampled) && Date.now() - sampled > STALE_AFTER_MS;
+}
+
+function renderHead(h: CreateElement, g: Grade, frozen: boolean, toggleFreeze: () => void, copyJson: () => void, gc: Record<string, unknown>, update: Record<string, unknown>, utc: string): unknown {
   return h("div", { className: "apm-head" },
     h("h2", null, "7DTD APM"),
     h("span", { className: `apm-pill ${g.cls}` }, g.label),
@@ -349,8 +365,8 @@ function renderHead(h: CreateElement, g: Grade, frozen: boolean, toggleFreeze: (
       h("span", { "aria-hidden": true }, frozen ? "▶ " : "⏸ "), frozen ? "Resume" : "Freeze"),
     h("button", { type: "button", className: "apm-btn", onClick: copyJson },
       h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"),
-    h("span", { className: "apm-window" },
-      `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
+    h("span", { className: `apm-window${!frozen && sampleStale(utc) ? " apm-stale" : ""}` },
+      `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${utc === "" ? "" : ` · updated ${formatUtc(utc)} UTC`}${frozen ? " · FROZEN" : ""}`));
 }
 
 // ---- charts: hand-built SVG (no chart library in the dashboard) ----
@@ -578,18 +594,33 @@ function renderTrendsChart(h: CreateElement, React: PanelProps["React"], H: Spar
   const xOf = (i: number): number => trendX(innerW, n, n - 1 - i, compressed);
   const yOf = (v: number): number => padTop + innerH - (v / max) * innerH;
   const crossX = hoverIdx >= 0 ? padLeft + xOf(hoverIdx) : -1;
-  const onMove = (e: MouseEvent): void => {
-    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the chart svg is the handler target
-    const rect = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
-    const x = Math.max(0, Math.min(innerW, e.clientX - rect.left - padLeft));
+  const setHoverAt = (svg: SVGSVGElement, clientX: number): void => {
+    const rect = svg.getBoundingClientRect();
+    const x = Math.max(0, Math.min(innerW, clientX - rect.left - padLeft));
     const age = trendAgeOf(innerW, n, x, compressed);
     setHoverIdx(Math.max(0, Math.min(n - 1, Math.round(n - 1 - age))));
+  };
+  const onMove = (e: MouseEvent): void => {
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the chart svg is the handler target
+    setHoverAt(e.currentTarget as SVGSVGElement, e.clientX);
+  };
+  // Touch never fires mousemove, so a finger drag on the chart would pin the
+  // values to live with no way to read an earlier sample.
+  const onTouch = (e: TouchEvent): void => {
+    const touch = e.touches.item(0);
+    if (touch === null) {
+      return;
+    }
+    // oxlint-disable-next-line typescript/no-unsafe-type-assertion -- deliberate: SAFETY: the chart svg is the handler target
+    setHoverAt(e.currentTarget as SVGSVGElement, touch.clientX);
   };
   return h("div", { className: "apm-chart apm-trends" },
     trendControls(h, depth, onDepth, compressed, setCompressed),
     h("svg", {
       width, height, viewBox: `0 0 ${width} ${height}`, onMouseMove: onMove,
       onMouseLeave: (): void => setHoverIdx(-1),
+      onTouchStart: onTouch, onTouchMove: onTouch,
+      onTouchEnd: (): void => setHoverIdx(-1),
       role: "img",
       // The hover crosshair is pointer-driven; keyboard and screen-reader
       // users get the series values from the text legend below the chart.
@@ -622,7 +653,9 @@ function trendControls(
         onDepth(Number((e.target as HTMLSelectElement).value));
       }
     }, HISTORY_CHOICES.map((c): unknown => h("option", { key: c, value: String(c) }, `${Math.round((c * TREND_SAMPLE_S) / 60)} min`))),
-    h("span", { className: "apm-axis-label" }, "older history tapers left · grid lines are 30s apart"));
+    h("span", { className: "apm-axis-label" }, compressed
+      ? "older history tapers left · grid lines are 30s apart"
+      : "equal width per sample · grid lines are 30s apart"));
 }
 
 function renderBudgetGauge(h: CreateElement, update: Record<string, unknown>): unknown {
@@ -842,10 +875,7 @@ function renderSectionsSection(
 // extra bytes on the wire and the slice below only guards older bridges.
 const SPIKE_ROWS = 12;
 
-function renderSpikesSection(h: CreateElement, spikes: Array<SpikeRecord>): Array<unknown> | null {
-  if (spikes.length === 0) {
-    return null;
-  }
+function renderSpikesSection(h: CreateElement, spikes: Array<SpikeRecord>): Array<unknown> {
   const headers = ["When (UTC)", "gmUpdate ms", "Tick ms", "Players", "Entities"];
   return [
     h("h3", null, "Recent spikes"),
@@ -853,13 +883,18 @@ function renderSpikesSection(h: CreateElement, spikes: Array<SpikeRecord>): Arra
       h("table", { className: "apm-table" },
         h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"),
         h("thead", null, h("tr", null, headers.map((x): unknown => h("th", { key: x, scope: "col" }, x)))),
-        h("tbody", null, [...spikes].reverse().slice(0, SPIKE_ROWS).map((s, i): unknown =>
-          h("tr", { key: i },
-            h("td", null, formatUtc(s.utc)),
-            h("td", null, fx(s.gmUpdateDurationMs, 1)),
-            h("td", null, fx(s.serverTickIntervalMs, 1)),
-            h("td", null, num(objOrEmpty(s.world).players)),
-            h("td", null, num(objOrEmpty(s.world).entities))))))),
+        // Always drawn, like the transfers table below: a section that appears
+        // and disappears as spikes come and go moves everything under it, and
+        // "no spikes" is a result worth reading.
+        h("tbody", null, spikes.length === 0
+          ? h("tr", null, h("td", { className: "apm-empty", colSpan: headers.length }, "No tick spikes recorded in this window."))
+          : [...spikes].reverse().slice(0, SPIKE_ROWS).map((s, i): unknown =>
+            h("tr", { key: i },
+              h("td", null, formatUtc(s.utc)),
+              h("td", null, fx(s.gmUpdateDurationMs, 1)),
+              h("td", null, fx(s.serverTickIntervalMs, 1)),
+              h("td", null, num(objOrEmpty(s.world).players)),
+              h("td", null, num(objOrEmpty(s.world).entities))))))),
   ];
 }
 
@@ -997,7 +1032,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   const setSortKey = (key: string): void => setSort((s): { key: string; dir: number } => ({ key, dir: s.key === key ? -s.dir : -1 }));
 
   return h("div", { className: "seven-dtd-apm" },
-    renderHead(h, g, frozen, toggleFreeze, (): void => copySnapshot(snapshot, setCopyStatus), gc, update),
+    renderHead(h, g, frozen, toggleFreeze, (): void => copySnapshot(snapshot, setCopyStatus), gc, update, strOrEmpty(snapshot.utc)),
     // Visible, not screen-reader-only: a click with no on-screen result reads
     // as a dead button. role=status still announces the change.
     copyStatus === "" ? null : h("p", { className: "apm-status", role: "status" }, copyStatus),

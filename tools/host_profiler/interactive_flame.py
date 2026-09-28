@@ -84,7 +84,7 @@ HTML = r"""<!DOCTYPE html>
     <input type="search" id="q" placeholder="Search frames…" aria-label="Search frames" autocomplete="off"/>
     <span id="search-status" class="muted"></span>
     <button type="button" id="reset">Reset zoom</button>
-    <button type="button" id="pct">Toggle % total / self</button>
+    <button type="button" id="pct">Show sample counts</button>
   </div>
 </header>
 <div id="breadcrumb"></div>
@@ -92,7 +92,7 @@ HTML = r"""<!DOCTYPE html>
 <div id="tip"></div>
 <span id="sr-status" role="status" class="sr-only"></span>
 <footer>
-  Click a frame to zoom (or Tab to it and press Enter). Esc resets. Search highlights matches.
+  Click a frame to zoom, or a breadcrumb above the chart to step back (Tab to a frame and press Enter works too). Esc resets. Search highlights matches.
   Also open <code>__SPEEDSCOPE_NAME__</code> in
   <a href="https://www.speedscope.app/" target="_blank" rel="noopener">speedscope.app</a>
   or <code>bunx speedscope __SPEEDSCOPE_NAME__</code>
@@ -104,6 +104,11 @@ const PAD = 2;
 let showTotal = true;
 let focus = ROOT;
 let search = "";
+// Every zoom the reader has made, root first. The breadcrumb renders it, so a
+// deep stack shows where the reader is and each ancestor is one click back;
+// without the trail a zoomed chart names only the leaf and Reset is the sole
+// way out.
+let trail = [ROOT];
 // Frames rendered by the most recent render(), indexed by data-i. Event
 // handlers are delegated on #chart (bound once, survive innerHTML swaps)
 // and resolve back to their frame through this array.
@@ -275,13 +280,35 @@ chart.addEventListener("focusin", ev => {
 chart.addEventListener("focusout", () => { tip.style.display = "none"; });
 
 function updateCrumb() {
-  // simple path: only show current focus name chain is hard without parent links; show focus name
-  crumb.innerHTML = `<a href="#" data-root="1">all</a> / <span>${escapeXml(focus.name)}</span> (${focus.value} samples)`;
-  crumb.querySelector("[data-root]").onclick = (ev) => { ev.preventDefault(); zoomTo(ROOT, "the whole profile"); };
+  crumb.innerHTML = trail.map((n, i) => {
+    const name = i === 0 ? "all" : escapeXml(n.name);
+    return i === trail.length - 1 ? `<span>${escapeXml(n.name)}</span>` : `<a href="#" data-i="${i}">${name}</a>`;
+  }).join(" / ") + ` (${focus.value} samples)`;
 }
+
+// Each breadcrumb crumb re-zooms to that ancestor; zoomTo truncates the trail
+// there, so the path never grows stale behind the reader.
+crumb.addEventListener("click", ev => {
+  const link = ev.target instanceof Element ? ev.target.closest("a[data-i]") : null;
+  if (!link) return;
+  ev.preventDefault();
+  const node = trail[+link.getAttribute("data-i")];
+  if (node) zoomTo(node, node === ROOT ? "the whole profile" : node.name, false);
+});
 
 // Re-render around a node and tell assistive tech what happened.
 function zoomTo(node, what, viaKeyboard) {
+  // Truncate at the target when it is already an ancestor crumb, otherwise
+  // cut back to the current focus and push: the trail stays a real path from
+  // the root in both directions.
+  const seen = trail.indexOf(node);
+  if (seen >= 0) {
+    trail = trail.slice(0, seen + 1);
+  } else {
+    const at = trail.indexOf(focus);
+    trail = trail.slice(0, at < 0 ? 1 : at + 1);
+    trail.push(node);
+  }
   focus = node;
   render();
   updateCrumb();
@@ -292,6 +319,16 @@ function zoomTo(node, what, viaKeyboard) {
     const first = chart.querySelector(".frame");
     if (first) first.focus();
   }
+}
+
+// Back to the root: the trail, the search box, and the zoom all reset, so the
+// next click starts from the same state the page opened in.
+function resetZoom(what) {
+  focus = ROOT;
+  trail = [ROOT];
+  clearSearch();
+  render();
+  announce(what);
 }
 
 // Announce a message to screen readers via the role=status live region.
@@ -310,8 +347,15 @@ function clearSearch() {
   showSearchStatus(0);
 }
 
-document.getElementById("reset").onclick = () => { focus = ROOT; clearSearch(); render(); announce("Reset zoom, showing the whole profile"); };
-document.getElementById("pct").onclick = () => { showTotal = !showTotal; render(); announce(showTotal ? "Showing percent of total" : "Showing self samples"); };
+document.getElementById("reset").onclick = () => resetZoom("Reset zoom, showing the whole profile");
+document.getElementById("pct").onclick = () => {
+  showTotal = !showTotal;
+  render();
+  announce(showTotal ? "Showing percent of total" : "Showing sample counts");
+  // The label names what the click will do, the same shape the panel's
+  // "Timescale: compressed" toggle uses.
+  document.getElementById("pct").textContent = showTotal ? "Show sample counts" : "Show % total";
+};
 document.getElementById("q").addEventListener("input", e => {
   search = (e.target.value || "").trim().toLowerCase();
   // One walk answers both the visible count and the announcement; the render
@@ -324,7 +368,7 @@ document.getElementById("q").addEventListener("input", e => {
     : `${hits} frame${hits === 1 ? "" : "s"} match "${search}"`));
 });
 window.addEventListener("keydown", e => {
-  if (e.key === "Escape") { focus = ROOT; clearSearch(); render(); announce("Reset zoom"); }
+  if (e.key === "Escape") { resetZoom("Reset zoom"); }
 });
 window.addEventListener("resize", () => scheduleRender());
 render();

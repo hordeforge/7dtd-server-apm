@@ -173,12 +173,22 @@
         return strOrEmpty(utc).replace("T", " ").replace(/\..*$/u, "");
     }
     function renderAuthError(h, title, status, authMessage, unavailablePrefix) {
-        const msg = status === 403 ? authMessage : `${unavailablePrefix} (HTTP ${status !== null && status !== void 0 ? status : "error"}).`;
-        const pill = status === 403 ? "AUTH REQUIRED" : "UNAVAILABLE";
-        return h("div", { className: "seven-dtd-apm" }, h("h2", null, title), h("span", { className: "apm-pill apm-bad" }, pill), h("p", null, msg), h("button", { type: "button", className: "apm-btn", onClick: () => { location.href = "/"; } }, "Log in"));
+        const authProblem = status === 401 || status === 403;
+        const msg = authProblem
+            ? authMessage
+            : `${unavailablePrefix} (HTTP ${status !== null && status !== void 0 ? status : "error"}). Retrying every 2s; the panel fills in on its own once the bridge answers.`;
+        const pill = authProblem ? "AUTH REQUIRED" : "UNAVAILABLE";
+        return h("div", { className: "seven-dtd-apm" }, h("h2", null, title), h("span", { className: "apm-pill apm-bad" }, pill), h("p", null, msg), authProblem
+            ? h("button", { type: "button", className: "apm-btn", onClick: () => { location.href = "/"; } }, "Log in")
+            : null);
     }
-    function renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update) {
-        return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), h("button", { type: "button", className: "apm-btn", onClick: toggleFreeze }, h("span", { "aria-hidden": true }, frozen ? "▶ " : "⏸ "), frozen ? "Resume" : "Freeze"), h("button", { type: "button", className: "apm-btn", onClick: copyJson }, h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"), h("span", { className: "apm-window" }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${frozen ? " · FROZEN" : ""}`));
+    const STALE_AFTER_MS = 10000;
+    function sampleStale(utc) {
+        const sampled = Date.parse(utc);
+        return Number.isFinite(sampled) && Date.now() - sampled > STALE_AFTER_MS;
+    }
+    function renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update, utc) {
+        return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), h("button", { type: "button", className: "apm-btn", onClick: toggleFreeze }, h("span", { "aria-hidden": true }, frozen ? "▶ " : "⏸ "), frozen ? "Resume" : "Freeze"), h("button", { type: "button", className: "apm-btn", onClick: copyJson }, h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"), h("span", { className: `apm-window${!frozen && sampleStale(utc) ? " apm-stale" : ""}` }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${utc === "" ? "" : ` · updated ${formatUtc(utc)} UTC`}${frozen ? " · FROZEN" : ""}`));
     }
     function trendSeriesOf(H) {
         return [
@@ -345,15 +355,27 @@
         const xOf = (i) => trendX(innerW, n, n - 1 - i, compressed);
         const yOf = (v) => padTop + innerH - (v / max) * innerH;
         const crossX = hoverIdx >= 0 ? padLeft + xOf(hoverIdx) : -1;
-        const onMove = (e) => {
-            const rect = e.currentTarget.getBoundingClientRect();
-            const x = Math.max(0, Math.min(innerW, e.clientX - rect.left - padLeft));
+        const setHoverAt = (svg, clientX) => {
+            const rect = svg.getBoundingClientRect();
+            const x = Math.max(0, Math.min(innerW, clientX - rect.left - padLeft));
             const age = trendAgeOf(innerW, n, x, compressed);
             setHoverIdx(Math.max(0, Math.min(n - 1, Math.round(n - 1 - age))));
+        };
+        const onMove = (e) => {
+            setHoverAt(e.currentTarget, e.clientX);
+        };
+        const onTouch = (e) => {
+            const touch = e.touches.item(0);
+            if (touch === null) {
+                return;
+            }
+            setHoverAt(e.currentTarget, touch.clientX);
         };
         return h("div", { className: "apm-chart apm-trends" }, trendControls(h, depth, onDepth, compressed, setCompressed), h("svg", {
             width, height, viewBox: `0 0 ${width} ${height}`, onMouseMove: onMove,
             onMouseLeave: () => setHoverIdx(-1),
+            onTouchStart: onTouch, onTouchMove: onTouch,
+            onTouchEnd: () => setHoverIdx(-1),
             role: "img",
             "aria-label": `Line chart: TPS and gmUpdate ms over the last ${Math.round(n * TREND_SAMPLE_S)} seconds, timescale ${compressed ? "compressed (recent detail, older history tapers left)" : "uniform"}; latest values are listed in the legend below.`
         }, trendGrid(h, width, padLeft, max, yOf), trendVGrid(h, innerW, n, padLeft, padTop, innerH, compressed), h("g", null, series.map((s) => trendSeriesSvg(h, s, innerW, innerH, max, yOf, xOf, hoverIdx))), crossX >= 0 ? h("line", { className: "apm-crosshair", x1: crossX, y1: padTop, x2: crossX, y2: height - padBottom }) : null, h("text", { className: "apm-axis-label", x: padLeft, y: height - 4 }, `${Math.round(n * TREND_SAMPLE_S)}s ago`), h("text", { className: "apm-axis-label", x: width - 4, y: height - 4, textAnchor: "end" }, "now")), trendLegend(h, series, hoverIdx, TREND_SAMPLE_S));
@@ -364,7 +386,9 @@
             value: String(depth), onChange: (e) => {
                 onDepth(Number(e.target.value));
             }
-        }, HISTORY_CHOICES.map((c) => h("option", { key: c, value: String(c) }, `${Math.round((c * TREND_SAMPLE_S) / 60)} min`))), h("span", { className: "apm-axis-label" }, "older history tapers left · grid lines are 30s apart"));
+        }, HISTORY_CHOICES.map((c) => h("option", { key: c, value: String(c) }, `${Math.round((c * TREND_SAMPLE_S) / 60)} min`))), h("span", { className: "apm-axis-label" }, compressed
+            ? "older history tapers left · grid lines are 30s apart"
+            : "equal width per sample · grid lines are 30s apart"));
     }
     function renderBudgetGauge(h, update) {
         const width = 230;
@@ -492,13 +516,12 @@
     }
     const SPIKE_ROWS = 12;
     function renderSpikesSection(h, spikes) {
-        if (spikes.length === 0) {
-            return null;
-        }
         const headers = ["When (UTC)", "gmUpdate ms", "Tick ms", "Players", "Entities"];
         return [
             h("h3", null, "Recent spikes"),
-            h("div", { className: "apm-table-scroll" }, h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"), h("thead", null, h("tr", null, headers.map((x) => h("th", { key: x, scope: "col" }, x)))), h("tbody", null, [...spikes].reverse().slice(0, SPIKE_ROWS).map((s, i) => h("tr", { key: i }, h("td", null, formatUtc(s.utc)), h("td", null, fx(s.gmUpdateDurationMs, 1)), h("td", null, fx(s.serverTickIntervalMs, 1)), h("td", null, num(objOrEmpty(s.world).players)), h("td", null, num(objOrEmpty(s.world).entities))))))),
+            h("div", { className: "apm-table-scroll" }, h("table", { className: "apm-table" }, h("caption", { className: "apm-visually-hidden" }, "Recent tick spikes"), h("thead", null, h("tr", null, headers.map((x) => h("th", { key: x, scope: "col" }, x)))), h("tbody", null, spikes.length === 0
+                ? h("tr", null, h("td", { className: "apm-empty", colSpan: headers.length }, "No tick spikes recorded in this window."))
+                : [...spikes].reverse().slice(0, SPIKE_ROWS).map((s, i) => h("tr", { key: i }, h("td", null, formatUtc(s.utc)), h("td", null, fx(s.gmUpdateDurationMs, 1)), h("td", null, fx(s.serverTickIntervalMs, 1)), h("td", null, num(objOrEmpty(s.world).players)), h("td", null, num(objOrEmpty(s.world).entities))))))),
         ];
     }
     function renderTransfersSection(h, transfers) {
@@ -578,7 +601,7 @@
         const g = grade(update);
         const toggleFreeze = () => freezeHandler({ frozen, setFrozen, live, frozenSnap });
         const setSortKey = (key) => setSort((s) => ({ key, dir: s.key === key ? -s.dir : -1 }));
-        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update), copyStatus === "" ? null : h("p", { className: "apm-status", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderTrendsChart(h, React, hist.current, depth, changeDepth), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), ...healthAlerts(h, health), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
+        return h("div", { className: "seven-dtd-apm" }, renderHead(h, g, frozen, toggleFreeze, () => copySnapshot(snapshot, setCopyStatus), gc, update, strOrEmpty(snapshot.utc)), copyStatus === "" ? null : h("p", { className: "apm-status", role: "status" }, copyStatus), host === null ? null : renderHostStrip(h, host), renderTrendsChart(h, React, hist.current, depth, changeDepth), h("div", { className: "apm-charts-row" }, renderBudgetGauge(h, update), renderGrid(h, React, g, hist.current, update, gc, world, health)), renderTopSections(h, sections), ...healthAlerts(h, health), renderSectionsSection(h, React, sections, sort, setSortKey, filter, setFilter), renderSpikesSection(h, spikes), renderTransfersSection(h, transfers));
     }
     const webMod = {
         about: "Live, low-overhead managed telemetry from 7dtd-server-apm-bridge.",
