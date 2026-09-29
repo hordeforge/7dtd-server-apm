@@ -3842,7 +3842,7 @@ def test_every_generated_page_carries_the_shared_tokens(tmp_path: Path) -> None:
     stylesheet must declare the tokens and must not name a raw color of its
     own."""
     from apm_suite.analysis.index import html_index
-    from apm_suite.web_tokens import TOKENS
+    from apm_suite.web_tokens import FAVICON_HREF, TOKENS
 
     session = tmp_path / "session_tokens"
     session.mkdir()
@@ -3890,6 +3890,10 @@ def test_every_generated_page_carries_the_shared_tokens(tmp_path: Path) -> None:
         # The :root block is the only place a literal is allowed; every other
         # rule has to read a token, or the page can drift from the others again.
         assert not stray.search(rules), f"{name}: raw color literal outside :root"
+        # Every view carries the same product identity: the Geiger tile in the
+        # header and as the favicon, both built from TOKENS in web_tokens.
+        assert FAVICON_HREF in page, f"{name}: Geiger favicon missing"
+        assert 'class="tile-ground"' in page, f"{name}: Geiger tile missing"
 
     # No page reinvents the one flat look: the base sheet declares surfaces flat
     # and the flame plot is the widest view in the product, so a radius or a

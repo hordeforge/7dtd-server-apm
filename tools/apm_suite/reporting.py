@@ -7,7 +7,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from .io import atomic_text, load_json
-from .web_tokens import DASHBOARD_CSS, REPORT_CSS, base_css
+from .web_tokens import BRAND_MARK, DASHBOARD_CSS, FAVICON_HREF, REPORT_CSS, base_css
 
 TEMPLATES = Path(__file__).with_name("templates")
 ENV = Environment(
@@ -70,6 +70,8 @@ def render_session(session: Path) -> None:
         "worldinfo": (summary.get("metadata") or {}).get("world") or {},
         "frameinfo": (summary.get("metadata") or {}).get("frame") or {},
         "links": [(label, href) for label, href in candidates if (session / href).is_file()],
+        "brand_mark": BRAND_MARK,
+        "favicon": FAVICON_HREF,
     }
     atomic_text(
         session / "report.html",

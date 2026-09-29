@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck disable=SC1091
 . "$ROOT/scripts/lib/python.sh"
 OUTDIR="${1:?outdir with stacks.folded or perf.script}"
-TITLE="${2:-7DTD CPU flamegraph}"
+TITLE="${2:-Geiger CPU flamegraph}"
 
 FOLDED="$OUTDIR/stacks.folded"
 if [[ ! -s "$FOLDED" && -s "$OUTDIR/perf.script" ]]; then

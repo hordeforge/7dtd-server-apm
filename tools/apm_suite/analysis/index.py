@@ -13,15 +13,17 @@ from typing import Any
 from ..io import atomic_json, atomic_text, load_json
 from ..models import as_mapping, as_number, layer_signals, object_list
 from ..paths import apm_root
-from ..web_tokens import base_css
+from ..web_tokens import BRAND_MARK, FAVICON_HREF, base_css
 
 INDEX_CSS = """
 main{max-width:1400px;margin:0 auto}
-main>p{margin:.2rem 0 1rem}
-/* Artifact links are words, not glyphs: an emoji is a different visual
-   language from every other cell here and reads as decoration. */
-a.artifact{text-decoration:none;white-space:nowrap}
+header{margin-bottom:16px}
+header .muted{margin:0}
+/* Artifact links are underlined words, not glyphs: an emoji reads as
+   decoration beside every other cell here. */
+a.artifact{white-space:nowrap}
 a.artifact+a.artifact{margin-left:.5rem}
+.nowrap{white-space:nowrap}
 """
 
 
@@ -147,7 +149,7 @@ def html_index(rows: list[dict[str, Any]]) -> str:
         body.append(
             f"<tr>"
             f"<td>{name}</td>"
-            f"<td>{_cell(row.get('utc'))}</td>"
+            f'<td class="nowrap">{_cell(row.get("utc"))}</td>'
             f'<td class="num">{_cell(row.get("pid"))}</td>'
             f'<td class="num">{_cell(row.get("entities"))}/{_cell(row.get("players"))}</td>'
             f"<td>{_cell(row.get('health'), '?')}</td>"
@@ -166,14 +168,14 @@ def html_index(rows: list[dict[str, Any]]) -> str:
             "then reload this page.</td></tr>"
         )
     return f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>7dtd APM sessions</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Geiger sessions</title><link rel="icon" href="{FAVICON_HREF}">
 <style>{base_css(INDEX_CSS)}</style></head><body>
 <main>
-<h1>APM session index</h1>
-<p class="muted">{len(rows)} sessions</p>
+<header>{BRAND_MARK}<h1>Sessions</h1>
+<p class="muted">{len(rows)} session{"" if len(rows) == 1 else "s"}</p></header>
 <div class="scroll"><table>
-<caption class="sr-only">APM sessions</caption>
-<tr><th scope="col">session</th><th scope="col">utc</th><th scope="col" class="num">pid</th><th scope="col" class="num">entities/players</th><th scope="col">health</th><th scope="col">grade</th><th scope="col">lag diagnosis</th><th scope="col">profile</th><th scope="col" class="num">gross alloc / STW</th><th scope="col">artifacts</th></tr>
+<caption class="sr-only">Captured sessions</caption>
+<tr><th scope="col">Session</th><th scope="col">UTC</th><th scope="col" class="num">PID</th><th scope="col" class="num">Entities / players</th><th scope="col">Health</th><th scope="col">Grade</th><th scope="col">Lag diagnosis</th><th scope="col">Profile</th><th scope="col" class="num">Gross alloc / STW</th><th scope="col">Artifacts</th></tr>
 {"".join(body)}
 </table></div>
 </main>

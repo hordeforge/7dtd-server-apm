@@ -17,13 +17,17 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.analysis.flame_delta import delta, folded_stack_path, load_weights
 from apm_suite.io import force_utf8_stdio
-from apm_suite.web_tokens import base_css
+from apm_suite.web_tokens import BRAND_MARK, FAVICON_HREF, base_css
 
 FLAME_CSS = """
 main{max-width:1400px;margin:0 auto}
-main>p{margin:.4rem 0}
+main>p,header p{margin:.4rem 0}
+header{margin-bottom:16px}
 .delta-bad{color:var(--apm-bad)}
 .delta-ok{color:var(--apm-ok)}
+td:first-child{min-width:18ch}
+td code{overflow-wrap:anywhere}
+td:last-child{min-width:96px}
 .mag{height:6px;min-width:1px}
 .mag.bad{background:var(--apm-bad)}
 .mag.ok{background:var(--apm-ok)}
@@ -58,13 +62,13 @@ def build_html(a: Path, b: Path, rows: list[dict[str, Any]]) -> str:
             "two sessions (no common frames with a non-zero delta).</td></tr>"
         )
     return f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><title>Flame delta</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Geiger flame delta</title><link rel="icon" href="{FAVICON_HREF}">
 <style>{base_css(FLAME_CSS)}</style></head><body>
 <main>
-<h1>Speedscope / folded frame delta</h1>
-<p class="muted">A={html.escape(str(a), quote=True)}<br/>B={html.escape(str(b), quote=True)}<br/>
-Negative Δ = frame weight dropped in B (usually good for hot GC/locks).</p>
-<p><a href="dashboard.html">Dashboard</a> · <a href="report.html">Report</a> · <a href="../index.html">All sessions</a></p>
+<header>{BRAND_MARK}<h1>Flame frame delta</h1>
+<p class="muted">A={html.escape(str(a), quote=True)}<br>B={html.escape(str(b), quote=True)}<br>
+Negative Δ means the frame weight dropped in B (usually good for hot GC and lock frames).</p>
+<nav><a href="dashboard.html">Dashboard</a> · <a href="report.html">Report</a> · <a href="../index.html">All sessions</a></nav></header>
 <div class="scroll"><table>
 <caption class="sr-only">Frame weight delta between sessions A and B</caption>
 <tr><th scope="col">Frame</th><th scope="col" class="num">A</th><th scope="col" class="num">B</th><th scope="col" class="num">Δ</th><th scope="col">Relative Δ magnitude</th></tr>

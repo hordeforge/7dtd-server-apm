@@ -23,7 +23,7 @@ from pathlib import Path
 # necessarily this interpreter.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from apm_suite.io import force_utf8_stdio
-from apm_suite.web_tokens import base_css
+from apm_suite.web_tokens import FAVICON_HREF, TILE_SVG, base_css
 
 # reuse converters
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -40,48 +40,55 @@ FLAME_CSS = """
      flame page that redraws them is how the views drift into separate
      products. */
   body { margin:0; padding:0; }
-  header { padding:12px 16px; background:var(--apm-surface); display:flex; flex-wrap:wrap; gap:12px; align-items:center; border-bottom:1px solid var(--apm-rule); }
+  header { padding:12px 16px; background:var(--apm-surface); display:flex; flex-wrap:wrap; gap:8px 12px; align-items:center; border-bottom:1px solid var(--apm-rule); }
+  header .title { display:flex; align-items:center; gap:10px; min-width:0; }
+  header .tile { flex:none; }
   header h1 { font-size:var(--apm-h1); margin:0; }
   header .muted { color:var(--apm-muted); font-size:var(--apm-code); }
   #controls { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-left:auto; }
-  input[type=search] { background:var(--apm-bg); border:1px solid var(--apm-rule); color:var(--apm-text); padding:6px 10px; min-width:200px; }
-  button { background:var(--apm-outline); border:1px solid var(--apm-rule); color:var(--apm-text); padding:6px 12px; cursor:pointer; }
+  /* Control borders use the secondary text tone: the hairline rule is below
+     the 3:1 non-text contrast a control boundary needs (WCAG 1.4.11). */
+  input[type=search] { background:var(--apm-bg); border:1px solid var(--apm-muted); color:var(--apm-text); font:inherit; padding:6px 10px; width:260px; max-width:100%; min-height:32px; }
+  input[type=search]::placeholder { color:var(--apm-muted); }
+  button { background:var(--apm-bg); border:1px solid var(--apm-muted); color:var(--apm-text); font:inherit; padding:6px 12px; min-height:32px; cursor:pointer; }
   button:hover { border-color:var(--apm-link); }
   #breadcrumb { padding:8px 16px; font-size:var(--apm-code); color:var(--apm-muted); word-break:break-all; min-height:1.5em; }
   #breadcrumb a { color:var(--apm-link); cursor:pointer; text-decoration:underline; margin-right:4px; }
   #breadcrumb a:hover, #breadcrumb a:focus-visible { text-decoration:none; }
   #chart { width:100%; overflow:hidden; }
-  svg { display:block; width:100%; }
+  #chart svg { display:block; width:100%; }
   .frame rect { stroke:var(--apm-bg); stroke-width:0.5; cursor:pointer; }
   /* Frame labels are dark ink on the warm frame fills, and 11px is chart ink,
      not page type: the scale does not govern a label inside the plot. */
   .frame text { font-family: var(--apm-mono); font-size:11px; fill:var(--apm-bg); pointer-events:none; }
   .frame.dim rect { opacity:0.25; }
   .frame.hit rect { stroke:var(--apm-accent); stroke-width:1.5; }
+  .frame:focus { outline:none; }
+  .frame:focus-visible rect { stroke:var(--apm-text); stroke-width:2; }
   #tip {
     display:none; position:fixed; z-index:10; background:var(--apm-surface); border:1px solid var(--apm-rule);
     padding:8px 10px; font-size:var(--apm-code); max-width:480px; pointer-events:none;
   }
-  #tip b { color:var(--apm-accent); }
-  .sr-only { position:absolute; width:1px; height:1px; margin:-1px; padding:0; border:0; clip-path:inset(50%); overflow:hidden; white-space:nowrap; }
-  footer { padding:8px 16px; font-size:12px; color:var(--apm-muted); }
+  #tip b { color:var(--apm-accent); word-break:break-all; }
+  footer { padding:8px 16px; font-size:var(--apm-code); color:var(--apm-muted); }
   footer a { color:var(--apm-link); }
 """
 
 HTML = r"""<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
+<link rel="icon" href="__FAVICON__">
 <style>__CSS__</style>
 </head>
 <body>
 <header>
-  <h1>__TITLE__</h1>
+  <div class="title">__TILE__<h1>__TITLE__</h1></div>
   <span class="muted" id="meta"></span>
   <div id="controls">
-    <input type="search" id="q" placeholder="Search frames…" aria-label="Search frames" autocomplete="off"/>
+    <input type="search" id="q" placeholder="Search frames…" aria-label="Search frames" autocomplete="off">
     <span id="search-status" class="muted"></span>
     <button type="button" id="reset">Reset zoom</button>
     <button type="button" id="pct">Show sample counts</button>
@@ -383,6 +390,8 @@ def build_html(tree_json: str, title: str, speedscope_name: str) -> str:
     return (
         HTML.replace("__TITLE__", html.escape(title))
         .replace("__CSS__", base_css(FLAME_CSS))
+        .replace("__FAVICON__", FAVICON_HREF)
+        .replace("__TILE__", TILE_SVG)
         .replace("__TREE_JSON__", tree_json)
         .replace("__SPEEDSCOPE_NAME__", html.escape(speedscope_name))
     )
@@ -394,7 +403,7 @@ def main() -> int:
     ap.add_argument("input", type=Path, nargs="?", help="stacks.folded")
     ap.add_argument("--tree", type=Path, help="d3 tree JSON instead of folded")
     ap.add_argument("-o", "--output", type=Path, required=True)
-    ap.add_argument("--title", default="7dtd interactive flamegraph")
+    ap.add_argument("--title", default="Geiger flamegraph")
     ap.add_argument("--speedscope-name", default="profile.speedscope.json")
     args = ap.parse_args()
 
