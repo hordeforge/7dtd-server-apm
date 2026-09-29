@@ -1,6 +1,6 @@
-# ☣️ Geiger (7DTD Server APM)
+# ☣️ Geiger (Server APM)
 
-> **Part of [HordeForge](https://github.com/hordeforge)**: High-Performance Systems Engineering for 7 Days to Die.
+> Part of [HordeForge](https://github.com/hordeforge): tools that measure, load-test, and run 7 Days to Die dedicated servers.
 
 ![CI](https://github.com/hordeforge/7dtd-server-apm/actions/workflows/ci.yml/badge.svg)
 ![coverage](https://raw.githubusercontent.com/hordeforge/7dtd-server-apm/badges/coverage.svg)

@@ -41,6 +41,18 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+- Report, dashboard, session index, flame delta, and interactive flamegraph
+  use the HordeForge terminal palette and system font stacks, open with the
+  Geiger tile and name, and carry it as the favicon. Links and focus rings
+  are signal green; every state stays a word.
+- Dashboard: the health grade and lag verdict render at their display sizes
+  (the page read `--apm-figure`, `--apm-h1` and `--apm-code`, which were
+  never declared), and layer-pressure scores sit beside their bars instead of
+  at the far edge, where `unavailable` was clipped.
+- Numeric column headers right-align with their values on every page; table
+  headers are sentence case; the flame delta wraps long frame names on narrow
+  screens.
+
 ## 2.4.0 - host CLI - 2026-09-28
 
 Minor for the fixes merged since 2.3.0. No command, flag default, or schema
@@ -435,6 +447,13 @@ major.
   SHA-256 work over every collected artifact at the end of a run.
 
 ## Unreleased - bridge mod
+
+- WebMod panel: HordeForge terminal palette on its own dark surface (the state
+  colors failed contrast on a light dashboard theme), the Geiger tile beside
+  the `Geiger APM` heading, and the Geiger glyph as the sidebar icon. Table
+  cells get padding, rule lines, and right-aligned numbers. The gmUpdate trend
+  is drawn in the text color so it no longer shares a hue with TPS, and the
+  sparkline area fills render (their gradient id was not a valid `url(#id)`).
 
 ## 3.1.0 (tag v3.1.0) - bridge mod - 2026-09-28
 
