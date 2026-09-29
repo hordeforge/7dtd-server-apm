@@ -121,9 +121,7 @@ def analyze_scaling(sessions: list[Path], scale_key: str = "players") -> dict[st
             }
         )
     # Rank by the worse of the two exponents (algorithmic super-linearity first).
-    findings.sort(
-        key=lambda f: (-max(f["per_call_exponent"] or 0, f["total_exponent"] or 0),)
-    )
+    findings.sort(key=lambda f: (-max(f["per_call_exponent"] or 0, f["total_exponent"] or 0),))
     super_linear = [
         f
         for f in findings

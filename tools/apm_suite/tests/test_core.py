@@ -116,7 +116,8 @@ def _session(root: Path, only: str = "all") -> Path:
 def _scaling_ladder(
     root: Path,
     clients: tuple[int, ...] = (100, 200, 400),
-    sections: Callable[[int], list[dict[str, object]]] | None = None,
+    sections: Callable[[int], list[object]]
+    | None = None,  # JSON on disk: junk records test the parser
 ) -> list[Path]:
     """A finalized-ladder fixture: one session per load level, each carrying
     the section table `sections(load)` builds for it.
@@ -5257,7 +5258,7 @@ def test_scaling_command_ranks_a_ladder_and_writes_the_json_ranking(
     assert ranking["schema"] == "7dtd.apm.scaling.v1"
     assert ranking["scale_key"] == "players"
     # Worst-scaling section first in both channels, not insertion order.
-    assert [f["section"] for f in ranking["sections"]][0] == "Net[green]X"
+    assert ranking["sections"][0]["section"] == "Net[green]X"
     assert "Net[green]X" in result.stdout
     # The bracketed name is escaped, so the table shows the literal section
     # rather than rich consuming the tag as markup.
@@ -5272,9 +5273,7 @@ def test_scaling_command_rejects_a_ladder_of_fewer_than_three_distinct_loads(
     operator has to be told which value collapsed so they recapture rather than
     read a fit off two points."""
     sessions = _scaling_ladder(tmp_path / "ladder_two_levels", clients=(100, 200, 200))
-    result = runner.invoke(
-        app, ["scaling", *(str(s) for s in sessions)], env={"COLUMNS": "4096"}
-    )
+    result = runner.invoke(app, ["scaling", *(str(s) for s in sessions)], env={"COLUMNS": "4096"})
 
     assert result.exit_code == 2
     assert result.stdout == "", "error leaked to stdout"
