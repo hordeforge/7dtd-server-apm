@@ -41,6 +41,8 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
+## 2.4.1 - host CLI - 2026-09-29
+
 - Report, dashboard, session index, flame delta, and interactive flamegraph
   use the HordeForge terminal palette and system font stacks, open with the
   Geiger tile and name, and carry it as the favicon. Links and focus rings
@@ -447,6 +449,8 @@ major.
   SHA-256 work over every collected artifact at the end of a run.
 
 ## Unreleased - bridge mod
+
+## 3.1.1 (tag v3.1.1) - bridge mod - 2026-09-29
 
 - WebMod panel: HordeForge terminal palette on its own dark surface (the state
   colors failed contrast on a light dashboard theme), the Geiger tile beside
