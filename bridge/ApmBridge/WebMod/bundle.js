@@ -3,6 +3,16 @@
     const modId = "7dtd-server-apm-bridge";
     const HIST = 60;
     const TICK_BUDGET_MS = 50;
+    const PANEL_TITLE = "Geiger APM";
+    const TILE_PATHS = [
+        "M12 12h.01",
+        "M14 15.4641a4 4 0 0 1-4 0L7.52786 19.74597A1 1 0 0 0 7.99303 21.16211 10 10 0 0 0 16.00697 21.16211 1 1 0 0 0 16.47214 19.74597z",
+        "M16 12a4 4 0 0 0-2-3.464l2.472-4.282a1 1 0 0 1 1.46-.305 10 10 0 0 1 4.006 6.94A1 1 0 0 1 21 12z",
+        "M8 12a4 4 0 0 1 2-3.464L7.528 4.254a1 1 0 0 0-1.46-.305 10 10 0 0 0-4.006 6.94A1 1 0 0 0 3 12z"
+    ];
+    function tile(h) {
+        return h("svg", { className: "apm-tile", viewBox: "0 0 32 32", "aria-hidden": true }, h("rect", { className: "apm-tile-ground", width: 32, height: 32, rx: 7 }), h("g", { className: "apm-tile-glyph", transform: "translate(4 4)", fill: "none", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" }, TILE_PATHS.map((d) => h("path", { key: d, d }))));
+    }
     const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
     const fx = (v, n) => num(v).toFixed(n);
     const mib = (bytes) => num(bytes) / 1048576;
@@ -65,7 +75,7 @@
             .join(" ");
         const lastPoint = (_a = pts.split(" ").pop()) !== null && _a !== void 0 ? _a : "";
         const [lastX, lastY] = lastPoint.split(",");
-        const gradId = `apm-grad-${color.slice(1)}`;
+        const gradId = `apm-grad-${color.replace(/\W/gu, "")}`;
         const refs = [0.25, 0.5, 0.75].map((f) => React.createElement("line", {
             key: f, x1: 0, y1: h * f, x2: w, y2: h * f,
             stroke: "rgba(127,127,127,.14)", strokeWidth: 1, vectorEffect: "non-scaling-stroke"
@@ -178,7 +188,7 @@
             ? authMessage
             : `${unavailablePrefix} (HTTP ${status !== null && status !== void 0 ? status : "error"}). Retrying every 2s; the panel fills in on its own once the bridge answers.`;
         const pill = authProblem ? "AUTH REQUIRED" : "UNAVAILABLE";
-        return h("div", { className: "seven-dtd-apm" }, h("h2", null, title), h("span", { className: "apm-pill apm-bad" }, pill), h("p", null, msg), authProblem
+        return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, tile(h), h("h2", null, title), h("span", { className: "apm-pill apm-bad" }, pill)), h("p", null, msg), authProblem
             ? h("button", { type: "button", className: "apm-btn", onClick: () => { location.href = "/"; } }, "Log in")
             : null);
     }
@@ -188,12 +198,12 @@
         return Number.isFinite(sampled) && Date.now() - sampled > STALE_AFTER_MS;
     }
     function renderHead(h, g, frozen, toggleFreeze, copyJson, gc, update, utc) {
-        return h("div", { className: "apm-head" }, h("h2", null, "7DTD APM"), h("span", { className: `apm-pill ${g.cls}` }, g.label), h("button", { type: "button", className: "apm-btn", onClick: toggleFreeze }, h("span", { "aria-hidden": true }, frozen ? "▶ " : "⏸ "), frozen ? "Resume" : "Freeze"), h("button", { type: "button", className: "apm-btn", onClick: copyJson }, h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"), h("span", { className: `apm-window${!frozen && sampleStale(utc) ? " apm-stale" : ""}` }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${utc === "" ? "" : ` · updated ${formatUtc(utc)} UTC`}${frozen ? " · FROZEN" : ""}`));
+        return h("div", { className: "apm-head" }, tile(h), h("h2", null, PANEL_TITLE), h("span", { className: `apm-pill ${g.cls}` }, g.label), h("button", { type: "button", className: "apm-btn", onClick: toggleFreeze }, h("span", { "aria-hidden": true }, frozen ? "▶ " : "⏸ "), frozen ? "Resume" : "Freeze"), h("button", { type: "button", className: "apm-btn", onClick: copyJson }, h("span", { "aria-hidden": true }, "⧉ "), "Copy JSON"), h("span", { className: `apm-window${!frozen && sampleStale(utc) ? " apm-stale" : ""}` }, `window ${fx(gc.windowSeconds, 0)}s · ${num(update.windowUpdates)} ticks${update.deep === true ? " · deep" : ""}${utc === "" ? "" : ` · updated ${formatUtc(utc)} UTC`}${frozen ? " · FROZEN" : ""}`));
     }
     function trendSeriesOf(H) {
         return [
             { key: "tps", label: "TPS", values: H.tps, color: "rgb(var(--apm-ok-rgb))", format: (v) => v.toFixed(1) },
-            { key: "gm", label: "gmUpdate ms", values: H.gm, color: "rgb(var(--apm-link-rgb))", format: (v) => v.toFixed(2) },
+            { key: "gm", label: "gmUpdate ms", values: H.gm, color: "rgb(var(--apm-text-rgb))", format: (v) => v.toFixed(2) },
         ];
     }
     function niceMax(value) {
@@ -419,7 +429,7 @@
     }
     function renderGrid(h, React, g, H, update, gc, world, health) {
         const lastAlloc = H.alloc[H.alloc.length - 1];
-        return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "rgb(var(--apm-ok-rgb))"), trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "rgb(var(--apm-accent-rgb))"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "rgb(var(--apm-link-rgb))"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null), cell(h, "API errors", `${num(health.apiErrors)} / ${num(health.apiRequests)}`, num(health.apiErrors) > 0 ? "apm-warn" : null));
+        return h("div", { className: "apm-grid" }, trend(h, React, "TPS", H.tps, fx(g.tps, 1), "rgb(var(--apm-ok-rgb))"), trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc !== null && lastAlloc !== void 0 ? lastAlloc : 0, 1), "rgb(var(--apm-accent-rgb))"), trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "rgb(var(--apm-text-rgb))"), cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null), cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null), cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null), cell(h, "Spikes", num(update.totalSpikes), null), cell(h, "Players", `${num(world.players)} / ${num(world.clients)}`, null), cell(h, "Entities", `${num(world.entities)} (${num(world.entityAlives)} AI)`, null), cell(h, "GC gen0/s", fx(gc.gen0PerSecond, 1), null), cell(h, "GC gen2/s", fx(gc.gen2PerSecond, 2), rising(H.gen2) ? "apm-warn" : null), cell(h, "Heap", `${fx(mib(gc.heapBytes), 1)} MiB`, rising(H.heap) ? "apm-warn" : null), cell(h, "Working set", `${fx(mib(world.workingSetBytes), 1)} MiB`, null), cell(h, "Threads", num(world.threadCount), null), cell(h, "Dropped exports", num(health.droppedExports), num(health.droppedExports) > 0 ? "apm-warn" : null), cell(h, "API errors", `${num(health.apiErrors)} / ${num(health.apiRequests)}`, num(health.apiErrors) > 0 ? "apm-warn" : null));
     }
     function healthAlerts(h, health) {
         const alerts = [];
@@ -586,11 +596,11 @@
         const [copyStatus, setCopyStatus] = React.useState("");
         const { depth, changeDepth } = depthController(React, hist.current);
         if (query.isError !== true && query.data === undefined) {
-            return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, h("h2", null, "7DTD APM")), h("p", { className: "apm-status" }, "Loading telemetry…"));
+            return h("div", { className: "seven-dtd-apm" }, h("div", { className: "apm-head" }, tile(h), h("h2", null, PANEL_TITLE)), h("p", { className: "apm-status" }, "Loading telemetry…"));
         }
         if (query.isError === true) {
             const status = (_b = (_a = query.error) === null || _a === void 0 ? void 0 : _a.response) === null || _b === void 0 ? void 0 : _b.status;
-            return renderAuthError(h, "7DTD APM", status, "Authentication required: log in to the dashboard as an admin (permission level 0) to view server telemetry.", "Telemetry unavailable");
+            return renderAuthError(h, PANEL_TITLE, status, "Authentication required: log in to the dashboard as an admin (permission level 0) to view server telemetry.", "Telemetry unavailable");
         }
         const live = unwrapSnap(query.data);
         const snapshot = frozen && frozenSnap.current !== null ? frozenSnap.current : live;

@@ -5,7 +5,7 @@ capture remains supported without it. The bridge adds managed subsystem timings,
 world/runtime gauges, spike records, capability reporting, periodic atomic JSON,
 and the `apm` console/telnet command.
 
-It is also a native V3 WebDashboard plugin. `WebMod/` adds a direct **7DTD APM**
+It is also a native V3 WebDashboard plugin. `WebMod/` adds a direct **APM**
 sidebar entry (a module route, not a Settings tab) and authenticated
 `GET /api/apm` exposes the same bounded
 snapshot used by console capture. The endpoint defaults to administrator

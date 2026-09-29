@@ -64,6 +64,22 @@ type PanelProps = {
 const modId = "7dtd-server-apm-bridge";
 const HIST = 60; // rolling samples kept for sparklines (~2 min at 2s)
 const TICK_BUDGET_MS = 50; // 20 TPS
+const PANEL_TITLE = "Geiger APM";
+
+// Geiger product tile (HordeForge brand tiles/geiger.svg; glyph is Lucide
+// "radiation", ISC). Its colors come from styling.css tokens.
+const TILE_PATHS = [
+  "M12 12h.01",
+  "M14 15.4641a4 4 0 0 1-4 0L7.52786 19.74597A1 1 0 0 0 7.99303 21.16211 10 10 0 0 0 16.00697 21.16211 1 1 0 0 0 16.47214 19.74597z",
+  "M16 12a4 4 0 0 0-2-3.464l2.472-4.282a1 1 0 0 1 1.46-.305 10 10 0 0 1 4.006 6.94A1 1 0 0 1 21 12z",
+  "M8 12a4 4 0 0 1 2-3.464L7.528 4.254a1 1 0 0 0-1.46-.305 10 10 0 0 0-4.006 6.94A1 1 0 0 0 3 12z"
+];
+function tile(h: CreateElement): unknown {
+  return h("svg", { className: "apm-tile", viewBox: "0 0 32 32", "aria-hidden": true },
+    h("rect", { className: "apm-tile-ground", width: 32, height: 32, rx: 7 }),
+    h("g", { className: "apm-tile-glyph", transform: "translate(4 4)", fill: "none", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round" },
+      TILE_PATHS.map((d): unknown => h("path", { key: d, d }))));
+}
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 const fx = (v: unknown, n: number): string => num(v).toFixed(n);
@@ -143,7 +159,8 @@ function spark(React: PanelProps["React"], values: Array<number>, color: string,
     .join(" ");
   const lastPoint = pts.split(" ").pop() ?? "";
   const [lastX, lastY] = lastPoint.split(",");
-  const gradId = `apm-grad-${color.slice(1)}`;
+  // The id must be a plain token: a raw "rgb(var(...))" breaks url(#id).
+  const gradId = `apm-grad-${color.replace(/\W/gu, "")}`;
   // Faint quarter reference lines: unlit structure so position reads without
   // axes even at thumbnail size (preserveAspectRatio none stretches strokes,
   // hence vectorEffect). Decorative overall: the enclosing trend cell prints
@@ -337,8 +354,8 @@ function renderAuthError(h: CreateElement, title: string, status: number | undef
   // problem, and telling the user to log in would send them in circles.
   const pill = authProblem ? "AUTH REQUIRED" : "UNAVAILABLE";
   return h("div", { className: "seven-dtd-apm" },
-    h("h2", null, title),
-    h("span", { className: "apm-pill apm-bad" }, pill),
+    h("div", { className: "apm-head" }, tile(h), h("h2", null, title),
+      h("span", { className: "apm-pill apm-bad" }, pill)),
     h("p", null, msg),
     // Only the auth states get a way out; a login page cannot fix a 500.
     authProblem
@@ -358,7 +375,8 @@ function sampleStale(utc: string): boolean {
 
 function renderHead(h: CreateElement, g: Grade, frozen: boolean, toggleFreeze: () => void, copyJson: () => void, gc: Record<string, unknown>, update: Record<string, unknown>, utc: string): unknown {
   return h("div", { className: "apm-head" },
-    h("h2", null, "7DTD APM"),
+    tile(h),
+    h("h2", null, PANEL_TITLE),
     h("span", { className: `apm-pill ${g.cls}` }, g.label),
     // The leading glyphs are decorative; the accessible name is the word only.
     h("button", { type: "button", className: "apm-btn", onClick: toggleFreeze },
@@ -385,7 +403,7 @@ type TrendSeries = {
 function trendSeriesOf(H: SparkHistory): Array<TrendSeries> {
   return [
     { key: "tps", label: "TPS", values: H.tps, color: "rgb(var(--apm-ok-rgb))", format: (v: number): string => v.toFixed(1) },
-    { key: "gm", label: "gmUpdate ms", values: H.gm, color: "rgb(var(--apm-link-rgb))", format: (v: number): string => v.toFixed(2) },
+    { key: "gm", label: "gmUpdate ms", values: H.gm, color: "rgb(var(--apm-text-rgb))", format: (v: number): string => v.toFixed(2) },
   ];
 }
 
@@ -713,7 +731,7 @@ function renderGrid(h: CreateElement, React: PanelProps["React"], g: Grade, H: S
     trend(h, React, "TPS", H.tps, fx(g.tps, 1), "rgb(var(--apm-ok-rgb))"),
     // oxlint-disable-next-line typescript/no-unnecessary-condition -- deliberate: the history arrays start empty; index access is undefined at runtime before the first sample
     trend(h, React, "Gross alloc MiB/s", H.alloc, fx(lastAlloc ?? 0, 1), "rgb(var(--apm-accent-rgb))"),
-    trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "rgb(var(--apm-link-rgb))"),
+    trend(h, React, "gmUpdate avg ms", H.gm, fx(update.gmUpdateDurationAvgMs, 2), "rgb(var(--apm-text-rgb))"),
     cell(h, "Tick max", `${fx(update.serverTickIntervalMaxMs, 1)} ms`, null),
     cell(h, "gmUpdate max", `${fx(update.gmUpdateDurationMaxMs, 1)} ms`, null),
     cell(h, "Late ticks", `${num(update.lateTicks)} (${fx(update.tickStallMsTotal, 0)} ms)`, null),
@@ -1009,7 +1027,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   // zeroes that read as measurements; "unavailable" is the honest state.
   if (query.isError !== true && query.data === undefined) {
     return h("div", { className: "seven-dtd-apm" },
-      h("div", { className: "apm-head" }, h("h2", null, "7DTD APM")),
+      h("div", { className: "apm-head" }, tile(h), h("h2", null, PANEL_TITLE)),
       h("p", { className: "apm-status" }, "Loading telemetry…"));
   }
 
@@ -1018,7 +1036,7 @@ function ApmPanel({ React, HTTP, useQuery }: PanelProps): unknown {
   // (authBlocked) so nothing polls into an error storm.
   if (query.isError === true) {
     const status = query.error?.response?.status;
-    return renderAuthError(h, "7DTD APM", status,
+    return renderAuthError(h, PANEL_TITLE, status,
       "Authentication required: log in to the dashboard as an admin (permission level 0) to view server telemetry.",
       "Telemetry unavailable");
   }

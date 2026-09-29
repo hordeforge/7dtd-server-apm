@@ -1,65 +1,63 @@
-/* WebMod panel styling. The panel renders inside the stock game dashboard, not
-   inside a generated page, so it cannot import apm_suite.web_tokens; the values
-   below are that token set, declared once here and read by name everywhere
-   else, including by bundle.ts for its series and gauge colors. Status hues are
-   stored as bare RGB channels so one declaration serves both a solid fill and
-   the 20% pill tint. A color spelled out in two rules is two colors waiting to
-   drift, which is how the top bars ended up painting "within budget" a
-   different green from the level meters. */
+/* WebMod panel styling. The panel lives in the stock dashboard and cannot
+   import apm_suite.web_tokens, so it declares that token set (the HordeForge
+   terminal palette) once here as bare RGB channels (solid fill and tint from
+   one value); rules and bundle.ts read them by name. The panel paints its own
+   dark surface: the state colors only meet WCAG AA on a dark ground. */
 .seven-dtd-apm {
-  --apm-text-rgb: 232 234 237;
-  --apm-muted-rgb: 154 160 166;
-  --apm-link-rgb: 138 180 248;
-  --apm-accent-rgb: 230 189 58;
-  --apm-ok-rgb: 87 217 119;
-  --apm-bad-rgb: 255 112 112;
-  /* Three corner radii, chosen by the size of the thing being rounded, and no
-     others: a control and its cell used to carry 5px, 6px, 4px and 8px between
-     them, which reads as four unrelated shops inside one panel. 2px for meter
-     tracks (half of a 10px bar), 4px for controls the finger or cursor lands
-     on, 6px for the panels those controls sit in. The status pill keeps its
-     full round because that shape is the point of it. */
+  --apm-bg-rgb: 16 20 24;
+  --apm-surface-rgb: 26 33 41;
+  --apm-rule-rgb: 42 51 61;
+  --apm-text-rgb: 216 226 220;
+  --apm-muted-rgb: 127 139 148;
+  --apm-link-rgb: 95 216 148;
+  --apm-accent-rgb: 255 216 160;
+  --apm-ok-rgb: 95 216 148;
+  --apm-bad-rgb: 255 115 100;
+  --apm-tile-rgb: 31 78 140;
+  --apm-paper-rgb: 247 245 240;
+  /* Radii by size: meter track, control, panel. The pill stays fully round. */
   --apm-r-track: 2px;
   --apm-r-control: 4px;
   --apm-r-panel: 6px;
   padding: 1rem; box-sizing: border-box; height: 100%; overflow-y: auto;
+  background: rgb(var(--apm-bg-rgb)); color: rgb(var(--apm-text-rgb));
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
+.seven-dtd-apm h2, .seven-dtd-apm h3 { color: rgb(var(--apm-text-rgb)); font-weight: 600; }
 .apm-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
-.apm-head h2 { margin: 0; }
-.apm-window { opacity: .6; font-size: .8rem; margin-left: auto; }
+.apm-head h2 { margin: 0; font-size: 1.25rem; }
+.apm-tile { width: 28px; height: 28px; flex: none; }
+.apm-tile-ground { fill: rgb(var(--apm-tile-rgb)); }
+.apm-tile-glyph { stroke: rgb(var(--apm-paper-rgb)); }
+.apm-window { color: rgb(var(--apm-muted-rgb)); font-size: .8rem; margin-left: auto; }
 /* The sample clock going amber is the panel's only cue that the numbers on
    screen stopped moving; without it a stalled bridge reads as a calm server. */
-.apm-window.apm-stale { color: rgb(var(--apm-accent-rgb)); opacity: 1; }
-/* Three text sizes and no fourth: the .8rem chrome, the .85rem cell label, the
-   .75rem pill. */
+.apm-window.apm-stale { color: rgb(var(--apm-accent-rgb)); }
+/* Text sizes: .8rem chrome, .85rem label, .75rem pill. */
 .apm-pill { font-size: .75rem; font-weight: 700; letter-spacing: .04em; padding: .2rem .55rem; border-radius: 999px; }
-.apm-btn { font-size: .8rem; padding: .32rem .6rem; min-height: 24px; border-radius: var(--apm-r-control); border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.12); color: inherit; cursor: pointer; }
-.apm-btn:hover { background: rgba(127,127,127,.25); }
+.apm-btn { font: inherit; font-size: .8rem; padding: .32rem .6rem; min-height: 28px; border-radius: var(--apm-r-control); border: 1px solid rgb(var(--apm-muted-rgb)); background: rgb(var(--apm-surface-rgb)); color: inherit; cursor: pointer; }
+.apm-btn:hover { border-color: rgb(var(--apm-link-rgb)); }
 
 /* Keyboard focus is always visible (WCAG 2.4.7); the dashboard theme may
    reset outlines, so re-declare on our interactive elements only. */
-.apm-btn:focus-visible, .apm-filter:focus-visible, .apm-sort-btn:focus-visible { outline: 2px solid rgb(var(--apm-link-rgb)); outline-offset: 1px; }
+.apm-btn:focus-visible, .apm-filter:focus-visible, .apm-sort-btn:focus-visible { outline: 2px solid rgb(var(--apm-link-rgb)); outline-offset: 2px; }
 
 /* Screen-reader-only text: carries state that the theme paints in color
    (severity rows, staged ring) or that would otherwise be unnamed. */
 .apm-visually-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; border: 0; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
 
 .apm-tick-budget { display: flex; align-items: center; gap: .6rem; margin: .75rem 0; }
-.apm-budget-val { font-variant-numeric: tabular-nums; opacity: .8; min-width: 4.5rem; }
-/* Level meters are quantized segments, not continuous bars: the ::after
-   overlay slices the track into 12 discrete cells, and the unfilled track
-   stays visible so the distance to full reads at a glance. */
-.apm-bar { position: relative; flex: 1; height: 10px; border-radius: var(--apm-r-track); background: rgba(127,127,127,.18); overflow: hidden; }
+.apm-budget-val { font-variant-numeric: tabular-nums; color: rgb(var(--apm-muted-rgb)); min-width: 4.5rem; }
+/* Meters are 12 segments (::after overlay) over a visible track, so the
+   distance to full reads at a glance. */
+.apm-bar { position: relative; flex: 1; height: 10px; border-radius: var(--apm-r-track); background: rgb(var(--apm-rule-rgb)); overflow: hidden; }
 .apm-bar::after, .apm-topbar-track::after {
   content: ""; position: absolute; inset: 0; pointer-events: none;
-  background-image: linear-gradient(90deg, rgba(10,12,16,.8) 1px, transparent 1px);
+  background-image: linear-gradient(90deg, rgb(var(--apm-bg-rgb) / .8) 1px, transparent 1px);
   background-size: calc(100% / 12) 100%;
 }
-/* Values ease toward their target (and decay back down) instead of jumping
-   between polls. The fill scales rather than resizes: every poll moves these
-   bars, and a width transition re-runs layout for all of them on the main
-   thread, where a transform runs on the compositor. Both tracks clip
-   (overflow: hidden, own radius), so a scaled fill paints the same. */
+/* Fills ease between polls by scaling, not resizing: a transform runs on the
+   compositor, a width transition re-runs layout for every bar each poll. */
 .apm-bar-fill, .apm-topbar-fill { width: 100%; transform-origin: left center; transform: scaleX(0); transition: transform .45s cubic-bezier(.22,.61,.36,1); }
 @media (prefers-reduced-motion: reduce) {
   .apm-bar-fill, .apm-topbar-fill { transition: none; }
@@ -69,15 +67,21 @@
 .apm-bar-fill.apm-bad { background: rgb(var(--apm-bad-rgb)); }
 
 .apm-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap: .75rem; margin-top: .75rem; }
-.apm-cell { background: rgba(127,127,127,.12); border-radius: var(--apm-r-panel); padding: .75rem; display: flex; flex-direction: column; }
-.apm-label { opacity: .7; font-size: .85rem; }
+.apm-cell { background: rgb(var(--apm-surface-rgb)); border: 1px solid rgb(var(--apm-rule-rgb)); border-radius: var(--apm-r-panel); padding: .75rem; display: flex; flex-direction: column; gap: .15rem; }
+.apm-cell strong { font-variant-numeric: tabular-nums; }
+.apm-label { color: rgb(var(--apm-muted-rgb)); font-size: .85rem; }
 .apm-trend .apm-spark { margin-top: .35rem; width: 100%; height: 30px; }
 
-.apm-sec-head { display: flex; align-items: center; gap: .75rem; margin-top: 1rem; }
+.apm-sec-head { display: flex; align-items: center; gap: .75rem; margin-top: 1.25rem; flex-wrap: wrap; }
 .apm-sec-head h3 { margin: 0; }
-.apm-filter { margin-left: auto; padding: .25rem .5rem; border-radius: var(--apm-r-control); border: 1px solid rgba(127,127,127,.35); background: rgba(127,127,127,.1); color: inherit; }
+.apm-filter { font: inherit; font-size: .85rem; margin-left: auto; padding: .3rem .5rem; min-height: 28px; border-radius: var(--apm-r-control); border: 1px solid rgb(var(--apm-muted-rgb)); background: rgb(var(--apm-surface-rgb)); color: inherit; }
+.apm-filter::placeholder { color: rgb(var(--apm-muted-rgb)); }
 
-.apm-table { width: 100%; border-collapse: collapse; margin-bottom: .5rem; }
+.apm-table { width: 100%; border-collapse: collapse; margin-bottom: .5rem; font-size: .85rem; }
+/* Numbers are compared down a column: right-aligned, tabular figures, with the
+   first (name) column left-aligned. */
+.apm-table th, .apm-table td { padding: .4rem .6rem; border-bottom: 1px solid rgb(var(--apm-rule-rgb)); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.apm-table th { background: rgb(var(--apm-surface-rgb)); color: rgb(var(--apm-muted-rgb)); font-weight: 600; }
 /* Wide tables keep their columns on a narrow panel: the wrapper scrolls
    sideways instead of the page clipping the trailing columns. */
 .apm-table-scroll { overflow-x: auto; }
@@ -89,76 +93,70 @@
 /* Reset the button chrome so the sortable header keeps its table look; the
    click target is a real <button> for keyboard operability. */
 .apm-sort-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; min-height: 24px; }
-.apm-budget-cell { display: flex; align-items: center; gap: .4rem; }
+.apm-budget-cell { display: flex; align-items: center; justify-content: flex-end; gap: .4rem; }
 .apm-budget-cell .apm-bar { width: 70px; flex: none; }
 .apm-budget-pct { min-width: 3.2rem; font-variant-numeric: tabular-nums; }
 
 .apm-error { color: rgb(var(--apm-bad-rgb)); white-space: pre-wrap; }
 /* One declaration per status serves the pill tint and the solid text. */
-.apm-ok { background: rgb(var(--apm-ok-rgb) / .2); color: rgb(var(--apm-ok-rgb)); }
-.apm-warn { background: rgb(var(--apm-accent-rgb) / .2); color: rgb(var(--apm-accent-rgb)); }
-.apm-bad { background: rgb(var(--apm-bad-rgb) / .2); color: rgb(var(--apm-bad-rgb)); }
-.apm-cell.apm-warn,.apm-cell.apm-bad { background: rgba(127,127,127,.12); }
+.apm-ok { background: rgb(var(--apm-ok-rgb) / .16); color: rgb(var(--apm-ok-rgb)); }
+.apm-warn { background: rgb(var(--apm-accent-rgb) / .16); color: rgb(var(--apm-accent-rgb)); }
+.apm-bad { background: rgb(var(--apm-bad-rgb) / .16); color: rgb(var(--apm-bad-rgb)); }
+.apm-cell.apm-warn,.apm-cell.apm-bad { background: rgb(var(--apm-surface-rgb)); color: inherit; }
+.apm-cell.apm-warn { border-color: rgb(var(--apm-accent-rgb) / .6); }
+.apm-cell.apm-bad { border-color: rgb(var(--apm-bad-rgb) / .6); }
 .apm-cell.apm-warn strong { color: rgb(var(--apm-accent-rgb)); }
 .apm-cell.apm-bad strong { color: rgb(var(--apm-bad-rgb)); }
 .apm-warn-row td:first-child { box-shadow: inset 3px 0 0 rgb(var(--apm-accent-rgb)); }
 .apm-bad-row td:first-child { box-shadow: inset 3px 0 0 rgb(var(--apm-bad-rgb)); }
 
-/* Sidebar icon for the APM entry. The stock dashboard gives every module
-   route the same "Mods" font glyph; replace it via the stable tooltip anchor
-   attribute (the href varies with the current route). The stock icon element
-   is hidden by position (> :first-child) whatever it is, and the replacement
-   is a currentColor mask so it inherits the theme. The glyph says what the
-   panel does: measurement only (pulse trace, never a speed/boost bolt). */
+/* Sidebar icon: the Geiger glyph (Lucide "radiation", ISC) replaces the stock
+   "Mods" glyph, keyed on the stable tooltip anchor (the href varies by route).
+   A currentColor mask follows the sidebar text color. */
 a[data-for="tooltip-APM"] > :first-child { display: none; }
 a[data-for="tooltip-APM"]::before {
   content: ""; width: 16px; height: 16px; flex: 0 0 auto; display: inline-block; vertical-align: middle;
   background: currentColor;
-  -webkit-mask: url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath d=%27M2 12h4l3-7 4 14 3-7h6%27 fill=%27none%27 stroke=%27%23000%27 stroke-width=%272.5%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E') center/contain no-repeat;
-  /* longhand standard form: vnu cannot parse the multi-value mask shorthand */
-  mask-image: url('data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 24 24%27%3E%3Cpath d=%27M2 12h4l3-7 4 14 3-7h6%27 fill=%27none%27 stroke=%27%23000%27 stroke-width=%272.5%27 stroke-linecap=%27round%27 stroke-linejoin=%27round%27/%3E%3C/svg%3E');
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 12h.01'/%3E%3Cpath d='M14 15.46a4 4 0 0 1-4 0L7.53 19.75A1 1 0 0 0 7.99 21.16 10 10 0 0 0 16.01 21.16 1 1 0 0 0 16.47 19.75z'/%3E%3Cpath d='M16 12a4 4 0 0 0-2-3.464l2.472-4.282a1 1 0 0 1 1.46-.305 10 10 0 0 1 4.006 6.94A1 1 0 0 1 21 12z'/%3E%3Cpath d='M8 12a4 4 0 0 1 2-3.464L7.528 4.254a1 1 0 0 0-1.46-.305 10 10 0 0 0-4.006 6.94A1 1 0 0 0 3 12z'/%3E%3C/svg%3E");
   mask-position: center;
   mask-size: contain;
   mask-repeat: no-repeat;
 }
 /* ---- charts ---- */
 .apm-charts-row { display: grid; grid-template-columns: 230px 1fr; gap: .75rem; margin-top: .75rem; align-items: start; }
-/* Below the gauge-plus-grid width the two columns squeeze into unreadable
-   slivers, so stack them (the same single-column fallback the dashboard's own
-   panels use on small screens). */
+/* Narrow panels stack the gauge above the grid instead of two slivers. */
 @media (max-width: 640px) {
   .apm-charts-row { grid-template-columns: 1fr; }
   .apm-charts-row .apm-gauge { justify-self: center; }
   .apm-topbar-row { grid-template-columns: 100px 1fr 60px; }
+  .apm-window { margin-left: 0; flex-basis: 100%; }
 }
 .apm-charts-row .apm-grid { margin-top: 0; }
-.apm-chart { background: rgba(127,127,127,.08); border: 1px solid rgba(127,127,127,.22); border-radius: var(--apm-r-panel); padding: .75rem; }
+.apm-chart { background: rgb(var(--apm-surface-rgb)); border: 1px solid rgb(var(--apm-rule-rgb)); border-radius: var(--apm-r-panel); padding: .75rem; }
 .apm-trends { margin-top: .75rem; }
 .apm-trends svg { display: block; width: 100%; height: auto; }
 .apm-chart-head { display: flex; align-items: center; gap: .6rem; margin-bottom: .4rem; flex-wrap: wrap; }
-.apm-vgrid { stroke: rgba(127,127,127,.12); }
+.apm-vgrid { stroke: rgb(var(--apm-rule-rgb)); }
 .apm-host { display: flex; flex-wrap: wrap; align-items: stretch; gap: .5rem; margin-top: .75rem; }
 .apm-host > .apm-label { align-self: center; margin-right: .25rem; }
 .apm-host .apm-cell { flex: 0 0 auto; min-width: 110px; padding: .5rem .75rem; }
-.apm-host .apm-cell strong { font-variant-numeric: tabular-nums; white-space: nowrap; }
-.apm-gauge-title { opacity: .7; font-size: .85rem; margin-bottom: .25rem; }
+.apm-host .apm-cell strong { white-space: nowrap; }
+.apm-gauge-title { color: rgb(var(--apm-muted-rgb)); font-size: .85rem; margin-bottom: .25rem; }
 .apm-gauge text { font-family: inherit; }
-/* The unfilled arc reads on whichever dashboard theme is active, the same way
-   the bar tracks do. */
-.apm-gauge-track { stroke: rgba(127,127,127,.22); }
+.apm-gauge-track { stroke: rgb(var(--apm-rule-rgb)); }
 .apm-gauge-value { fill: rgb(var(--apm-text-rgb)); font-size: 21px; font-weight: 700; }
 .apm-gauge-label { fill: rgb(var(--apm-muted-rgb)); font-size: 11px; }
 .apm-legend { display: flex; gap: 1rem; margin-top: .4rem; flex-wrap: wrap; align-items: baseline; font-size: .8rem; }
 .apm-legend-chip { display: inline-flex; align-items: center; gap: .35rem; color: rgb(var(--apm-muted-rgb)); }
 .apm-legend-swatch { width: 10px; height: 10px; border-radius: var(--apm-r-track); flex: 0 0 auto; }
 .apm-legend-value { color: rgb(var(--apm-text-rgb)); font-weight: 600; font-variant-numeric: tabular-nums; }
-.apm-gridline { stroke: rgba(127,127,127,.18); }
-.apm-axis-label { fill: rgb(var(--apm-muted-rgb)); font-size: 10px; }
+.apm-gridline { stroke: rgb(var(--apm-rule-rgb)); }
+.apm-axis-label { fill: rgb(var(--apm-muted-rgb)); color: rgb(var(--apm-muted-rgb)); font-size: 10px; }
 .apm-crosshair { stroke: rgb(var(--apm-muted-rgb)); stroke-dasharray: 3 3; }
 .apm-topbars h3 { margin: 0 0 .5rem; font-size: .85rem; color: rgb(var(--apm-muted-rgb)); }
 .apm-topbar-row { display: grid; grid-template-columns: 150px 1fr 64px; gap: .5rem; align-items: center; margin: .3rem 0; font-size: .8rem; }
 .apm-topbar-name { color: rgb(var(--apm-muted-rgb)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.apm-topbar-track { position: relative; background: rgba(127,127,127,.18); border-radius: var(--apm-r-track); height: 10px; overflow: hidden; }
+.apm-topbar-track { position: relative; background: rgb(var(--apm-rule-rgb)); border-radius: var(--apm-r-track); height: 10px; overflow: hidden; }
 .apm-topbar-fill { height: 100%; }
 /* Eight "ok" bars sit under one budget meter, so the list fills at half the
    meter green's weight: same hue, quieter rank. */

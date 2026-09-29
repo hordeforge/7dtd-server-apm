@@ -188,29 +188,25 @@ def test_webmod_panel_colors_come_from_the_shared_tokens() -> None:
     webmod = REPO / "bridge" / "ApmBridge" / "WebMod"
     sheet = re.sub(r"/\*.*?\*/", "", (webmod / "styling.css").read_text(encoding="utf-8"))
 
-    # Each token the panel uses is declared as bare RGB channels, so one
-    # declaration serves the solid fill and the translucent pill tint.
-    for name in ("text", "muted", "link", "accent", "ok", "bad"):
-        channels = " ".join(str(int(TOKENS[name][i : i + 2], 16)) for i in (1, 3, 5))
-        assert f"--apm-{name}-rgb: {channels};" in sheet, (
-            f"--apm-{name}-rgb does not carry {TOKENS[name]}"
-        )
+    # Every token is declared as bare RGB channels, so one declaration serves
+    # the solid fill and the translucent pill tint.
+    for name, value in TOKENS.items():
+        channels = " ".join(str(int(value[i : i + 2], 16)) for i in (1, 3, 5))
+        assert f"--apm-{name}-rgb: {channels};" in sheet, f"--apm-{name}-rgb does not carry {value}"
 
     assert not re.search(r"#[0-9a-fA-F]{3,8}", sheet), "a raw hex literal crept back into the sheet"
 
-    # What is left is theme-neutral chrome, which has to stay literal because it
-    # is an alpha over whatever the dashboard theme paints: the mid-gray family
-    # plus the meter's dark segmentation ink.
-    neutral = {
-        m for m in re.findall(r"rgba\(\d+,\d+,\d+,[.\d]+\)", sheet) if m != "rgba(10,12,16,.8)"
-    }
-    assert all(m.startswith("rgba(127,127,127,") for m in neutral), f"off-palette gray: {neutral}"
+    # The panel paints its own terminal surface (the state colors only meet
+    # WCAG AA on it), so no color is left as an alpha over the dashboard theme.
+    assert not re.search(r"rgba?\(\d", sheet), "a literal rgb()/rgba() color bypasses the tokens"
 
     # bundle.ts draws the series and the gauge arc. A hex there is a second
-    # copy of a token the sheet already declares.
+    # copy of a token the sheet already declares. The gmUpdate series reads the
+    # text token: link and ok share the signal green, and two series in one
+    # chart must not share a color.
     source = (webmod / "bundle.ts").read_text(encoding="utf-8")
     assert not re.search(r"#[0-9a-fA-F]{3,8}", source), "bundle.ts spells out a color literal"
-    for token in ("ok", "link", "accent", "bad"):
+    for token in ("ok", "text", "accent", "bad"):
         assert f"var(--apm-{token}-rgb)" in source, f"bundle.ts never names --apm-{token}-rgb"
 
 
