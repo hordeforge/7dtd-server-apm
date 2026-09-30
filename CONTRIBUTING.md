@@ -13,7 +13,7 @@ needed). `pyproject.toml` still accepts `>=3.11`, so the pin is what a local
 run and a CI run both resolve; nothing else is needed to run the host CLI or
 the test suite.
 
-The full gate additionally needs `shellcheck`, `bun` (for `bunx`; the tsc,
+The full gate additionally needs `shellcheck`, `bun` 1.4.2 (the CI pin; for `bunx`; the tsc,
 oxlint, vnu, and shellcheck versions are pinned in
 `scripts/lib/tool_versions.sh`), and a Java runtime for `vnu-jar`. Each check
 names the tool it cannot find instead of failing mid-gate. `make lint-shell`
