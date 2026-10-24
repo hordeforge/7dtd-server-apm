@@ -6,8 +6,10 @@
 # explicit environment override always wins.
 # APM_LIB_DIR is set by the Makefile, whose $(shell) runs /bin/sh where
 # BASH_SOURCE does not exist; bash callers fall back to this file's own
-# directory. A wrong value fails loud on the missing source below.
-# shellcheck disable=SC3028  # BASH_SOURCE is the bash branch; $0 covers POSIX sh
+# directory. A POSIX caller must set it: dash rejects the array reference
+# outright rather than falling back to $0, so the default below is only ever
+# expanded under bash. A wrong value fails loud on the missing source below.
+# shellcheck disable=SC3028  # BASH_SOURCE exists only under bash; see above
 : "${APM_LIB_DIR:=$(dirname "${BASH_SOURCE[0]:-$0}")}"
 # shellcheck source=scripts/lib/home.sh
 . "$APM_LIB_DIR/home.sh"

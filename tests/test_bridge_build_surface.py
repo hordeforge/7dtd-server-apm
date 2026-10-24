@@ -643,12 +643,19 @@ def test_home_fallback_fails_loud_instead_of_aborting_on_unbound_variable() -> N
 
 def test_dedicated_dir_default_resolves_without_home() -> None:
     # ds_paths.sh is the single default every SEVENDTD_DS_DIR consumer shares,
-    # and the Makefile evaluates it through $(shell) under /bin/sh. With no HOME
-    # it must still resolve the path from APM_HOME rather than aborting the
-    # whole make invocation on an unset-variable error.
+    # and the Makefile evaluates it through $(shell) under /bin/sh with
+    # APM_LIB_DIR set to scripts/lib. With no HOME it must still resolve the
+    # path from APM_HOME rather than aborting the whole make invocation on an
+    # unset-variable error. APM_LIB_DIR belongs to that invocation: /bin/sh is
+    # dash on the CI runner, which has no BASH_SOURCE and rejects the
+    # fragment's array reference instead of falling back to $0.
     result = subprocess.run(
         ["sh", "-c", '. "$1" && printf "%s" "$SEVENDTD_DS_DIR"', "_", str(DS_PATHS_SH)],
-        env={"PATH": "/usr/bin:/bin", "APM_HOME": "/srv/operator"},
+        env={
+            "PATH": "/usr/bin:/bin",
+            "APM_HOME": "/srv/operator",
+            "APM_LIB_DIR": str(REPO / "scripts" / "lib"),
+        },
         capture_output=True,
         text=True,
         check=False,
