@@ -58,8 +58,14 @@ dotnet_use_pinned_sdk() {
   for candidate in "${candidates[@]}"; do
     # `dotnet --version` resolves global.json from the working directory, so
     # ask from the repository root; that is the same answer `dotnet build` will
-    # give once the build runs from there.
-    resolved="$(cd "$repo_root" && "$candidate" --version 2>/dev/null || true)"
+    # give once the build runs from there. The cd and the query stay inside the
+    # substitution, so a failed cd cannot change the caller's directory, and a
+    # failing candidate reads as "no version" so the next one is tried.
+    resolved="$(
+      if cd "$repo_root"; then
+        "$candidate" --version 2>/dev/null || true
+      fi
+    )"
     if [[ -n "$resolved" ]] && dotnet_sdk_matches_pin "$resolved" "$pinned"; then
       sdk_root="$(dirname "$candidate")"
       export DOTNET_ROOT="$sdk_root"
