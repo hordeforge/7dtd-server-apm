@@ -455,6 +455,11 @@ major.
 
 ## Unreleased - bridge mod
 
+## 3.2.0 (tag v3.2.0) - bridge mod - 2026-10-25
+
+Minor for the packaging and install fixes merged since 3.1.1. The telemetry
+schema and the response contract are unchanged.
+
 - Packaging: the release zip carries the repository `LICENSE` in the mod
   folder. The zip is how the DLL reaches a server, and it shipped a binary
   with no statement of the terms it is redistributed under.
