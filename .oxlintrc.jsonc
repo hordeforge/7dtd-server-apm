@@ -56,9 +56,13 @@
     "suspicious": "error"
   },
   "plugins": ["typescript", "unicorn"],
+  // jsPlugins paths resolve relative to the copied config in the plugin cache
+  // (scripts/lint-webui.sh), so the anti-slop specifier names the version-keyed
+  // extraction directory. Keep the commit here equal to ANTI_SLOP_SHA in
+  // scripts/lib/tool_versions.sh; a pin bump edits both lines.
   "jsPlugins": [
     "@rikalabs/oxlint-standards/plugin",
-    { "name": "anti-slop", "specifier": "./anti-slop-src/index.ts" }
+    { "name": "anti-slop", "specifier": "./anti-slop-6d538555cb151d4121ed51a27db81890eacf8ae9/index.ts" }
   ],
   "rules": {
     // ---- dead / debug code ----

@@ -5,6 +5,18 @@ capture remains supported without it. The bridge adds managed subsystem timings,
 world/runtime gauges, spike records, capability reporting, periodic atomic JSON,
 and the `apm` console/telnet command.
 
+### Target build
+
+The bridge targets 7 Days to Die dedicated **V3.3.0 (b18)**. All 81 `Type:Method` patch
+specs in `BridgeMod.cs` resolve in the b18 IL dump tree, the same set that resolves in b10.
+The six chunk, map, and world-folder targets (`ChunkManager:SendChunksToClients`,
+`NetPackageChunk:Setup`, `NetPackageChunk:write`, `NetPackageMapChunks:Setup`,
+`NetPackageMapChunks:write`, `NetPackageWorldFolder:StartSendingPacketsToClient`) have
+identical declarations and IL sizes in the b10-to-b18 diff. The bridge's live overhead and
+in-game acceptance were last exercised on V3.1.0 (b14), so a b18 managed-server smoke run is
+still owed; a resolution failure shows up in the bridge's capability status and costs only
+that section's measurement.
+
 It is also a native V3 WebDashboard plugin. `WebMod/` adds a direct **APM**
 sidebar entry (a module route, not a Settings tab) and authenticated
 `GET /api/apm` exposes the same bounded

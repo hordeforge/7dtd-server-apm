@@ -18,9 +18,14 @@ Project boundaries are deliberate:
 - `7dtd-server-optimizer` contains reviewed runtime optimizations. APM never changes it automatically.
 - Host CCD/NUMA/affinity tuning is ops, not APM or EfficientServer. Measure here, apply with systemd/`taskset`; checklist: [`../7dtd-server-optimizer/docs/HOST_TUNING.md`](../7dtd-server-optimizer/docs/HOST_TUNING.md).
 
+Target build: 7 Days to Die dedicated **V3.3.0 (b18)**. Host capture is build-agnostic; the
+bridge's game-method names were re-checked against the b18 IL dump ([bridge/README.md](bridge/README.md)
+-> Target build). The measured findings below were recorded on V3.1.0 (b14) and have not been
+re-measured on b18, so treat their absolute numbers as historical until re-run.
+
 ## Measured bottleneck findings ("laggy without CPU")
 
-Validated against the V3.1.0 dedicated under sibling load (20 bots + telnet
+Recorded on the V3.1.0 dedicated under sibling load (20 bots + telnet
 zombies). The server can miss its 20 TPS (50 ms) tick deadline while gmUpdate
 compute averages ~10 ms with **~77% headroom** - so the lag is not CPU-bound.
 The `forensic` preset (`scenario run --preset forensic`) attributes it:
