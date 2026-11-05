@@ -12,10 +12,21 @@ specs in `BridgeMod.cs` resolve in the b18 IL dump tree, the same set that resol
 The six chunk, map, and world-folder targets (`ChunkManager:SendChunksToClients`,
 `NetPackageChunk:Setup`, `NetPackageChunk:write`, `NetPackageMapChunks:Setup`,
 `NetPackageMapChunks:write`, `NetPackageWorldFolder:StartSendingPacketsToClient`) have
-identical declarations and IL sizes in the b10-to-b18 diff. The bridge's live overhead and
-in-game acceptance were last exercised on V3.1.0 (b14), so a b18 managed-server smoke run is
-still owed; a resolution failure shows up in the bridge's capability status and costs only
-that section's measurement.
+identical declarations and IL sizes in the b10-to-b18 diff.
+
+**b18 live check (2026-11-05).** A stock b18 dedicated server loaded the bridge and logged
+`ready version=3.2.0 hooks=85`; all 85 hook statuses resolved, 59 active and 26 disabled by
+`DeepMode`, none missing. The host capture ingested the bridge snapshot and graded
+`app_sim` ok, with the game identity reported as
+`sha256 e16ff9d539b8fbf64904c0bc090d502286a62464742a9396f0455936ad0beb87`. Live overhead
+has not been re-measured on b18, so the overhead figure stays historical. Evidence
+(git-ignored): `.scratch/live-b18/evidence/apm-session/summary.json` sha256
+`bee936592c107a5e95c99006e7539fe963d99d424fff30760c971d47b5131115`,
+`.scratch/live-b18/evidence/apm-session/app/apm_app.json` sha256
+`6a844ddc48fe0a15dbd57148cd3a50deecd87481236e01ca54d2d2924517ae59`, and the server log
+`.scratch/live-b18/evidence/server-output.log` sha256
+`940832693242f896e894e54a5cd2eea05094ce80e97ff45b93df8e699cf198a6`. Command:
+`uv run 7dtd-server-apm capture --seconds 60 --pid <server> --telnet-port 8086 --only all --reset-bridge`.
 
 It is also a native V3 WebDashboard plugin. `WebMod/` adds a direct **APM**
 sidebar entry (a module route, not a Settings tab) and authenticated
