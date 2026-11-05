@@ -41,15 +41,14 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
 
 ## Unreleased - host CLI
 
-- Packaging: the wheel carries the PEP 561 `py.typed` marker. Every module is
-  annotated and the tree is mypy strict, but a wheel without the marker is
-  untyped to whoever installs it, so a consumer's type check resolved the whole
-  package to `Any` instead of reading those annotations.
-
 ## 2.4.2 - host CLI - 2026-11-05
 
 - Retarget the documented build and the bridge verification notes to the V3.4.0 (b10)
   dedicated build. No command, flag, session field, or analysis output changes.
+- Packaging: the wheel carries the PEP 561 `py.typed` marker. Every module is
+  annotated and the tree is mypy strict, but a wheel without the marker is
+  untyped to whoever installs it, so a consumer's type check resolved the whole
+  package to `Any` instead of reading those annotations.
 
 ## 2.4.1 - host CLI - 2026-09-29
 
@@ -460,7 +459,7 @@ major.
 
 ## Unreleased - bridge mod
 
-## 3.3.0 - bridge mod - 2026-11-05
+## 3.3.0 (tag v3.3.0) - bridge mod - 2026-11-05
 
 Minor for the target-build move and the deep-hook correction. The telemetry schema
 `7dtd.apm.app.v3` and the response contract are unchanged.
