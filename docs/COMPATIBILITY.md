@@ -43,4 +43,7 @@ silently pass as healthy zeros.
 
 ## Changelog
 
+- **2026-11-05:** V3.4.0 (b10) target. Bridge hook specs re-checked against the V3.4.0 IL
+  tree; one live check on a stock V3.4.0 dedicated server resolved all 85 hook statuses
+  ([bridge/README.md](../bridge/README.md) -> Target build).
 - **2026-07-19:** Ownership header; related docs.

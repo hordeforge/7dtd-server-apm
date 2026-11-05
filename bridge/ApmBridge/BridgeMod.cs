@@ -10,7 +10,7 @@ namespace DtdApmBridge
 {
     public sealed class BridgeMod : IModApi
     {
-        public const string Version = "3.2.0";
+        public const string Version = "3.3.0";
         // Written by InitMod while Capabilities() reads the same table from the
         // export ThreadPool thread, web API threads (/api/apm), and the telnet
         // console (`apm capabilities`); unsynchronized enumeration during a
@@ -138,7 +138,7 @@ namespace DtdApmBridge
                 // helper) are individually small - attribute the interior mass.
                 "EntityAlive:MoveEntityHeaded", "EntityStats:Tick",
                 "EntityAlive:updateCurrentBlockPosAndValue", "EntityAlive:UpdateJump",
-                "EntityAlive:CanSee:EntityAlive", "EntityZombie:OnUpdateLive",
+                "EntityAlive:CanSee:EntityAlive", "EntityHuman:OnUpdateLive",
                 // Path pipeline: enqueue is EntityAlive:FindPath above; these
                 // cover the worker drain and per-path compute (admission
                 // experiments need enqueue vs drain vs compute).

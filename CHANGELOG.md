@@ -46,6 +46,11 @@ and the next shipped bridge after 2.2.3 was 2.3.0.
   untyped to whoever installs it, so a consumer's type check resolved the whole
   package to `Any` instead of reading those annotations.
 
+## 2.4.2 - host CLI - 2026-11-05
+
+- Retarget the documented build and the bridge verification notes to the V3.4.0 (b10)
+  dedicated build. No command, flag, session field, or analysis output changes.
+
 ## 2.4.1 - host CLI - 2026-09-29
 
 - Report, dashboard, session index, flame delta, and interactive flamegraph
@@ -454,6 +459,22 @@ major.
   SHA-256 work over every collected artifact at the end of a run.
 
 ## Unreleased - bridge mod
+
+## 3.3.0 - bridge mod - 2026-11-05
+
+Minor for the target-build move and the deep-hook correction. The telemetry schema
+`7dtd.apm.app.v3` and the response contract are unchanged.
+
+- Retarget to 7 Days to Die dedicated V3.4.0 (b10). All 84 section specs and the frame
+  hook resolve on the new assembly; four method bodies changed size, none of them a
+  chunk, map, or world-folder transfer target.
+- Fix the deep `EntityZombie:OnUpdateLive` spec. `EntityZombie` inherits `OnUpdateLive`
+  from `EntityHuman`, and Harmony refuses to patch a derived type for an inherited
+  method, so that hook had failed since it was added. The spec names the declaring type,
+  `EntityHuman:OnUpdateLive`, and the section records the live updates zombies run.
+- Docs: on V3.4.0 the dynamic-mesh sections resolve but record zero calls, because the
+  subsystem has no server-side call sites and only the console starts it. That is
+  expected, not a missing hook.
 
 ## 3.2.0 (tag v3.2.0) - bridge mod - 2026-10-25
 

@@ -7,26 +7,37 @@ and the `apm` console/telnet command.
 
 ### Target build
 
-The bridge targets 7 Days to Die dedicated **V3.3.0 (b18)**. All 81 `Type:Method` patch
-specs in `BridgeMod.cs` resolve in the b18 IL dump tree, the same set that resolves in b10.
-The six chunk, map, and world-folder targets (`ChunkManager:SendChunksToClients`,
-`NetPackageChunk:Setup`, `NetPackageChunk:write`, `NetPackageMapChunks:Setup`,
-`NetPackageMapChunks:write`, `NetPackageWorldFolder:StartSendingPacketsToClient`) have
-identical declarations and IL sizes in the b10-to-b18 diff.
+The bridge targets 7 Days to Die dedicated **V3.4.0 (b10)**. All 84 `Type:Method` section
+specs in `BridgeMod.cs` resolve in the V3.4.0 IL tree and in the b18 tree; with the frame
+hook that is 85 status keys. Four method bodies changed size between b18 and V3.4.0
+(`World:LetBlocksFall` 220 to 215 IL instructions, `ChunkManager:DetermineChunksToLoad` 456
+to 448, `World:AddFallingBlock` 38 to 36, `EntityAlive:MoveEntityHeaded` 292 to 229).
+Every declaration and the six chunk, map, and world-folder targets
+(`ChunkManager:SendChunksToClients`, `NetPackageChunk:Setup`, `NetPackageChunk:write`,
+`NetPackageMapChunks:Setup`, `NetPackageMapChunks:write`,
+`NetPackageWorldFolder:StartSendingPacketsToClient`) keep the same signature and IL size.
+`EntityZombie` does not declare `OnUpdateLive`; the base `EntityHuman` does, so the deep
+spec names `EntityHuman` and Harmony patches the declaring method.
 
-**b18 live check (2026-11-05).** A stock b18 dedicated server loaded the bridge and logged
-`ready version=3.2.0 hooks=85`; all 85 hook statuses resolved, 59 active and 26 disabled by
-`DeepMode`, none missing. The host capture ingested the bridge snapshot and graded
-`app_sim` ok, with the game identity reported as
-`sha256 e16ff9d539b8fbf64904c0bc090d502286a62464742a9396f0455936ad0beb87`. Live overhead
-has not been re-measured on b18, so the overhead figure stays historical. Evidence
-(git-ignored): `.scratch/live-b18/evidence/apm-session/summary.json` sha256
-`bee936592c107a5e95c99006e7539fe963d99d424fff30760c971d47b5131115`,
-`.scratch/live-b18/evidence/apm-session/app/apm_app.json` sha256
-`6a844ddc48fe0a15dbd57148cd3a50deecd87481236e01ca54d2d2924517ae59`, and the server log
-`.scratch/live-b18/evidence/server-output.log` sha256
-`940832693242f896e894e54a5cd2eea05094ce80e97ff45b93df8e699cf198a6`. Command:
-`uv run 7dtd-server-apm capture --seconds 60 --pid <server> --telnet-port 8086 --only all --reset-bridge`.
+**V3.4.0 live check (2026-11-05).** A stock V3.4.0 dedicated server loaded the bridge with
+`DeepMode` on and logged `ready version=3.3.0 hooks=85`; all 85 statuses were active, none
+missing. The host capture ingested the bridge snapshot, reported the game as
+`sha256 00a962dbbb5ef1bb454368322221f9eb4148dc2d548ed2b77244f9bda5ecc167`, with the
+`app_sim` layer collected and inside its budget. The two dynamic-mesh sections recorded zero
+calls: V3.4.0 removed
+every server-side call site and only the console starts the subsystem, so the hooks
+resolve and stay idle. Live overhead has not been re-measured on V3.4.0, so the overhead
+figure stays historical. Evidence (git-ignored):
+`.scratch/live-v340/evidence/apm-session/summary.json` sha256
+`b84f89ed36c5deb7ce5dc29e28b9354f273c4acb654827ba7010218b8e737955`,
+`.scratch/live-v340/evidence/apm-session/app/apm_app.json` sha256
+`c92fd1891f5a9930491b5be336e0d16184d507a21048841c3b248005611e10f2`, and the server log
+`.scratch/live-v340/evidence/server-output.log` sha256
+`68971058f773bad73bd492c91f7102cbcc271138046dd29397ede8a25ea89146`. Command:
+`./7DaysToDieServer.x86_64 -logfile server-output.log -batchmode -nographics -dedicated
+-configfile=serverconfig.live.xml` (ServerPort 27010, TelnetPort 8090), then
+`SEVENDTD_APM_DIR=.scratch/live-v340/apm uv run --locked 7dtd-server-apm capture --seconds
+60 --pid <server> --telnet-port 8090 --only all --reset-bridge`.
 
 It is also a native V3 WebDashboard plugin. `WebMod/` adds a direct **APM**
 sidebar entry (a module route, not a Settings tab) and authenticated
@@ -210,7 +221,7 @@ lacks managed `GC.GetTotalAllocatedBytes`; that API is only the fallback, and
 include tile-entity chunk load (`TileEntity.InstantiateFromRead`,
 `TileEntityFeatureData.InstantiateModule`) so serialization cost is measurable
 alongside the allocation churn it drives. Current schema `7dtd.apm.app.v3`,
-mod version 3.2.0.
+mod version 3.3.0.
 
 ```bash
 make bridge-build
