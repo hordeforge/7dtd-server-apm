@@ -33,7 +33,7 @@ dependencies = [
   # upper bound is the verified minor rather than 1.0: a new typer minor has to
   # be resolved here and gated by the suite, not arrive with the next
   # `uv lock`.
-  "typer>=0.15,<0.28",
+  "typer>=0.15,<0.30",
 ]
 
 [project.urls]
